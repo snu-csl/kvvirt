@@ -3,7 +3,8 @@
 #CONFIG_NVMEVIRT_SSD := y
 #CONFIG_NVMEVIRT_ZNS := y
 #CONFIG_NVMEVIRT_KV := y
-CONFIG_NVMEVIRT_HASH_DFTL := y
+#CONFIG_NVMEVIRT_HASH_DFTL := y
+CONFIG_PAGE_MAPPED := y
 
 obj-m   := nvmev.o
 nvmev-objs := main.o pci.o admin.o io.o dma.o
@@ -36,3 +37,6 @@ ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL \
                                         -DSLC \
                                         -DDVALUE
 nvmev-$(CONFIG_NVMEVIRT_HASH_DFTL) += $(DEMAND_OBJS) ssd.o demand_ftl.o pqueue/pqueue.o channel_model.o 
+ccflags-$(CONFIG_PAGE_MAPPED) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL
+nvmev-$(CONFIG_PAGE_MAPPED) += ssd.o pagemap.o pqueue/pqueue.o channel_model.o
+
