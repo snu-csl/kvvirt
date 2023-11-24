@@ -229,6 +229,14 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #elif (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
 #define NR_NAMESPACES 1
 
+#define OP 70
+#define PAGESIZE (8*K)
+#define _PPB (256)
+#define BPS (64)
+#define _PPS (_PPB*BPS)
+#define PUNIT (64)
+#define NPCINPAGE (PAGESIZE/PIECE)
+
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)
 #define NS_SSD_TYPE_1 NS_SSD_TYPE_0
@@ -236,14 +244,14 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define MDTS (6)
 #define CELL_MODE (CELL_MODE_MLC)
 
-#define SSD_PARTITIONS (4)
+#define SSD_PARTITIONS (1)
 #define NAND_CHANNELS (8)
-#define LUNS_PER_NAND_CH (2)
+#define LUNS_PER_NAND_CH (8)
 #define PLNS_PER_LUN (1)
-#define FLASH_PAGE_SIZE KB(32)
-#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
-#define BLKS_PER_PLN (8192)
-#define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
+#define FLASH_PAGE_SIZE KB(8)
+#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE  * 1)
+#define BLKS_PER_PLN (0)
+#define BLK_SIZE (FLASH_PAGE_SIZE * _PPB) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
@@ -270,16 +278,6 @@ static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define GLOBAL_WB_SIZE (NAND_CHANNELS * LUNS_PER_NAND_CH * ONESHOT_PAGE_SIZE * 2)
 #define WRITE_EARLY_COMPLETION 1
-
-#define OP 70
-#define REALSIZE (512L*G)
-#define DEVSIZE (64L * G)
-#define PAGESIZE (8*K)
-#define _PPB (256)
-#define BPS (64)
-#define _PPS (_PPB*BPS)
-#define PUNIT (64)
-#define NPCINPAGE (PAGESIZE/PIECE)
 
 #endif
 ///////////////////////////////////////////////////////////////////////////

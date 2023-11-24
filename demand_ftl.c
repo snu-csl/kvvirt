@@ -386,7 +386,7 @@ void demand_init(uint64_t size, struct ssd* ssd)
     struct ssdparams *spp = &ssd->sp;
     spp->nr_segs = size / (_PPS * PAGESIZE);
 
-    no_info.NOB = spp->tt_blks;
+    no_info.NOB = size / (_PPS * PAGESIZE);
     no_info.NOP = spp->tt_pgs;
     no_info.SOB = (spp->pgs_per_blk * spp->secsz * spp->secs_per_pg) * BPS;
     no_info.SOP = PAGESIZE;

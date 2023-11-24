@@ -94,16 +94,18 @@ void pbm_create_print(blockmanager *bm, int pnum){
 uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 	bm->li=li;
 
+    uint64_t NOS = li->TS / (_PPS * PAGESIZE);
+
 	bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
 	bm->private_data=(void*)p;
-	p->base_block=(__block*)vmalloc(sizeof(__block) * (li->NOB * PUNIT));
+	p->base_block=(__block*)vmalloc(sizeof(__block) * (NOS * PUNIT));
 
     BUG_ON(!p->base_block);
     printk("FIXME pbm_create base_block_manager.c manually entering seg_idx.\n");
 
     int seg_idx=0;
 	int block_idx=0;
-	for(int i=0; i<li->NOB; i++){
+	for(int i=0; i<NOS; i++){
 		for(int j=0; j<PUNIT; j++){
 			__block *b=&p->base_block[block_idx];
 			b->block_num=seg_idx;
