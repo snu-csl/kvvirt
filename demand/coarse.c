@@ -57,7 +57,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 
 	//_env->caching_ratio = d_env.caching_ratio;
 	//_env->max_cached_tpages = _env->nr_tpages_optimal_caching * _env->caching_ratio;
-	_env->max_cached_tpages = PFTLMEMORY / PAGESIZE;
+	_env->max_cached_tpages = (d_env.size / K) / PAGESIZE;
 	_env->max_cached_tentries = 0; // not used here
 
 #ifdef DVALUE

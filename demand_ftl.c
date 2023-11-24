@@ -381,21 +381,46 @@ extern struct algorithm __demand;
 extern struct lower_info no_info;
 extern struct blockmanager pt_bm;
 
-void demand_init(void) 
+void demand_init(uint64_t size, struct ssd* ssd) 
 {
+    struct ssdparams *spp = &ssd->sp;
+    spp->nr_segs = size / (_PPS * PAGESIZE);
+
+    no_info.NOB = spp->tt_blks;
+    no_info.NOP = spp->tt_pgs;
+    no_info.SOB = (spp->pgs_per_blk * spp->secsz * spp->secs_per_pg) * BPS;
+    no_info.SOP = PAGESIZE;
+    no_info.PPB = spp->pgs_per_blk;
+    no_info.PPS = spp->pgs_per_blk * BPS;
+    no_info.TS = size;
+    no_info.DEV_SIZE = size;
+    no_info.all_pages_in_dev = size / PAGESIZE;
+
+    printk("NOB %u\n", no_info.NOB);
+    printk("NOP %u\n", no_info.NOP);
+    printk("SOB %u\n", no_info.SOB);
+    printk("SOP %u\n", no_info.SOP);
+    printk("PPB %u\n", no_info.PPB);
+    printk("PPS %u\n", no_info.PPS);
+    printk("TS %llu\n", no_info.TS);
+    printk("DEV_SIZE %llu\n", no_info.DEV_SIZE);
+    printk("all_pages_in_dev %llu\n", no_info.all_pages_in_dev);
+
     no_info.create(&no_info, &pt_bm);
 
     int temp[PARTNUM];
-    temp[MAP_S]=MAPPART_SEGS;
-    temp[DATA_S]=DATAPART_SEGS;
+    temp[MAP_S] = MAPPART_SEGS;
+    temp[DATA_S] = spp->nr_segs - MAPPART_SEGS;
     pt_bm.pt_create(&pt_bm, PARTNUM, temp, &no_info);
 
-    demand_create(&no_info, &pt_bm, &__demand);
+    printk("Before demand create.\n");
+    demand_create(&no_info, &pt_bm, &__demand, spp, size);
     print_demand_stat(&d_stat);
 }
 
+uint64_t dsize = 0;
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
-			 uint32_t cpu_nr_dispatcher)
+                         uint32_t cpu_nr_dispatcher)
 {
 	struct ssdparams spp;
 	struct convparams cpp;
@@ -403,6 +428,8 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 	struct ssd *ssd;
 	uint32_t i;
 	const uint32_t nr_parts = SSD_PARTITIONS;
+
+    dsize = size;
 
 	ssd_init_params(&spp, size, nr_parts);
 	conv_init_params(&cpp);
@@ -943,7 +970,14 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 	return true;
 }
 
+bool end_w(struct request *req) 
+{
+    printk("Ending a request with key %s\n", req->key.key);
+    return true;
+}
+
 bool demand_c = 0;
+
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -974,8 +1008,25 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	};
 
     if(demand_c == 0) {
-        demand_init();
         demand_c = 1;
+        demand_init(dsize, conv_ftls[0].ssd);
+    } else {
+        struct request req;
+        KEYT key;
+        key.key = (char*)kzalloc(8, GFP_KERNEL);
+        key.len = 8;
+        sprintf(key.key, "helloheh");
+        req.key = key;
+
+        struct value_set value;
+        value.value = (char*)kzalloc(1024, GFP_KERNEL);
+        if(value.value) {
+            value.length = 1024;
+            req.value = &value;
+
+            req.end_req = &end_w;
+            __demand.write(&req);
+        }
     }
 
 	NVMEV_DEBUG_VERBOSE("%s: start_lpn=%lld, len=%lld, end_lpn=%lld", __func__, start_lpn, nr_lba, end_lpn);

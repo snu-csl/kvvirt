@@ -6,6 +6,8 @@
 #include "../../include/data_struct/heap.h"
 #include "../base_block_manager.h"
 
+#include <linux/vmalloc.h>
+
 typedef struct part_info{
 	int pnum;
 	int *now_assign;

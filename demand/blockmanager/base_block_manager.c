@@ -48,15 +48,16 @@ int base_get_cnt(void *a){
 
 uint32_t base_create (struct blockmanager* bm, lower_info *li){
 	bm->li=li;
+    uint64_t NOS = li->TS / (_PPS * PAGESIZE);
 
 	bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
-	p->base_block=(__block*)kzalloc(sizeof(__block) * _NOS*PUNIT, GFP_KERNEL);
+	p->base_block=(__block*)kzalloc(sizeof(__block) * NOS*PUNIT, GFP_KERNEL);
 
     printk("FIXME base_create base_block_manager.c manually entering seg_idx.\n");
 
 	int block_idx=0;
     int seg_idx=0;
-	for(int i=0; i<_NOS; i++){
+	for(int i=0; i<NOS; i++){
 		for(int j=0; j<PUNIT; j++){
 			__block *b=&p->base_block[block_idx];
 			b->block_num=seg_idx;
@@ -70,9 +71,9 @@ uint32_t base_create (struct blockmanager* bm, lower_info *li){
 	p->base_channel=(channel*)kzalloc(sizeof(channel)*PUNIT, GFP_KERNEL);
 	for(int i=0; i<PUNIT; i++){ //assign block to channel
 		channel *c=&p->base_channel[i];
-		q_init(&c->free_block,_NOB/BPS);
-		mh_init(&c->max_heap,_NOB/BPS,base_mh_swap_hptr,base_mh_assign_hptr,base_get_cnt);
-		for(int j=0; j<_NOB/BPS; j++){
+		q_init(&c->free_block,li->NOB/BPS);
+		mh_init(&c->max_heap,li->NOB/BPS,base_mh_swap_hptr,base_mh_assign_hptr,base_get_cnt);
+		for(int j=0; j<li->NOB/BPS; j++){
 			__block *n=&p->base_block[j*BPS+i%BPS];
 			q_enqueue((void*)n,c->free_block);
 			//mh_insert_append(c->max_heap,(void*)n);

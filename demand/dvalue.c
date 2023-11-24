@@ -16,7 +16,7 @@ extern struct demand_stat d_stat;
 static bool *grain_bitmap; // the grain is valid ? 1 : 0
 
 int grain_create(void) {
-	grain_bitmap = (bool *)kzalloc(d_env.nr_grains * sizeof(bool), GFP_KERNEL);
+	grain_bitmap = (bool *)vmalloc(d_env.nr_grains * sizeof(bool));
 	if (!grain_bitmap) return 1;
 
 	return 0;

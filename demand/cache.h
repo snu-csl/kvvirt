@@ -20,6 +20,8 @@ struct cache_env {
 	int max_cached_tpages;
 	int max_cached_tentries;
 
+    int pftl_memory;
+
 	/* add attributes here */
 };
 

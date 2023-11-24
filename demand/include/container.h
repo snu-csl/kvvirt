@@ -1,6 +1,8 @@
 #ifndef __H_CONTAINER__
 #define __H_CONTAINER__
  
+#include "../../nvmev.h"
+#include "../../ssd.h"
 #include "settings.h"
 #include "types.h"
 #include "utils.h"
@@ -136,7 +138,8 @@ struct lower_info {
 struct algorithm{
 	/*interface*/
 	uint32_t (*argument_set) (int argc, char**argv);
-	uint32_t (*create) (lower_info*, blockmanager *bm, struct algorithm *);
+	uint32_t (*create) (lower_info*, blockmanager *bm, struct algorithm *, 
+                        const struct ssdparams*, uint64_t size);
 	void (*destroy) (lower_info*, struct algorithm *);
 	uint32_t (*read)(request *const);
 	uint32_t (*write)(request *const);

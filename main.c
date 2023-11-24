@@ -569,6 +569,9 @@ static void __print_base_config(void)
 	case SAMSUNG_970PRO:
 		type = "Samsung 970 Pro SSD";
 		break;
+    case SAMSUNG_970PRO_HASH_DFTL:
+		type = "Samsung 970 Pro SSD - DFTL HASH KV";
+		break;
 	case ZNS_PROTOTYPE:
 		type = "ZNS SSD Prototype";
 		break;

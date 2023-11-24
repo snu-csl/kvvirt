@@ -15,6 +15,10 @@ struct convparams {
 
 	double op_area_pcent;
 	int pba_pcent; /* (physical space / logical space) * 100*/
+
+    uint64_t max_ppa;
+    uint64_t num_segments;
+    uint64_t real_num_segments;
 };
 
 struct line {

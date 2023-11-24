@@ -208,6 +208,8 @@ struct ssdparams {
 	unsigned long tt_luns; /* total # of LUNs in the SSD */
 
 	unsigned long long write_buffer_size;
+
+    unsigned long nr_segs;
 };
 
 struct ssd {

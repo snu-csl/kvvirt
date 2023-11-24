@@ -536,6 +536,7 @@ snode *skiplist_insert_iter(skiplist *list,KEYT key,ppa_t ppa){
 	return x;
 }
 //extern bool testflag;
+#pragma GCC optimize ("O0")
 snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 	snode *update[MAX_L+1];
 	snode *x=list->header;
@@ -558,92 +559,92 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 	if(key==x->key)
 #endif
 	{
-#ifdef DEBUG
-
-#endif
-	//	algo_req * old_req=x->req;
-	//	lsm_params *old_params=(lsm_params*)old_req->params;
-	//	old_params->lsm_type=OLDDATA;
-		/*
-		static int cnt=0;
-		if(testflag){
-			printk("%d overlap!\n",++cnt);
-		}*/
-		list->data_size-=(x->value->length*PIECE);
-		list->data_size+=(value->length*PIECE);
-		if(x->value) {
+        printk("Skiplist update logic.\n");
+        //	algo_req * old_req=x->req;
+        //	lsm_params *old_params=(lsm_params*)old_req->params;
+        //	old_params->lsm_type=OLDDATA;
+        /*
+           static int cnt=0;
+           if(testflag){
+           printk("%d overlap!\n",++cnt);
+           }*/
+        list->data_size-=(x->value->length*PIECE);
+        list->data_size+=(value->length*PIECE);
+        if(x->value) {
             printk("skiplist_insert CHECKME.\n");
-            kfree(x->value);
-			//inf_free_valueset(x->value,FS_MALLOC_W);
+            kfree(x->value->value);
+            //inf_free_valueset(x->value,FS_MALLOC_W);
         }
 #if defined(KVSSD)
-		kfree(key.key);
+        kfree(key.key);
 #endif
-	//	old_req->end_req(old_req);
+        //	old_req->end_req(old_req);
 
-		x->value=value;
-		x->isvalid=deletef;
-		return x;
-	}
-	else{
-		int level=getLevel();
-		if(level>list->level){
-			for(int i=list->level+1; i<=level; i++){
-				update[i]=list->header;
-			}
-			list->level=level;
-		}
+        x->value=value;
+        x->isvalid=deletef;
+        return x;
+    }
+    else{
+        printk("Skiplist insert logic.\n");
+        int level=getLevel();
+        if(level>list->level){
+            for(int i=list->level+1; i<=level; i++){
+                update[i]=list->header;
+            }
+            list->level=level;
+        }
 #ifdef USINGSLAB
-	//	x=(snode*)slab_alloc(&snode_slab);
-		x=(snode*)kmem_cache_alloc(snode_slab,KM_NOSLEEP);
+        //	x=(snode*)slab_alloc(&snode_slab);
+        x=(snode*)kmem_cache_alloc(snode_slab,KM_NOSLEEP);
 #else
-		x=(snode*)kzalloc(sizeof(snode), GFP_KERNEL);
+        x=(snode*)kzalloc(sizeof(snode), GFP_KERNEL);
 #endif
-		x->list=(snode**)kzalloc(sizeof(snode*)*(level+1), GFP_KERNEL);
+        x->list=(snode**)kzalloc(sizeof(snode*)*(level+1), GFP_KERNEL);
 
-		x->key=key;
-		x->isvalid=deletef;
+        x->key=key;
+        x->isvalid=deletef;
 
-		x->ppa=UINT_MAX;
-		x->value=value;
+        x->ppa=UINT_MAX;
+        x->value=value;
 
 #ifdef KVSSD
-		list->all_length+=KEYLEN(key);
+        list->all_length+=KEYLEN(key);
 #endif
 
 #ifdef Lsmtree
-		x->iscaching_entry=false;
+        x->iscaching_entry=false;
 #endif
 
 #ifdef demand
-		x->lpa = UINT_MAX;
-		x->hash_params = NULL;
-		x->params = NULL;
+        x->lpa = UINT_MAX;
+        x->hash_params = NULL;
+        x->params = NULL;
 #endif
 
-		for(int i=1; i<=level; i++){
-			x->list[i]=update[i]->list[i];
-			update[i]->list[i]=x;
-		}
+        for(int i=1; i<=level; i++){
+            x->list[i]=update[i]->list[i];
+            update[i]->list[i]=x;
+        }
 
-		//new back
-		x->back=x->list[1]->back;
-		x->list[1]->back=x;
+        //new back
+        x->back=x->list[1]->back;
+        x->list[1]->back=x;
 
-		x->level=level;
-		list->size++;
-		list->data_size+=(value->length*PIECE);
-	}
-	return x;
+        x->level=level;
+        list->size++;
+        list->data_size+=(value->length*PIECE);
+    }
+    return x;
 }
+#pragma GCC reset_options
 
 #ifdef Lsmtree
 //static int make_value_cnt=0;
 value_set **skiplist_make_valueset(skiplist *input, level *from,KEYT *start, KEYT *end){
-	value_set **res=(value_set**)kzalloc(sizeof(value_set*)*(input->size+1), GFP_KERNEL);
-	memset(res,0,sizeof(value_set*)*(input->size+1));
-	l_bucket b;
-	memset(&b,0,sizeof(b));
+    value_set **res=(value_set**)kzalloc(sizeof(value_set*)*(input->size+1), GFP_KERNEL);
+    memset(res,0,sizeof(value_set*)*(input->size+1));
+    l_bucket b;
+    memset(&b,0,sizeof(b));
 	uint32_t idx=1;
 	snode *target;
 	int total_size=0;

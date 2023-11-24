@@ -100,10 +100,11 @@ static void print_demand_env(const struct demand_env *_env) {
 	printk("\n");
 }
 
-static void demand_env_init(struct demand_env *const _env) {
-	_env->nr_pages = _NOP;
-	_env->nr_blocks = _NOB;
-	_env->nr_segments = _NOS;
+static void demand_env_init(struct demand_env *const _env, const struct ssdparams *spp,
+                            uint64_t size) {
+	_env->nr_pages = spp->tt_pgs;
+	_env->nr_blocks = spp->tt_blks;
+	_env->nr_segments = spp->nr_segs;
 
 	_env->nr_tsegments = MAPPART_SEGS;
 	_env->nr_tpages = _env->nr_tsegments * _PPS;
@@ -132,6 +133,8 @@ static void demand_env_init(struct demand_env *const _env) {
 	_env->nr_dgrains = _env->nr_dpages * GRAIN_PER_PAGE;
 	//_env->nr_valid_tpages *= GRAIN_PER_PAGE;
 #endif
+
+    _env->size = size;
 
 	print_demand_env(_env);
 }
@@ -177,14 +180,16 @@ static void demand_stat_init(struct demand_stat *const _stat) {
 
 }
 
-uint32_t demand_create(lower_info *li, blockmanager *bm, algorithm *algo){
+uint32_t demand_create(lower_info *li, blockmanager *bm, 
+                       algorithm *algo, const struct ssdparams *spp,
+                       uint64_t size) {
 
 	/* map modules */
 	// algo->li = li;
 	// algo->bm = bm;
 
 	/* init env */
-	demand_env_init(&d_env);
+	demand_env_init(&d_env, spp, size);
 	/* init member */
 	demand_member_init(&d_member);
 	/* init stat */
@@ -196,7 +201,7 @@ uint32_t demand_create(lower_info *li, blockmanager *bm, algorithm *algo){
 	//range_create();
 
 	/* create() for page allocation module */
-	// page_create(bm);
+	page_create(bm);
 
 #ifdef DVALUE
 	/* create() for grain functions */

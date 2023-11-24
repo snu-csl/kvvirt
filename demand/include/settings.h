@@ -31,7 +31,6 @@
 #define MILI (1000000)
 
 #define PIECE 512
-#define NPCINPAGE (PAGESIZE/PIECE)
 #define MINVALUE PIECE
 #define MINKEYLENGTH 16
 #define DEFKEYLENGTH 32
@@ -48,38 +47,28 @@
 
 #elif defined(SLC)
 
-#define GIGAUNIT 64L
-#define TOTALSIZE (GIGAUNIT*G)
-#define OP 70
-#define REALSIZE (512L*G)
-#define DEVSIZE (64L * G)
-#define PAGESIZE (8*K)
-#define _PPB (256)
-#define BPS (64)
-#define _PPS (_PPB*BPS)
-#define PUNIT (64)
+//#define GIGAUNIT 64L
+//#define TOTALSIZE (GIGAUNIT*G)
+//#define OP 70
+//#define REALSIZE (512L*G)
+//#define DEVSIZE (64L * G)
+//#define PAGESIZE (8*K)
+//#define _PPB (256)
+//#define BPS (64)
+//#define _PPS (_PPB*BPS)
+//#define PUNIT (64)
 
 #endif
 
-#define MAX_PPA (33554432)
-#define BLOCKSIZE (_PPB*PAGESIZE)
-#define _NOP (TOTALSIZE/PAGESIZE)
-#define _NOS (TOTALSIZE/(_PPS*PAGESIZE))
-#define _NOB (BPS*_NOS)
-#define _RNOS (REALSIZE/(_PPS*PAGESIZE))//real number of segment
-
-#define TOTALKEYNUM ((GIGAUNIT)*(G/PAGESIZE))
-//#define RANGE ((GIGAUNIT)*(M/PAGESIZE)*1024L*0.5)
-#define RANGE ((GIGAUNIT)*(M/PAGESIZE)*1024L*0.5*NPCINPAGE)
-#define REQNUM ((GIGAUNIT)*(M/PAGESIZE)*1024L)
-#define SHOWINGSIZE (TOTALSIZE/100*OP)
-#define SHOWINGFULL (SHOWINGSIZE/DEFVALUESIZE)
-#define DEVFULL (TOTALSIZE/DEFVALUESIZE)
+//#define BLOCKSIZE (_PPB*PAGESIZE)
+//#define _NOP (TOTALSIZE/PAGESIZE)
+//#define _NOS (TOTALSIZE/(_PPS*PAGESIZE))
+//#define _NOB (BPS*_NOS)
+//#define _RNOS (REALSIZE/(_PPS*PAGESIZE))//real number of segment
 
 #define PARTNUM 2
-#define SHOWINGSEGS (SHOWINGSIZE/(_PPS*PAGESIZE))
 #define MAPPART_SEGS (40)
-#define DATAPART_SEGS (_NOS-MAPPART_SEGS)
+
 enum{
 	MAP_S,DATA_S
 };
@@ -89,8 +78,6 @@ enum{
 #endif
 
 #define SIMULATION 0
-
-#define PFTLMEMORY (TOTALSIZE/K)
 
 #define FSTYPE uint8_t
 #define ppa_t uint32_t

@@ -30,16 +30,16 @@ static uint8_t test_type(uint8_t type){
 }
 
 uint32_t no_create(lower_info *li,blockmanager *bm){
-	li->NOB=_NOS;
-	li->NOP=_NOP;
-	li->SOB=BLOCKSIZE * BPS;
-	li->SOP=PAGESIZE;
+	//li->NOB=_NOS;
+	//li->NOP=_NOP;
+	//li->SOB=BLOCKSIZE * BPS;
+	//li->SOP=PAGESIZE;
 	li->SOK=sizeof(uint32_t);
-	li->PPB=_PPB;
-	li->PPS=_PPS;
-	li->TS=TOTALSIZE;
-	li->DEV_SIZE=DEVSIZE;
-	li->all_pages_in_dev=DEVSIZE/PAGESIZE;
+	//li->PPB=_PPB;
+	//li->PPS=_PPS;
+	//li->TS=TOTALSIZE;
+	//li->DEV_SIZE=DEVSIZE;
+	//li->all_pages_in_dev=DEVSIZE/PAGESIZE;
 
 	li->write_op=li->read_op=li->trim_op=0;
 	//_fd=open(LOWER_FILE_NAME,O_RDWR|O_DIRECT,0644);
@@ -89,9 +89,7 @@ void *no_push_data(uint32_t PPA, uint32_t size, value_set* value, bool async,alg
 		no_info.req_type_cnt[t_type]++;
 	}
 	
-	if(size !=PAGESIZE){
-        printk("Should have aborted here!! no_push_data\n");
-	}
+    printk("Writing PPA %u size %u in no_dev\n", PPA, size);
 
 	req->end_req(req);
 	return NULL;
@@ -108,6 +106,8 @@ void *no_pull_data(uint32_t PPA, uint32_t size, value_set* value, bool async,alg
 	if(t_type < LREQ_TYPE_NUM){
 		no_info.req_type_cnt[t_type]++;
 	}
+
+    printk("Reading PPA %u %u in no_dev\n", PPA, size);
 	
 	req->end_req(req);
 	return NULL;

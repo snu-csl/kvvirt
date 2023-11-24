@@ -5,6 +5,9 @@
 #ifndef __DEMAND_H__
 #define __DEMAND_H__
 
+#include "../nvmev.h"
+#include "../ssd.h"
+
 #include "d_type.h"
 #include "d_param.h"
 #include "d_htable.h"
@@ -13,6 +16,8 @@
 #include "./include/dl_sync.h"
 #include "./Lsmtree/skiplist.h"
 #include "./include/data_struct/lru_list.h"
+
+#include <linux/vmalloc.h>
 
 extern struct demand_stat d_stat;
 
@@ -101,6 +106,8 @@ struct demand_env {
 
 	int cache_id;
 	float caching_ratio;
+
+    unsigned long long size;
 };
 
 struct demand_member {
@@ -178,7 +185,7 @@ struct demand_stat {
 
 /* Functions */
 uint32_t demand_argument_set(int argc, char **argv);
-uint32_t demand_create(lower_info*, blockmanager*, algorithm*);
+uint32_t demand_create(lower_info*, blockmanager*, algorithm*, const struct ssdparams*, uint64_t size);
 void demand_destroy(lower_info*, algorithm*);
 uint32_t demand_read(request *const);
 uint32_t demand_write(request *const);

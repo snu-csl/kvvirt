@@ -96,13 +96,14 @@ uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 
 	bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
 	bm->private_data=(void*)p;
-	p->base_block=(__block*)kzalloc(sizeof(__block) * (_NOS * PUNIT), GFP_KERNEL);
+	p->base_block=(__block*)vmalloc(sizeof(__block) * (li->NOB * PUNIT));
 
+    BUG_ON(!p->base_block);
     printk("FIXME pbm_create base_block_manager.c manually entering seg_idx.\n");
 
     int seg_idx=0;
 	int block_idx=0;
-	for(int i=0; i<_NOS; i++){
+	for(int i=0; i<li->NOB; i++){
 		for(int j=0; j<PUNIT; j++){
 			__block *b=&p->base_block[block_idx];
 			b->block_num=seg_idx;
@@ -155,7 +156,7 @@ uint32_t pbm_destroy(blockmanager *bm){
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	p_info *pinfo=(p_info*)p->private_data;
 
-	kfree(p->base_block);
+	vfree(p->base_block);
 
 	for(int i=0; i<pinfo->pnum; i++){
 		for(int j=0; j<BPS; j++){
