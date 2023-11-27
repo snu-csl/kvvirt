@@ -420,7 +420,6 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
 
 	nvmev_vdev->storage_mapped = memremap(nvmev_vdev->config.storage_start,
 					      nvmev_vdev->config.storage_size, MEMREMAP_WB);
-
 	if (nvmev_vdev->storage_mapped == NULL)
 		NVMEV_ERROR("Failed to map storage memory.\n");
 

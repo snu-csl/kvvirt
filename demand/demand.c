@@ -139,8 +139,7 @@ static void demand_env_init(struct demand_env *const _env, const struct ssdparam
 	print_demand_env(_env);
 }
 
-
-static int demand_member_init(struct demand_member *const _member) {
+static int demand_member_init(struct demand_member *const _member, const struct ssd *ssd) {
 
 #ifdef HASH_KVSSD
 	key_max.key = (char *)kzalloc(sizeof(char) * MAXKEYSIZE, GFP_KERNEL);
@@ -172,6 +171,7 @@ static int demand_member_init(struct demand_member *const _member) {
 #endif
 
 	_member->hash_table = d_htable_init(d_env.wb_flush_size * 2);
+    _member->ssd = ssd;
 
 	return 0;
 }
@@ -181,17 +181,17 @@ static void demand_stat_init(struct demand_stat *const _stat) {
 }
 
 uint32_t demand_create(lower_info *li, blockmanager *bm, 
-                       algorithm *algo, const struct ssdparams *spp,
+                       algorithm *algo, const struct ssd *ssd,
                        uint64_t size) {
 
 	/* map modules */
-	// algo->li = li;
-	// algo->bm = bm;
+	algo->li = li;
+	algo->bm = bm;
 
 	/* init env */
-	demand_env_init(&d_env, spp, size);
+	demand_env_init(&d_env, &ssd->sp, size);
 	/* init member */
-	demand_member_init(&d_member);
+	demand_member_init(&d_member, ssd);
 	/* init stat */
 	demand_stat_init(&d_stat);
 
@@ -462,7 +462,7 @@ uint32_t demand_read(request *const req){
 	return 0;
 }
 
-uint32_t demand_write(request *const req) {
+uint64_t demand_write(request *const req) {
 	uint32_t rc;
 	mutex_lock(&d_member.op_lock);
 #ifdef HASH_KVSSD

@@ -9,8 +9,8 @@
 
 int fg_create(cache_t, struct demand_cache *);
 int fg_destroy(void);
-int fg_load(lpa_t, request *const, snode *wb_entry);
-int fg_list_up(lpa_t, request *const, snode *wb_entry);
+int fg_load(lpa_t, request *const, snode *wb_entry, uint64_t*);
+int fg_list_up(lpa_t, request *const, snode *wb_entry, uint64_t*);
 int fg_wait_if_flying(lpa_t, request *const, snode *wb_entry);
 int fg_touch(lpa_t);
 int fg_update(lpa_t, struct pt_struct pte);

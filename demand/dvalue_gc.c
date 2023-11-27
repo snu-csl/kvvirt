@@ -222,6 +222,8 @@ int dpage_gc_dvalue(blockmanager *bm) {
 	struct gc_table_struct **bulk_table = 
     (struct gc_table_struct **)kzalloc(_PPS * sizeof(struct gc_table_struct *), GFP_KERNEL);
 
+    BUG_ON(!bulk_table);
+
 	__gsegment *target_seg = bm->pt_get_gc_target(bm, DATA_S);
 
 	int nr_read_pages = _do_bulk_read_pages_containing_valid_grain(bm, bulk_table, target_seg);

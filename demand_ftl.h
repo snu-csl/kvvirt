@@ -8,6 +8,29 @@
 #include "ssd_config.h"
 #include "ssd.h"
 
+#include "nvme_kv.h"
+
+#define is_kv_append_cmd(opcode) ((opcode) == nvme_cmd_kv_append)
+#define is_kv_store_cmd(opcode) ((opcode) == nvme_cmd_kv_store)
+#define is_kv_retrieve_cmd(opcode) ((opcode) == nvme_cmd_kv_retrieve)
+#define is_kv_delete_cmd(opcode) ((opcode) == nvme_cmd_kv_delete)
+#define is_kv_iter_req_cmd(opcode) ((opcode) == nvme_cmd_kv_iter_req)
+#define is_kv_iter_read_cmd(opcode) ((opcode) == nvme_cmd_kv_iter_read)
+#define is_kv_exist_cmd(opcode) ((opcode) == nvme_cmd_kv_exist)
+#define is_kv_batch_cmd(opcode) ((opcode) == nvme_cmd_kv_batch)
+
+#define is_kv_cmd(opcode)                                                                         \
+	(is_kv_append_cmd(opcode) || is_kv_store_cmd(opcode) || is_kv_retrieve_cmd(opcode) ||     \
+	 is_kv_delete_cmd(opcode) || is_kv_iter_req_cmd(opcode) || is_kv_iter_read_cmd(opcode) || \
+	 is_kv_exist_cmd(opcode)) ||                                                              \
+		is_kv_batch_cmd(opcode)
+
+typedef enum {
+	// generic command status
+	KV_SUCCESS = 0, // success
+	KV_ERR_KEY_NOT_EXIST = 0x310,
+} kvs_result;
+
 struct convparams {
 	uint32_t gc_thres_lines;
 	uint32_t gc_thres_lines_high;
@@ -78,5 +101,7 @@ void conv_remove_namespace(struct nvmev_ns *ns);
 
 bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 			   struct nvmev_result *ret);
+bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, 
+                         struct nvmev_result *ret);
 
 #endif

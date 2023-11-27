@@ -537,7 +537,7 @@ snode *skiplist_insert_iter(skiplist *list,KEYT key,ppa_t ppa){
 }
 //extern bool testflag;
 #pragma GCC optimize ("O0")
-snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
+snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, uint64_t sqid){
 	snode *update[MAX_L+1];
 	snode *x=list->header;
 	for(int i=list->level; i>=1; i--){
@@ -552,6 +552,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 	x=x->list[1];
 	if(value!=NULL){
 		value->length=(value->length/PIECE)+(value->length%PIECE?1:0);
+        //printk("vlen changed to %u (%u)\n", value->length, PIECE);
 	}
 #if defined(KVSSD)
 	if(KEYTEST(key,x->key))
@@ -559,7 +560,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 	if(key==x->key)
 #endif
 	{
-        printk("Skiplist update logic.\n");
+        //printk("Skiplist update logic.\n");
         //	algo_req * old_req=x->req;
         //	lsm_params *old_params=(lsm_params*)old_req->params;
         //	old_params->lsm_type=OLDDATA;
@@ -571,7 +572,6 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
         list->data_size-=(x->value->length*PIECE);
         list->data_size+=(value->length*PIECE);
         if(x->value) {
-            printk("skiplist_insert CHECKME.\n");
             kfree(x->value->value);
             //inf_free_valueset(x->value,FS_MALLOC_W);
         }
@@ -582,10 +582,11 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 
         x->value=value;
         x->isvalid=deletef;
+        x->sqid = sqid;
         return x;
     }
     else{
-        printk("Skiplist insert logic.\n");
+        //printk("Skiplist insert logic.\n");
         int level=getLevel();
         if(level>list->level){
             for(int i=list->level+1; i<=level; i++){
@@ -606,6 +607,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef){
 
         x->ppa=UINT_MAX;
         x->value=value;
+        x->sqid = sqid;
 
 #ifdef KVSSD
         list->all_length+=KEYLEN(key);
@@ -816,7 +818,7 @@ skiplist *skiplist_copy(skiplist* src){
 	snode *now=src->header->list[1];
 	snode *n_node;
 	while(now!=src->header){
-		n_node=skiplist_insert(des,now->key,now->value,now->isvalid);
+		n_node=skiplist_insert(des,now->key,now->value,now->isvalid,now->sqid);
 		n_node->ppa=now->ppa;
 		now=now->list[1];
 	}

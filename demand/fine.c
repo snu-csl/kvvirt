@@ -161,7 +161,7 @@ int fg_destroy(void) {
 	return 0;
 }
 
-int fg_load(lpa_t lpa, request *const req, snode *wb_entry) {
+int fg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t* nsecs_completed) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	struct inflight_params *i_params;
 
@@ -180,7 +180,7 @@ int fg_load(lpa_t lpa, request *const req, snode *wb_entry) {
 	return 1;
 }
 
-int fg_list_up(lpa_t lpa, request *const req, snode *wb_entry) {
+int fg_list_up(lpa_t lpa, request *const req, snode *wb_entry, uint64_t* nsecs_completed) {
 	int rc = 0;
 	blockmanager *bm = __demand.bm;
 

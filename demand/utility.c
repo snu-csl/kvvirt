@@ -39,6 +39,7 @@ struct algo_req *make_algo_req_rw(uint8_t type, value_set *value, request *req, 
 struct algo_req *make_algo_req_sync(uint8_t type, value_set *value) {
 	struct algo_req *a_req = make_algo_req_default(type, value);
 	a_req->rapid = true;
+    a_req->sqid = UINT_MAX;
 
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
 	d_params->sync_mutex = (dl_sync *)kzalloc(sizeof(dl_sync), GFP_KERNEL);

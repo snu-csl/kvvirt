@@ -230,12 +230,14 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NR_NAMESPACES 1
 
 #define OP 70
-#define PAGESIZE (8*K)
+#define PAGESIZE KB(8)
 #define _PPB (256)
 #define BPS (64)
 #define _PPS (_PPB*BPS)
 #define PUNIT (64)
 #define NPCINPAGE (PAGESIZE/PIECE)
+
+#define DRAM_SIZE MB(1024LU)
 
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)

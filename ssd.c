@@ -156,6 +156,8 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	spp->tt_lines = spp->blks_per_lun;
 	/* TODO: to fix under multiplanes */ // lun size is super-block(line) size
 
+    spp->dram_size = DRAM_SIZE;
+
 	check_params(spp);
 
 	total_size = (unsigned long)spp->tt_luns * spp->blks_per_lun * spp->pgs_per_blk *

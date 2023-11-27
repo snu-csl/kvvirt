@@ -78,7 +78,7 @@ uint64_t offset_hooker(uint64_t origin_offset, uint8_t req_type){
 	}
 	return res%(no_info.DEV_SIZE);
 }
-void *no_push_data(uint32_t PPA, uint32_t size, value_set* value, bool async,algo_req *const req){
+uint64_t no_push_data(uint32_t PPA, uint32_t size, value_set* value, bool async,algo_req *const req){
 	req->ppa = PPA;
 	if(value->dmatag==-1){
 		printk("dmatag -1 error!\n");
@@ -92,10 +92,10 @@ void *no_push_data(uint32_t PPA, uint32_t size, value_set* value, bool async,alg
     printk("Writing PPA %u size %u in no_dev\n", PPA, size);
 
 	req->end_req(req);
-	return NULL;
+	return UINT_MAX;
 }
 
-void *no_pull_data(uint32_t PPA, uint32_t size, value_set* value, bool async,algo_req *const req){	
+uint64_t no_pull_data(uint32_t PPA, uint32_t size, value_set* value, bool async,algo_req *const req){	
 	req->ppa = PPA;
 	if(value->dmatag==-1){
 		printk("dmatag -1 error!\n");
@@ -110,7 +110,7 @@ void *no_pull_data(uint32_t PPA, uint32_t size, value_set* value, bool async,alg
     printk("Reading PPA %u %u in no_dev\n", PPA, size);
 	
 	req->end_req(req);
-	return NULL;
+	return 0;
 }
 
 void *no_trim_block(uint32_t PPA, bool async){

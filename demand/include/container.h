@@ -26,6 +26,7 @@ typedef struct upper_request{
 }upper_request;
 
 typedef struct value_set{
+    const struct ssd *ssd;
 	PTR value;
 	uint32_t length;
 	int dmatag; //-1 == not dma_alloc, others== dma_alloc
@@ -79,6 +80,11 @@ struct request {
 	/* HASH_KVSSD */
 	void *hash_params;
 	struct request *parents;
+
+    /* NVMeVirt */
+    struct nvmev_request *req;
+    struct ssd *ssd;
+    uint64_t sqid;
 };
 
 struct algo_req{
@@ -91,13 +97,23 @@ struct algo_req{
 	//0: normal, 1 : no tag, 2: read delay 4:write delay
 	void *(*end_req)(struct algo_req *const);
 	void *params;
+
+    /*
+     * NVMeVirt.
+     */
+
+    uint64_t sqid;
 };
 
 struct lower_info {
 	uint32_t (*create)(struct lower_info*, blockmanager *bm);
 	void* (*destroy)(struct lower_info*);
-	void* (*write)(uint32_t ppa, uint32_t size, value_set *value,bool async,algo_req * const req);
-	void* (*read)(uint32_t ppa, uint32_t size, value_set *value,bool async,algo_req * const req);
+	uint64_t (*write)(uint32_t ppa, uint32_t size, 
+                      value_set *value, bool async,
+                      algo_req * const req);
+	uint64_t (*read)(uint32_t ppa, uint32_t size, 
+                  value_set *value, bool async,
+                  algo_req * const req);
 	void* (*read_hw)(uint32_t ppa, char *key,uint32_t key_len, value_set *value,bool async,algo_req * const req);
 	void* (*device_badblock_checker)(uint32_t ppa,uint32_t size,void *(*process)(uint64_t, uint8_t));
 	void* (*trim_block)(uint32_t ppa,bool async);
@@ -139,10 +155,10 @@ struct algorithm{
 	/*interface*/
 	uint32_t (*argument_set) (int argc, char**argv);
 	uint32_t (*create) (lower_info*, blockmanager *bm, struct algorithm *, 
-                        const struct ssdparams*, uint64_t size);
+                        const struct ssd*, uint64_t size);
 	void (*destroy) (lower_info*, struct algorithm *);
 	uint32_t (*read)(request *const);
-	uint32_t (*write)(request *const);
+	uint64_t (*write)(request *const);
 	uint32_t (*remove)(request *const);
 #ifdef KVSSD
 	uint32_t (*iter_create)(request *const);

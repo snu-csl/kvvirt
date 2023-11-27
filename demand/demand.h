@@ -17,6 +17,7 @@
 #include "./Lsmtree/skiplist.h"
 #include "./include/data_struct/lru_list.h"
 
+#include <linux/highmem.h>
 #include <linux/vmalloc.h>
 
 extern struct demand_stat d_stat;
@@ -134,6 +135,8 @@ struct demand_member {
 #ifdef HASH_KVSSD
 	int max_try;
 #endif
+
+    const struct ssd *ssd;
 };
 
 struct demand_stat {
@@ -185,14 +188,15 @@ struct demand_stat {
 
 /* Functions */
 uint32_t demand_argument_set(int argc, char **argv);
-uint32_t demand_create(lower_info*, blockmanager*, algorithm*, const struct ssdparams*, uint64_t size);
+uint32_t demand_create(lower_info*, blockmanager*, algorithm*, const struct ssd*, 
+                       uint64_t size);
 void demand_destroy(lower_info*, algorithm*);
 uint32_t demand_read(request *const);
-uint32_t demand_write(request *const);
+uint64_t demand_write(request *const);
 uint32_t demand_remove(request *const);
 
-uint32_t __demand_read(request *const);
-uint32_t __demand_write(request *const);
+uint64_t __demand_read(request *const);
+uint64_t __demand_write(request *const);
 uint32_t __demand_remove(request *const);
 void *demand_end_req(algo_req*);
 

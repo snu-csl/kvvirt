@@ -113,7 +113,7 @@ uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 			b->bitset=(uint8_t*)kzalloc((_PPB/8) * 1, GFP_KERNEL);
 			block_idx++;
 		}
-        seg_idx++;
+        seg_idx += _PPS;
 	}
 
 	p_info* pinfo=(p_info*)kzalloc(sizeof(p_info), GFP_KERNEL);

@@ -181,6 +181,21 @@ struct nvmev_io_work {
 	size_t buffs_to_release;
 
 	unsigned int next, prev;
+
+    /* Internal copy parameters */
+
+    bool read;
+    unsigned long long len;
+
+    /* Memory to disk (write) or disk to memory (read). */
+
+    void* mem;
+    unsigned long long ppa;
+
+    bool (*cb)(void*);
+    void* args;
+
+    /* Internal copy parameters end */
 };
 
 struct nvmev_io_worker {

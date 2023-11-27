@@ -44,6 +44,7 @@ static int _do_bulk_read_valid_pages(blockmanager *bm, struct gc_table_struct **
 	for_each_page_in_seg_blocks(target_seg, target_blk, ppa, blk_idx, page_idx) {
 		if (bm->is_valid_page(bm, ppa)) {
 			value_set *origin = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+            origin->ssd = d_member.ssd;
 			__demand.li->read(ppa, PAGESIZE, origin, ASYNC, make_algo_req_default((type == DATA) ? GCDR : GCMR, origin));
 
 			invalidate_page(bm, ppa, type);
@@ -72,6 +73,7 @@ static int _do_bulk_write_valid_pages(blockmanager *bm, struct gc_table_struct *
 #ifdef HASH_KVSSD
 		if (type == DATA) copy_value_onlykey(new_vs, bulk_table[i]->origin);
 #endif
+        new_vs->ssd = d_member.ssd;
 		__demand.li->write(new_ppa, PAGESIZE, new_vs, ASYNC, make_algo_req_default((type == DATA) ? GCDW : GCMW, new_vs));
 
 		bulk_table[i]->ppa = new_ppa;
@@ -107,6 +109,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, struct gc_table_struct **bu
 
 		if (!CACHE_HIT(cmt->pt)) {
 			value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+            _value_mr->ssd = d_member.ssd;
 			__demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, make_algo_req_default(GCMR_DGC, _value_mr));
 
 			if (bm->is_valid_page(bm, cmt->t_ppa)) {
@@ -137,6 +140,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, struct gc_table_struct **bu
 
 		cmt->t_ppa = get_tpage(bm);
 		value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
+        _value_mw->ssd = d_member.ssd;
 		__demand.li->write(cmt->t_ppa, PAGESIZE, _value_mw, ASYNC, make_algo_req_default(GCMW_DGC, _value_mw));
 
 		bm->populate_bit(bm, cmt->t_ppa);
@@ -179,6 +183,8 @@ int dpage_gc(blockmanager *bm) {
 }
 
 ppa_t get_dpage(blockmanager *bm) {
+    BUG_ON(!bm);
+
 	ppa_t ppa;
 	if (!d_active || bm->check_full(bm, d_active, MASTER_BLOCK)) {
 		if (bm->pt_isgc_needed(bm, DATA_S)) {

@@ -54,6 +54,12 @@ typedef struct snode{ //skiplist's node
 #endif
 	struct snode **list;
 	struct snode *back;
+
+    /*
+     * NVMeVirt.
+     */
+
+    uint64_t sqid;
 }snode;
 
 //#ifdef Lsmtree
@@ -77,6 +83,12 @@ typedef struct skiplist{
 #endif
 	uint32_t data_size;
 	snode *header;
+
+    /*
+     * NVMeVirt.
+     */
+
+    uint64_t sqid;
 }skiplist;
 
 //read only iterator. don't using iterater after delete iter's now node
@@ -91,7 +103,7 @@ snode *skiplist_find(skiplist*,KEYT); //find snode having key in skiplist, retur
 snode *skiplist_find_lowerbound(skiplist *,KEYT );
 snode *skiplist_range_search(skiplist *,KEYT);
 snode *skiplist_strict_range_search(skiplist *,KEYT);
-snode *skiplist_insert(skiplist*,KEYT,value_set *,bool); //insert skiplist, return inserted snode
+snode *skiplist_insert(skiplist*,KEYT,value_set *,bool,uint64_t); //insert skiplist, return inserted snode
 snode *skiplist_insert_iter(skiplist *,KEYT lpa, ppa_t ppa);
 #ifdef Lsmtree
 skiplist *skiplist_merge(skiplist *src,skiplist *des);

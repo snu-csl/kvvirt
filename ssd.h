@@ -132,6 +132,7 @@ struct nand_cmd {
 };
 
 struct buffer {
+    void* data;
 	size_t size;
 	size_t remaining;
 	spinlock_t lock;
@@ -210,6 +211,8 @@ struct ssdparams {
 	unsigned long long write_buffer_size;
 
     unsigned long nr_segs;
+
+    unsigned long dram_size; /* DRAM size for caching KV/KV mapping entries. */
 };
 
 struct ssd {

@@ -6,6 +6,7 @@
 #include <linux/sched/clock.h>
 
 #include "nvmev.h"
+#include "nvme_kv.h"
 #include "dma.h"
 
 #if (SUPPORTED_SSD_TYPE(CONV) || SUPPORTED_SSD_TYPE(ZNS))
@@ -35,19 +36,141 @@ static inline unsigned long long __get_wallclock(void)
 	return cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 }
 
-static unsigned int __do_perform_io(int sqid, int sq_entry)
+/*
+ * Copy from the disk to an in-memory buffer outside of virt's reserved memory.
+ * For example, in a demand-based FTL we may need to copy
+ * mapping entries from the disk into a cache somewhere.
+ */
+
+static unsigned int __do_perform_internal_copy(uint64_t ppa, void* dst, 
+                                               uint64_t len, bool read)
+{
+    BUG_ON(len > PAGESIZE);
+
+    uint64_t offset = ppa * PAGESIZE;
+
+    if(read) {
+        printk("Performing an internal read from ppa %llu len %llu\n", ppa, len);
+        memcpy(dst, nvmev_vdev->ns[0].mapped + offset, len);
+    } else {
+        printk("Performing an internal write to ppa %llu len %llu\n", ppa, len);
+        memcpy(nvmev_vdev->ns[0].mapped + offset, dst, len);
+    }
+
+    return 0;
+}
+
+static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 {
 	struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
-	struct nvme_rw_command *cmd = &sq_entry(sq_entry).rw;
+	struct nvme_command *b_cmd = &sq_entry(sq_entry);
+    struct nvme_kv_command *cmd = (struct nvme_kv_command*) b_cmd;
+
 	size_t offset;
 	size_t length, remaining;
 	int prp_offs = 0;
 	int prp2_offs = 0;
 	u64 paddr;
 	u64 *paddr_list = NULL;
-	size_t nsid = cmd->nsid - 1; // 0-based
+	size_t nsid = 0;  // 0-based
 
-	offset = cmd->slba << 9;
+    bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
+    printk("In io_kv for a %s!\n", read ? "read" : "write");
+
+    nsid = 0;
+
+    if(read) {
+        offset = cmd->kv_retrieve.rsvd2;
+        length = cmd->kv_retrieve.value_len << 2;
+    } else {
+        offset = cmd->kv_store.rsvd2;
+        length = cmd->kv_store.value_len << 2;
+    }
+
+    if(offset == UINT_MAX - 1) {
+        printk("This request was satisfied from the write buffer. "
+                "Skipping copy.\n");
+        return length;
+    } else if (offset == UINT_MAX) {
+        printk("This KV pair wasn't found! "
+                "Skipping copy.\n");
+        return 0;
+    }
+
+	remaining = length;
+    printk("Length %lu\n", length);
+
+	while (remaining) {
+		size_t io_size;
+		void *vaddr;
+		size_t mem_offs = 0;
+
+		prp_offs++;
+		if (prp_offs == 1) {
+            if(read) {
+                paddr = cmd->kv_retrieve.dptr.prp1;
+            } else {
+                paddr = cmd->kv_store.dptr.prp1;
+            }
+		} else if (prp_offs == 2) {
+            if(read) {
+                paddr = cmd->kv_retrieve.dptr.prp2;
+            } else {
+                paddr = cmd->kv_store.dptr.prp2;
+            }
+			if (remaining > PAGE_SIZE) {
+				paddr_list = kmap_atomic_pfn(PRP_PFN(paddr)) +
+					     (paddr & PAGE_OFFSET_MASK);
+				paddr = paddr_list[prp2_offs++];
+			}
+		} else {
+			paddr = paddr_list[prp2_offs++];
+		}
+
+		vaddr = kmap_atomic_pfn(PRP_PFN(paddr));
+        printk("Passed vaddr map\n");
+
+		io_size = min_t(size_t, remaining, PAGE_SIZE);
+
+		if (paddr & PAGE_OFFSET_MASK) {
+			mem_offs = paddr & PAGE_OFFSET_MASK;
+			if (io_size + mem_offs > PAGE_SIZE)
+				io_size = PAGE_SIZE - mem_offs;
+		}
+
+		if (!read) {
+			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
+		} else {
+            printk("Copying from %lu (%s %s)\n", offset, (char*) vaddr + mem_offs, (char*) nvmev_vdev->ns[nsid].mapped + offset);
+			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
+		}
+
+		kunmap_atomic(vaddr);
+
+		remaining -= io_size;
+		offset += io_size;
+	}
+
+	if (paddr_list != NULL)
+		kunmap_atomic(paddr_list);
+
+    printk("Done\n");
+	return length;
+}
+
+static unsigned int __do_perform_io(int sqid, int sq_entry)
+{
+	struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
+    struct nvme_rw_command *cmd = &sq_entry(sq_entry).rw;
+	size_t offset;
+	size_t length, remaining;
+	int prp_offs = 0;
+	int prp2_offs = 0;
+	u64 paddr;
+	u64 *paddr_list = NULL;
+	size_t nsid = cmd->nsid - 1;  // 0-based
+
+    offset = cmd->slba << 9;
 	length = (cmd->length + 1) << 9;
 	remaining = length;
 
@@ -338,6 +461,80 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 	__insert_req_sorted(entry, worker, nsecs_target);
 }
 
+void schedule_internal_operation_withcopy(int sqid, unsigned long long nsecs_target,
+                                          struct buffer *write_buffer, size_t buffs_to_release,
+                                          uint64_t from, uint64_t to)
+{
+	struct nvmev_io_worker *worker;
+	struct nvmev_io_work *w;
+	unsigned int entry;
+
+	worker = __allocate_work_queue_entry(sqid, &entry);
+	if (!worker)
+		return;
+
+	w = worker->work_queue + entry;
+
+	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
+		    local_clock(), nsecs_target - local_clock());
+
+	/////////////////////////////////
+	w->sqid = sqid;
+	w->nsecs_start = w->nsecs_enqueue = local_clock();
+	w->nsecs_target = nsecs_target;
+	w->is_completed = false;
+	w->is_copied = true;
+	w->prev = -1;
+	w->next = -1;
+
+	w->is_internal = true;
+	w->write_buffer = write_buffer;
+	w->buffs_to_release = buffs_to_release;
+	mb(); /* IO worker shall see the updated w at once */
+
+	__insert_req_sorted(entry, worker, nsecs_target);
+}
+
+void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
+                                    void* mem, uint64_t ppa,
+                                    bool (*cb)(void*), void *args, bool read)
+{
+	struct nvmev_io_worker *worker;
+	struct nvmev_io_work *w;
+	unsigned int entry;
+
+	worker = __allocate_work_queue_entry(sqid, &entry);
+    BUG_ON(!worker);
+	if (!worker)
+		return;
+
+	w = worker->work_queue + entry;
+
+	NVMEV_INFO("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
+		    local_clock(), nsecs_target - local_clock());
+
+	/////////////////////////////////
+	w->sqid = sqid;
+	w->nsecs_start = w->nsecs_enqueue = local_clock();
+	w->nsecs_target = nsecs_target;
+	w->is_completed = false;
+	w->is_copied = false;
+	w->prev = -1;
+	w->next = -1;
+    w->cb = cb;
+    w->args = args;
+    w->read = read;
+    w->mem = mem;
+    w->ppa = ppa;
+
+	w->is_internal = true;
+	w->write_buffer = NULL;
+	w->buffs_to_release = 0;
+	mb(); /* IO worker shall see the updated w at once */
+
+	__insert_req_sorted(entry, worker, nsecs_target);
+}
+
 static void __reclaim_completed_reqs(void)
 {
 	unsigned int turn;
@@ -394,7 +591,7 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
 	unsigned long long nsecs_start = __get_wallclock();
 	struct nvme_command *cmd = &sq_entry(sq_entry);
-#if (BASE_SSD == KV_PROTOTYPE)
+#if (BASE_SSD == KV_PROTOTYPE) || (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
 	uint32_t nsid = 0; // Some KVSSD programs give 0 as nsid for KV IO
 #else
 	uint32_t nsid = cmd->common.nsid - 1;
@@ -579,11 +776,17 @@ static int nvmev_io_worker(void *data)
 			}
 
 			if (w->is_copied == false) {
+                NVMEV_INFO("%s: picked up %u, %d %d %d\n", worker->thread_name, curr,
+                        w->sqid, w->cqid, w->sq_entry);
+
 #ifdef PERF_DEBUG
 				w->nsecs_copy_start = local_clock() + delta;
 #endif
 				if (w->is_internal) {
-					;
+                    if(w->cb) {
+                        __do_perform_internal_copy(w->ppa, w->mem, w->len, w->read);
+                        w->cb(w->args);
+                    }
 				} else if (io_using_dma) {
 					__do_perform_io_using_dma(w->sqid, w->sq_entry);
 				} else {
@@ -598,7 +801,18 @@ static int nvmev_io_worker(void *data)
 						__do_perform_io(w->sqid, w->sq_entry);
 					}
 #endif
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+					struct nvmev_submission_queue *sq =
+						nvmev_vdev->sqes[w->sqid];
+					ns = &nvmev_vdev->ns[0];
+                    if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
+                        __do_perform_io_kv(w->sqid, w->sq_entry);
+                    } else {
+                        __do_perform_io(w->sqid, w->sq_entry);
+                    }
+#else
 					__do_perform_io(w->sqid, w->sq_entry);
+#endif
 				}
 
 #ifdef PERF_DEBUG
@@ -613,8 +827,10 @@ static int nvmev_io_worker(void *data)
 			if (w->nsecs_target <= curr_nsecs) {
 				if (w->is_internal) {
 #if (SUPPORTED_SSD_TYPE(CONV) || SUPPORTED_SSD_TYPE(ZNS))
-					buffer_release((struct buffer *)w->write_buffer,
-						       w->buffs_to_release);
+                    if(w->write_buffer) {
+                        buffer_release((struct buffer *)w->write_buffer,
+                                w->buffs_to_release);
+                    }
 #endif
 				} else {
 					__fill_cq_result(w);

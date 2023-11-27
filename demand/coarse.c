@@ -43,7 +43,8 @@ static void print_cache_env(struct cache_env *const _env) {
 	printk(" | Total trans pages:        %d\n", _env->nr_valid_tpages);
 	//printk(" | Caching Ratio:            %0.3f%%\n", _env->caching_ratio * 100);
 	printk(" | Caching Ratio:            same as PFTL\n");
-	printk(" |  - Max cached tpages:     %d\n", _env->max_cached_tpages);
+	printk(" |  - Max cached tpages:     %d (%u bytes)\n", 
+            _env->max_cached_tpages, _env->max_cached_tpages * PAGESIZE);
 	//printk(" |  (PageFTL cached tpages:  %d)\n", _env->nr_tpages_optimal_caching);
 	printk(" |---------- Demand Cache Log END\n");
 	printk("\n");
@@ -155,9 +156,10 @@ int cg_destroy(void) {
 	return 0;
 }
 
-int cg_load(lpa_t lpa, request *const req, snode *wb_entry) {
+int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_completed) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	struct inflight_params *i_params;
+    uint64_t nsec = 0;
 
 	if (IS_INITIAL_PPA(cmt->t_ppa)) {
 		return 0;
@@ -167,16 +169,24 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry) {
 	i_params->jump = GOTO_LIST;
 
 	value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
-	__demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, make_algo_req_rw(MAPPINGR, _value_mr, req, wb_entry));
+	nsec = __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, 
+                                         make_algo_req_rw(MAPPINGR, _value_mr, 
+                                         req, wb_entry));
+
+    if(nsecs_completed) {
+        *nsecs_completed = nsec;
+    }
 
 	cmt->is_flying = true;
 
 	return 1;
 }
 
-int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry) {
+int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry, 
+               uint64_t *nsecs_completed) {
 	int rc = 0;
 	blockmanager *bm = __demand.bm;
+    uint64_t nsecs_latest = 0, nsecs = 0;
 
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	struct cmt_struct *victim = NULL;
@@ -203,7 +213,9 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry) {
 			//struct pt_struct pte = cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
 
 			value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
-			__demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC, make_algo_req_rw(MAPPINGW, _value_mw, req, wb_entry));
+			nsecs = __demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC, 
+                                       make_algo_req_rw(MAPPINGW, _value_mw, 
+                                       req, wb_entry));
 			set_oob(bm, victim->idx, victim->t_ppa, MAP);
 
 			rc = 1;
@@ -211,6 +223,8 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry) {
 			cstat->clean_evict++;
 		}
 	}
+
+    nsecs_latest = max(nsecs_latest, nsecs);
 
 	cmt->pt = cmbr->mem_table[IDX(lpa)];
 	cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
@@ -244,6 +258,10 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry) {
 			}
 		}
 	}
+
+    if(nsecs_completed) {
+        *nsecs_completed = nsecs_latest;
+    }
 
 	return rc;
 }

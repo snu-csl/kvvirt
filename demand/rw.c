@@ -16,10 +16,10 @@ extern struct demand_stat d_stat;
 
 extern struct demand_cache *d_cache;
 
-
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
+        printk("WB hit for key %s!\n", req->key.key);
 		d_stat.wb_hit++;
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
@@ -32,7 +32,10 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	return 0;
 }
 
-static uint32_t read_actual_dpage(ppa_t ppa, request *const req) {
+static uint32_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
+    uint64_t nsecs = 0;
+
+    printk("Read data read for PPA %u\n", ppa);
 	if (IS_INITIAL_PPA(ppa)) {
 		warn_notfound(__FILE__, __LINE__);
 		return UINT_MAX;
@@ -44,7 +47,13 @@ static uint32_t read_actual_dpage(ppa_t ppa, request *const req) {
 	ppa = G_IDX(ppa);
 #endif
 
-	__demand.li->read(ppa, PAGESIZE, req->value, ASYNC, a_req);
+    req->value->ssd = d_member.ssd;
+	nsecs = __demand.li->read(ppa, PAGESIZE, req->value, ASYNC, a_req);
+
+    if(nsecs_completed) {
+        *nsecs_completed = nsecs;
+    }
+
 	return 0;
 }
 
@@ -56,12 +65,14 @@ static uint32_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 	((struct demand_params *)a_req->params)->offset = G_OFFSET(ppa);
 	ppa = G_IDX(ppa);
 #endif
+    _value_dr_check->ssd = d_member.ssd;
 	__demand.li->read(ppa, PAGESIZE, _value_dr_check, ASYNC, a_req);
 	return 0;
 }
 
-uint32_t __demand_read(request *const req) {
+uint64_t __demand_read(request *const req) {
 	uint32_t rc = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
 
@@ -72,6 +83,7 @@ uint32_t __demand_read(request *const req) {
 read_retry:
 #endif
 	lpa = get_lpa(req->key, req->hash_params);
+    printk("Got LPA %u for key %s!\n", lpa, req->key.key);
 	pte.ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
 	pte.key_fp = FP_MAX;
@@ -84,6 +96,8 @@ read_retry:
 		goto read_ret;
 	}
 #endif
+
+    nsecs_latest = max(nsecs_completed, nsecs_latest);
 
 	/* inflight request */
 	if (IS_INFLIGHT(req->params)) {
@@ -111,6 +125,9 @@ read_retry:
 	/* 1. check write buffer first */
 	rc = do_wb_check(d_member.write_buffer, req);
 	if (rc) {
+        nsecs_completed =
+        ssd_advance_write_buffer(req->ssd, req->req->nsecs_start, 1024);
+        req->ppa = UINT_MAX - 1;
 		req->end_req(req);
 		goto read_ret;
 	}
@@ -118,21 +135,24 @@ read_retry:
 	/* 2. check cache */
 	if (d_cache->is_hit(lpa)) {
 		d_cache->touch(lpa);
-
+        printk("Cache hit for LPA %u!\n", lpa);
 	} else {
 cache_load:
 		rc = d_cache->wait_if_flying(lpa, req, NULL);
 		if (rc) {
 			goto read_ret;
 		}
-		rc = d_cache->load(lpa, req, NULL);
+		rc = d_cache->load(lpa, req, NULL, &nsecs_completed);
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
+            req->ppa = UINT_MAX;
 			rc = UINT_MAX;
 			warn_notfound(__FILE__, __LINE__);
 		}
 		goto read_ret;
 cache_list_up:
-		rc = d_cache->list_up(lpa, req, NULL);
+		rc = d_cache->list_up(lpa, req, NULL, &nsecs_completed);
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (rc) {
 			goto read_ret;
 		}
@@ -151,10 +171,11 @@ cache_check_complete:
 #endif
 data_read:
 	/* 3. read actual data */
-	rc = read_actual_dpage(pte.ppa, req);
+	rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 read_ret:
-	return rc;
+	return nsecs_latest;
 }
 
 
@@ -217,6 +238,7 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 
 			ordering_done++;
 		}
+
 		fl->size++;
 	}
 
@@ -250,7 +272,6 @@ static void _do_wb_mapping_update(skiplist *wb) {
 
 	lpa_t lpa;
 	struct pt_struct pte, new_pte;
-
 
 	/* push all the wb_entries to queue */
 	sk_iter *iter = skiplist_get_iterator(wb);
@@ -301,16 +322,15 @@ wb_retry:
 
 		if (d_cache->is_hit(lpa)) {
 			d_cache->touch(lpa);
-
 		} else {
 wb_cache_load:
 			rc = d_cache->wait_if_flying(lpa, NULL, wb_entry);
 			if (rc) continue; /* pending */
 
-			rc = d_cache->load(lpa, NULL, wb_entry);
+			rc = d_cache->load(lpa, NULL, wb_entry, NULL);
 			if (rc) continue; /* mapping read */
 wb_cache_list_up:
-			rc = d_cache->list_up(lpa, NULL, wb_entry);
+			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL);
 			if (rc) continue; /* mapping write */
 		}
 
@@ -383,14 +403,18 @@ wb_direct_update:
 	kfree(iter);
 }
 
-static skiplist *_do_wb_flush(skiplist *wb) {
+uint64_t _do_wb_flush(skiplist *wb) {
 	struct flush_list *fl = d_member.flush_list;
+    uint64_t nsecs_latest = 0;
 
 	for (int i = 0; i < fl->size; i++) {
 		ppa_t ppa = fl->list[i].ppa;
 		value_set *value = fl->list[i].value;
+        value->ssd = d_member.ssd;
 
-		__demand.li->write(ppa, PAGESIZE, value, ASYNC, make_algo_req_rw(DATAW, value, NULL, NULL));
+		nsecs_latest = 
+        __demand.li->write(ppa, PAGESIZE, value, ASYNC, 
+                           make_algo_req_rw(DATAW, value, NULL, NULL));
 	}
 
 	fl->size = 0;
@@ -403,13 +427,12 @@ static skiplist *_do_wb_flush(skiplist *wb) {
 	__demand.li->lower_flying_req_wait();
 
 	skiplist_kfree(wb);
-	wb = skiplist_init();
 
-	return wb;
+	return nsecs_latest;
 }
 
 static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
-	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true);
+	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
 #ifdef HASH_KVSSD
 	wb_entry->hash_params = (void *)req->hash_params;
 #endif
@@ -419,28 +442,43 @@ static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	else return 0;
 }
 
-uint32_t __demand_write(request *const req) {
+uint64_t __demand_write(request *const req) {
 	uint32_t rc = 0;
+    uint64_t nsecs_latest = 0, nsecs_completed = 0;
+    uint64_t nsecs_start = req->req->nsecs_start;
+    uint64_t length = req->value->length;
 	skiplist *wb = d_member.write_buffer;
 
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
-		//printk("write buffer flush!\n");
+		printk("write buffer flush!\n");
 		/* assign ppa first */
 		_do_wb_assign_ppa(wb);
+        printk("passed assign_ppa\n");
 
 		/* mapping update [lpa, origin]->[lpa, new] */
 		_do_wb_mapping_update(wb);
+        printk("passed mapping_update\n");
 		
 		/* flush the buffer */
-		wb = d_member.write_buffer = _do_wb_flush(wb);
+		nsecs_latest = _do_wb_flush(wb);
+        printk("passed flush\n");
+        wb = d_member.write_buffer =  skiplist_init();
 	}
+
+    //printk("Advancing WB %llu start %llu length.\n", nsecs_start, length);
 
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
+   
+    nsecs_completed =
+    ssd_advance_write_buffer(req->ssd, nsecs_start, length);
+
+    printk("%llu %llu\n", nsecs_completed, nsecs_latest);
+    nsecs_latest = max(nsecs_completed, nsecs_latest);
 
 	req->end_req(req);
-	return rc;
+	return nsecs_latest;
 }
 
 uint32_t __demand_remove(request *const req) {
@@ -452,6 +490,8 @@ void *demand_end_req(algo_req *a_req) {
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
 	request *req = a_req->parents;
 	snode *wb_entry = d_params->wb_entry;
+
+    printk("Entered demand_end_req ppa %u\n", a_req->ppa);
 
 	struct hash_params *h_params;
 	struct inflight_params *i_params;

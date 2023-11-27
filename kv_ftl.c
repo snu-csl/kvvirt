@@ -65,6 +65,8 @@ static unsigned long long __schedule_io_units(int opcode, unsigned long lba, uns
 		(lba >> (nvmev_vdev->config.io_unit_shift - 9)) % nvmev_vdev->config.nr_io_units;
 	int nr_io_units = min(nvmev_vdev->config.nr_io_units, DIV_ROUND_UP(length, io_unit_size));
 
+    printk("LBA when scheduling this IO unit was %llu\n", lba);
+
 	unsigned long long latest; /* Time of completion */
 	unsigned int delay = 0;
 	unsigned int latency = 0;
@@ -547,7 +549,7 @@ static unsigned int __do_perform_kv_io(struct kv_ftl *kv_ftl, struct nvme_kv_com
 		} else {
 			length = min(entry.length, length);
 
-			NVMEV_DEBUG("kv_retrieve %s exist - length %ld, offset %lu\n",
+			NVMEV_ERROR("kv_retrieve %s exist - length %ld, offset %lu\n",
 				    cmd.kv_store.key, length, offset);
 		}
 	} else if (cmd.common.opcode == nvme_cmd_kv_exist) {

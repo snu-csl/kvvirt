@@ -121,6 +121,8 @@ static void __nvmev_admin_create_sq(int eid)
 	sq->qid = cmd->sqid;
 	sq->cqid = cmd->cqid;
 
+    printk("Creating an SQ with id %u\n", cmd->sqid);
+
 	sq->priority = cmd->sq_flags & 0xFFFE;
 	sq->queue_size = cmd->qsize + 1;
 
