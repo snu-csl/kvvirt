@@ -36,6 +36,7 @@ static inline unsigned long long __get_wallclock(void)
 	return cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 }
 
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
 /*
  * Copy from the disk to an in-memory buffer outside of virt's reserved memory.
  * For example, in a demand-based FTL we may need to copy
@@ -47,14 +48,15 @@ static unsigned int __do_perform_internal_copy(uint64_t ppa, void* dst,
 {
     BUG_ON(len > PAGESIZE);
 
-    uint64_t offset = ppa * PAGESIZE;
+    uint64_t offset = ppa;
 
     if(read) {
         printk("Performing an internal read from ppa %llu len %llu\n", ppa, len);
         memcpy(dst, nvmev_vdev->ns[0].mapped + offset, len);
     } else {
-        printk("Performing an internal write to ppa %llu len %llu\n", ppa, len);
         memcpy(nvmev_vdev->ns[0].mapped + offset, dst, len);
+        printk("Performing an internal write to ppa %llu len %llu data %s\n", 
+                ppa, len, (char*) nvmev_vdev->ns[0].mapped + offset);
     }
 
     return 0;
@@ -75,7 +77,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 	size_t nsid = 0;  // 0-based
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
-    printk("In io_kv for a %s!\n", read ? "read" : "write");
+    //printk("In io_kv for a %s!\n", read ? "read" : "write");
 
     nsid = 0;
 
@@ -88,17 +90,19 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     }
 
     if(offset == UINT_MAX - 1) {
-        printk("This request was satisfied from the write buffer. "
-                "Skipping copy.\n");
+        //printk("This request was satisfied from the write buffer. "
+        //        "Skipping copy.\n");
         return length;
     } else if (offset == UINT_MAX) {
-        printk("This KV pair wasn't found! "
-                "Skipping copy.\n");
+        //printk("This KV pair wasn't found! "
+        //        "Skipping copy.\n");
         return 0;
     }
 
+    BUG_ON(!read);
+
 	remaining = length;
-    printk("Length %lu\n", length);
+    //printk("Length %lu\n", length);
 
 	while (remaining) {
 		size_t io_size;
@@ -128,7 +132,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		}
 
 		vaddr = kmap_atomic_pfn(PRP_PFN(paddr));
-        printk("Passed vaddr map\n");
 
 		io_size = min_t(size_t, remaining, PAGE_SIZE);
 
@@ -141,7 +144,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		if (!read) {
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else {
-            printk("Copying from %lu (%s %s)\n", offset, (char*) vaddr + mem_offs, (char*) nvmev_vdev->ns[nsid].mapped + offset);
+            //printk("Copying from %lu (%s)\n", offset, 
+            //        (char*) nvmev_vdev->ns[nsid].mapped + offset);
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
 		}
 
@@ -154,9 +158,10 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 	if (paddr_list != NULL)
 		kunmap_atomic(paddr_list);
 
-    printk("Done\n");
+    //printk("Done\n");
 	return length;
 }
+#endif
 
 static unsigned int __do_perform_io(int sqid, int sq_entry)
 {
@@ -496,7 +501,7 @@ void schedule_internal_operation_withcopy(int sqid, unsigned long long nsecs_tar
 }
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
-                                    void* mem, uint64_t ppa,
+                                    void* mem, uint64_t ppa, uint64_t len,
                                     bool (*cb)(void*), void *args, bool read)
 {
 	struct nvmev_io_worker *worker;
@@ -523,9 +528,13 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 	w->next = -1;
     w->cb = cb;
     w->args = args;
+
+    printk("Set args to %p work %p\n", args, w);
+
     w->read = read;
     w->mem = mem;
     w->ppa = ppa;
+    w->len = len;
 
 	w->is_internal = true;
 	w->write_buffer = NULL;
@@ -776,14 +785,15 @@ static int nvmev_io_worker(void *data)
 			}
 
 			if (w->is_copied == false) {
-                NVMEV_INFO("%s: picked up %u, %d %d %d\n", worker->thread_name, curr,
-                        w->sqid, w->cqid, w->sq_entry);
+                NVMEV_DEBUG("%s: picked up %u, %d %d %d\n", worker->thread_name, curr,
+                            w->sqid, w->cqid, w->sq_entry);
 
 #ifdef PERF_DEBUG
 				w->nsecs_copy_start = local_clock() + delta;
 #endif
 				if (w->is_internal) {
                     if(w->cb) {
+                        printk("KV internal copy for w %p (%p)\n", w, w->args);
                         __do_perform_internal_copy(w->ppa, w->mem, w->len, w->read);
                         w->cb(w->args);
                     }

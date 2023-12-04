@@ -5,7 +5,7 @@
 #include "virt_lower.h"
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
-                                    void* mem, uint64_t ppa,
+                                    void* mem, uint64_t ppa, uint64_t len,
                                     bool (*cb)(void*), void *args, bool);
 
 lower_info virt_info = {
@@ -43,14 +43,14 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     struct ppa ppa;
 
     ppa.ppa = 0;
-    ppa.g.ch = ppa_ / spp->pgs_per_ch;
-    ppa.g.lun = ppa_ / spp->pgs_per_lun;
-    ppa.g.pl = ppa_ / spp->pgs_per_pl;
-    ppa.g.blk = ppa_ / spp->pgs_per_blk;
-    ppa.g.pg = ppa_ % spp->pgs_per_blk;
+    ppa.g.ch = ppa_ % spp->nchs;
+    ppa.g.lun = (ppa_ / spp->luns_per_ch) % spp->luns_per_ch;
+    ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
+    ppa.g.blk = (ppa_ / spp->blks_per_pl) % spp->blks_per_pl;
+    ppa.g.pg = (ppa_ / (spp->nchs * spp->luns_per_ch)) % spp->pgs_per_blk;
 
-    printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
-            __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
+    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
 
@@ -67,24 +67,29 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
         .cmd = NAND_WRITE,
         .interleave_pci_dma = false,
         .xfer_size = size,
+        .stime = 0,
     };
 
-    BUG_ON(!async);
+    BUG_ON(async);
     BUG_ON(!value->ssd);
     BUG_ON(!req);
     BUG_ON(!value);
     BUG_ON(req->sqid == UINT_MAX);
 
-    printk("Writing PPA %u size %u in virt_dev sqid %u\n", 
-            PPA, size, nvmev_vdev->sqes[1]->qid);
+    //printk("Writing PPA %u size %u in virt_push_data sqid %u. data %s\n", 
+    //        PPA, size, nvmev_vdev->sqes[1]->qid, (char*) value->value);
+
+    memcpy(nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE), value->value, size);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
     nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
 
-    schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
-                                   value->value, PPA, (void*) req->end_req, 
-                                   req, false);
+    //schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
+    //                               value->value, PPA, size, 
+    //                               (void*) req->end_req, req, false);
+
+    req->end_req(req);
 
 	return nsecs_completed;
 }
@@ -99,28 +104,54 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
         .cmd = NAND_READ,
         .interleave_pci_dma = true,
         .xfer_size = size,
+        .stime = 0,
     };
 
-    BUG_ON(!async);
+    BUG_ON(async);
     BUG_ON(!value->ssd);
     BUG_ON(!req);
     BUG_ON(!value);
-    BUG_ON(req->sqid == UINT_MAX);
 
-    printk("Reading PPA %u size %u sqid %u %s in virt_dev\n", 
-            PPA, size, nvmev_vdev->sqes[1]->qid, 
-            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
+    //printk("Reading PPA %u size %u sqid %u %s in virt_dev. req ppa %u\n", 
+    //        PPA, size, nvmev_vdev->sqes[1]->qid, 
+    //        async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
     nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
 
-    schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
-                                   value->value, PPA, (void*) req->end_req, 
-                                   req, true);
+    //printk("Advanced nand PPA %u\n", PPA);
+    if(!async) {
+        //BUG_ON(!req->parents);
+        //BUG_ON(!req->parents->value);
+        //BUG_ON(!req->parents->value->value);
 
-    //req->end_req(req);
-	return nsecs_completed;
+        BUG_ON(!value);
+        BUG_ON(!value->value);
+
+        //printk("Value %p\n", value);
+        //printk("Value->value %p\n", value->value);
+
+        memcpy(value->value, 
+               nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE), size);
+        //printk("Got %s (%s)\n", 
+        //        (char*) value->value, 
+        //        (char*) (nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE)));
+        //printk("Ending a synchronous read req %p ppa %u\n", req, PPA);
+        req->end_req(req);
+    } else {
+        //printk("Scheduling with req %p\n", req);
+        schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
+                value->value, PPA, size, 
+                (void*) req->end_req, (void*) req, true);
+    }
+
+    if(req->need_retry) {
+        kfree(req);
+        return UINT_MAX - 1;
+    } else {
+        return nsecs_completed;
+    }
 }
 
 void *virt_trim_block(uint32_t PPA, bool async){

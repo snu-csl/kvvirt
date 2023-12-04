@@ -7,6 +7,7 @@
 #include "demand_ftl.h"
 
 #include "demand/demand.h"
+#include "demand/utility.h"
 
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 				 struct buffer *write_buffer, unsigned int buffs_to_release);
@@ -365,11 +366,11 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 	init_rmap(conv_ftl); // reverse mapping table (?)
 
 	/* initialize all the lines */
-	init_lines(conv_ftl);
+	//init_lines(conv_ftl);
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
-	prepare_write_pointer(conv_ftl, USER_IO);
-	prepare_write_pointer(conv_ftl, GC_IO);
+	//prepare_write_pointer(conv_ftl, USER_IO);
+	//prepare_write_pointer(conv_ftl, GC_IO);
 
 	init_write_flow_control(conv_ftl);
 
@@ -381,7 +382,7 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 
 static void conv_remove_ftl(struct conv_ftl *conv_ftl)
 {
-	remove_lines(conv_ftl);
+	//remove_lines(conv_ftl);
 	remove_rmap(conv_ftl);
 	remove_maptbl(conv_ftl);
 }
@@ -414,6 +415,17 @@ void demand_init(uint64_t size, struct ssd* ssd)
     virt_info.DEV_SIZE = size;
     virt_info.all_pages_in_dev = size / PAGESIZE;
 
+    virt_info.create(&virt_info, &pt_bm);
+
+    int temp[PARTNUM];
+    temp[MAP_S] = MAPPART_SEGS;
+    temp[DATA_S] = spp->nr_segs - MAPPART_SEGS;
+    pt_bm.pt_create(&pt_bm, PARTNUM, temp, &virt_info);
+
+    //printk("Before demand create.\n");
+    demand_create(&virt_info, &pt_bm, &__demand, ssd, size);
+    print_demand_stat(&d_stat);
+
     printk("NOB %u\n", virt_info.NOB);
     printk("NOP %u\n", virt_info.NOP);
     printk("SOB %u\n", virt_info.SOB);
@@ -424,17 +436,6 @@ void demand_init(uint64_t size, struct ssd* ssd)
     printk("DEV_SIZE %llu\n", virt_info.DEV_SIZE);
     printk("all_pages_in_dev %llu\n", virt_info.all_pages_in_dev);
     printk("DRAM SIZE %lu\n", spp->dram_size);
-
-    virt_info.create(&virt_info, &pt_bm);
-
-    int temp[PARTNUM];
-    temp[MAP_S] = MAPPART_SEGS;
-    temp[DATA_S] = spp->nr_segs - MAPPART_SEGS;
-    pt_bm.pt_create(&pt_bm, PARTNUM, temp, &virt_info);
-
-    printk("Before demand create.\n");
-    demand_create(&virt_info, &pt_bm, &__demand, ssd, size);
-    print_demand_stat(&d_stat);
 }
 
 uint64_t dsize = 0;
@@ -510,6 +511,8 @@ void conv_remove_namespace(struct nvmev_ns *ns)
 		ssd_remove(conv_ftls[i].ssd);
 		kfree(conv_ftls[i].ssd);
 	}
+
+    print_demand_stat(&d_stat);
 
 	kfree(conv_ftls);
 	ns->ftls = NULL;
@@ -919,7 +922,7 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
 	size_t nsid = 0;  // 0-based
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
-    printk("In quick copy for a %s!\n", read ? "read" : "write");
+    //printk("In quick copy for a %s!\n", read ? "read" : "write");
 
     nsid = 0;
 
@@ -932,7 +935,7 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
     }
 
 	remaining = length;
-    printk("Length %lu\n", length);
+    //printk("Length %lu\n", length);
 
 	while (remaining) {
 		size_t io_size;
@@ -971,12 +974,12 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
 		}
 
 		if (!read) {
-            printk("Quick copying for write key %s size %lu data %s!\n", 
-                    cmd->kv_retrieve.key, io_size, (char*) buf);
+            //printk("Quick copying for write key %s size %lu data %s!\n", 
+                    //cmd->kv_retrieve.key, io_size, (char*) buf);
 			memcpy(buf, vaddr + mem_offs, io_size);
 		} else {
-            printk("Quick copying for read key %s size %lu data %s!\n", 
-                    cmd->kv_retrieve.key, io_size, (char*) buf);
+            //printk("Quick copying for read key %s size %lu data %s!\n", 
+                    //cmd->kv_retrieve.key, io_size, (char*) buf);
 			memcpy(vaddr + mem_offs, buf, io_size);
 		}
 
@@ -989,13 +992,28 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
 	if (paddr_list != NULL)
 		kunmap_atomic(paddr_list);
 
-    printk("Done\n");
+    //printk("Done\n");
 	return length;
 }
 
 
 bool end_w(struct request *req) 
 {
+    return true;
+}
+
+bool end_r(struct request *req) 
+{
+    if(req->ppa == UINT_MAX - 1) {
+        return true;
+    }
+
+    uint64_t offset = G_OFFSET(req->ppa);
+    //printk("%s ending read key %s offset %llu ppa %llu\n", __func__, req->key.key, offset, req->ppa);
+
+    req->ppa = (G_IDX(req->ppa) * PAGESIZE) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
+    //printk("%s switching ppa to %llu\n", __func__, req->ppa);
+
     return true;
 }
 
@@ -1008,11 +1026,11 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     struct ssdparams *spp = &conv_ftl->ssd->sp;
 
     struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
+    struct nvme_kv_command tmp = *cmd;
 
     uint64_t nsecs_latest;
     uint64_t nsecs_xfer_completed;
 
-    char key_buf[128];
     struct request d_req;
     KEYT key;
 
@@ -1022,24 +1040,30 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     d_req.req = req;
     d_req.hash_params = NULL;
 
-    key.key = (char*)kzalloc(strlen(key_buf), GFP_KERNEL);
+    key.key = (char*)kzalloc(16, GFP_KERNEL);
+
     BUG_ON(!key.key);
-    memcpy(key.key, cmd->kv_retrieve.key, cmd_key_length(*cmd));
+    BUG_ON(!cmd->kv_retrieve.key);
+    BUG_ON(!cmd);
+
+    uint8_t length = cmd_key_length(tmp);
+
+    memcpy(key.key, cmd->kv_retrieve.key, length);
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 
-    printk("Read for key %s len %u\n", key.key, key.len);
+    //printk("Read for key %s len %u\n", key.key, key.len);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = (char*)kzalloc(1024, GFP_KERNEL);
+    value->value = (char*)kzalloc(PAGESIZE, GFP_KERNEL);
     value->ssd = conv_ftl->ssd;
     value->length = 1024;
     d_req.value = value;
-    d_req.end_req = &end_w;
+    d_req.end_req = &end_r;
     nsecs_latest = nsecs_xfer_completed = __demand.read(&d_req);
 
-    printk("Demand passed for key %s len %u data %s\n", key.key, key.len, (char*) value->value);
+    //printk("Demand passed for key %s len %u data %s\n", key.key, key.len, (char*) value->value);
 
     //if ((cmd->rw.control & NVME_RW_FUA) || (spp->write_early_completion == 0)) {
     //    /* Wait all flash operations */
@@ -1050,7 +1074,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     //}
  
     cmd->kv_store.rsvd2 = d_req.ppa;
-    printk("Storing ppa %llu\n", d_req.ppa);
+    //printk("Storing ppa %llu\n", d_req.ppa);
 
     if (d_req.ppa == UINT_MAX - 1) {
         __quick_copy(cmd, value->value, value->length);
@@ -1059,6 +1083,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     if(d_req.ppa == UINT_MAX) {
         ret->status = KV_ERR_KEY_NOT_EXIST;
     } else {
+        ret->nsecs_target = nsecs_latest;
         ret->status = NVME_SC_SUCCESS;
     }
 
@@ -1091,11 +1116,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 
 	struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
+    struct nvme_kv_command tmp = *cmd;
 
 	uint64_t nsecs_latest;
 	uint64_t nsecs_xfer_completed;
 
-    char key_buf[128];
     struct request d_req;
     KEYT key;
 
@@ -1105,12 +1130,20 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.req = req;
     d_req.hash_params = NULL;
 
-    key.key = (char*)kzalloc(strlen(key_buf), GFP_KERNEL);
-    memcpy(key.key, cmd->kv_store.key, cmd_key_length(*cmd));
+    key.key = NULL;
+    key.key = (char*)kzalloc(16, GFP_KERNEL);
+
+    BUG_ON(!key.key);
+    BUG_ON(!cmd->kv_store.key);
+    BUG_ON(!cmd);
+
+    uint8_t length = cmd_key_length(tmp);
+
+    memcpy(key.key, cmd->kv_retrieve.key, length);
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 
-    printk("Write for key %s\n", key.key);
+    //printk("Write for key %s len %u\n", key.key, length);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
@@ -1193,13 +1226,13 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
     switch (cmd->common.opcode) {
         case nvme_cmd_kv_store:
             ret->nsecs_target = conv_write(ns, req, ret);
-            NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
-                    __get_wallclock(), ret->nsecs_target);
+            //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
+            //        __get_wallclock(), ret->nsecs_target);
             break;
         case nvme_cmd_kv_retrieve:
             ret->nsecs_target = conv_read(ns, req, ret);
-            NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
-                    __get_wallclock(), ret->nsecs_target);
+            //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
+            //        __get_wallclock(), ret->nsecs_target);
             break;
         case nvme_cmd_write:
         case nvme_cmd_read:

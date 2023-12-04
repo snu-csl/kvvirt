@@ -47,10 +47,13 @@ _do_bulk_read_pages_containing_valid_grain
 	int i = 0;
 	for_each_page_in_seg_blocks(target_seg, target_blk, ppa, blk_idx, page_idx) {
 		if (contains_valid_grain(bm, ppa)) {
+            //printk("%s valid grain in ppa %d\n", __func__, ppa);
 			value_set *origin = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+            origin->ssd = d_member.ssd;
 			__demand.li->read(ppa, PAGESIZE, origin, ASYNC, make_algo_req_default(GCDR, origin));
 
 			bulk_table[i] = (struct gc_table_struct *)kzalloc(sizeof(struct gc_table_struct), GFP_KERNEL);
+            BUG_ON(!bulk_table[i]);
 			bulk_table[i]->origin   = origin;
 			//bulk_table[i]->lpa_list = (lpa_t *)bm->get_oob(bm, ppa);
 			bulk_table[i]->ppa      = ppa;
@@ -59,6 +62,7 @@ _do_bulk_read_pages_containing_valid_grain
 		}
 	}
 	int nr_read_pages = i;
+    printk("%s read %d pages\n", __func__, nr_read_pages);
 	return nr_read_pages;
 }
 
@@ -72,7 +76,7 @@ struct gc_bucket_node *gcb_node_arr[_PPS*GRAIN_PER_PAGE];
 static int 
 _do_bulk_write_valid_grains
 (blockmanager *bm, struct gc_table_struct **bulk_table, int nr_read_pages, page_t type) {
-	gc_bucket = (struct gc_bucket *)kzalloc(sizeof(struct gc_bucket), GFP_KERNEL);
+	gc_bucket = (struct gc_bucket *)vmalloc(sizeof(struct gc_bucket));
 	for (int i = 0; i < PAGESIZE/GRAINED_UNIT+1; i++) gc_bucket->idx[i] = 0;
 
 	int nr_valid_grains = 0;
@@ -80,6 +84,8 @@ _do_bulk_write_valid_grains
 		for (int j = 0; j < GRAIN_PER_PAGE; j++) {
 			pga_t pga = bulk_table[i]->ppa * GRAIN_PER_PAGE + j;
 			if (is_valid_grain(pga)) {
+                //printk("%s found a valid grain %u (ppa %u)\n", __func__, pga, bulk_table[i]->ppa);
+
 				int len = 1;
 				lpa_t *lpa_list = get_oob(bm, pga/GRAIN_PER_PAGE);
 
@@ -103,6 +109,8 @@ _do_bulk_write_valid_grains
             printk("Should have aborted!!!! %s:%d\n", __FILE__, __LINE__);;
         }
 	}
+
+    printk("%s read valid grains.\n", __func__);
 
 	int ordering_done = 0, copied_pages = 0;
 	while (ordering_done < nr_valid_grains) {
@@ -133,6 +141,7 @@ _do_bulk_write_valid_grains
 
 			ordering_done++;
 		}
+        _value_dgcw->ssd = d_member.ssd;
 		__demand.li->write(ppa, PAGESIZE, _value_dgcw, ASYNC, make_algo_req_default(GCDW, _value_dgcw));
 
 		copied_pages++;
@@ -175,6 +184,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 				continue;
 			}
 			value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+            _value_mr->ssd = d_member.ssd;
 			__demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, make_algo_req_default(GCMR_DGC, _value_mr));
 
 			invalidate_page(bm, cmt->t_ppa, MAP);
@@ -205,6 +215,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 
 		cmt->t_ppa = get_tpage(bm);
 		value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
+        _value_mw->ssd = d_member.ssd;
 		__demand.li->write(cmt->t_ppa, PAGESIZE, _value_mw, ASYNC, make_algo_req_default(GCMW_DGC, _value_mw));
 
 		set_oob(bm, cmt->idx, cmt->t_ppa, MAP);
@@ -220,15 +231,18 @@ int dpage_gc_dvalue(blockmanager *bm) {
 	d_stat.dgc_cnt++;
 
 	struct gc_table_struct **bulk_table = 
-    (struct gc_table_struct **)kzalloc(_PPS * sizeof(struct gc_table_struct *), GFP_KERNEL);
+    (struct gc_table_struct **)vmalloc(_PPS * sizeof(struct gc_table_struct *));
+    printk("bulk table %p\n", bulk_table);
 
     BUG_ON(!bulk_table);
+    memset(bulk_table, 0x0, _PPS * sizeof(struct gc_table_struct *));
 
 	__gsegment *target_seg = bm->pt_get_gc_target(bm, DATA_S);
 
 	int nr_read_pages = _do_bulk_read_pages_containing_valid_grain(bm, bulk_table, target_seg);
 
 	_do_wait_until_read_all(nr_read_pages);
+    printk("%s finished waiting.\n", __func__);
 
 	int nr_valid_grains = _do_bulk_write_valid_grains(bm, bulk_table, nr_read_pages, DATA);
 
@@ -245,9 +259,9 @@ int dpage_gc_dvalue(blockmanager *bm) {
 		inf_free_valueset(bulk_table[i]->origin, FS_MALLOC_R);
 		kfree(bulk_table[i]);
 	}
-	kfree(bulk_table);
 
-	kfree(gc_bucket);
+	vfree(bulk_table);
+	vfree(gc_bucket);
 
 	return nr_read_pages;
 }

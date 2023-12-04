@@ -96,6 +96,8 @@ uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 
     uint64_t NOS = li->TS / (_PPS * PAGESIZE);
 
+    printk("NOS %llu\n", NOS);
+
 	bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
 	bm->private_data=(void*)p;
 	p->base_block=(__block*)vmalloc(sizeof(__block) * (NOS * PUNIT));
@@ -107,14 +109,19 @@ uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 	int block_idx=0;
 	for(int i=0; i<NOS; i++){
 		for(int j=0; j<PUNIT; j++){
+            printk("Checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
 			__block *b=&p->base_block[block_idx];
 			b->block_num=seg_idx;
 			b->punit_num=j;
 			b->bitset=(uint8_t*)kzalloc((_PPB/8) * 1, GFP_KERNEL);
+            b->now = 0;
 			block_idx++;
+            printk("Done checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
 		}
         seg_idx += _PPS;
 	}
+
+    printk("Moving on\n");
 
 	p_info* pinfo=(p_info*)kzalloc(sizeof(p_info), GFP_KERNEL);
 	p->private_data=(void*)pinfo;

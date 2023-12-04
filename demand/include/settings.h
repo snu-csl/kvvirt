@@ -67,7 +67,7 @@
 //#define _RNOS (REALSIZE/(_PPS*PAGESIZE))//real number of segment
 
 #define PARTNUM 2
-#define MAPPART_SEGS (40)
+#define MAPPART_SEGS (1)
 
 enum{
 	MAP_S,DATA_S
@@ -132,7 +132,7 @@ static inline bool KEYVALCHECK(KEYT a){
 #define BLOCKT uint32_t
 #define V_PTR char * const
 #define PTR char*
-#define ASYNC 1
+#define ASYNC 0
 #define QSIZE (1024)
 #define LOWQDEPTH (64)
 #define QDEPTH (64)

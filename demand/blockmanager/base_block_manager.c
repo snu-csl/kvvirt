@@ -153,7 +153,7 @@ __gsegment* base_get_gc_target (struct blockmanager* bm){
 	for(int i=0; i<BPS; i++){
 		mh_construct(p->base_channel[i].max_heap);
 		__block *b=(__block*)mh_get_max(p->base_channel[i].max_heap);
-		if(!b) printk("Should have aborted here base_get_segment.\n");
+		if(!b) printk("Should have aborted here base_get_gc_target.\n");
 		res->blocks[i]=b;
 	}
 	res->now=res->max=0;
@@ -291,7 +291,9 @@ int base_get_page_num(struct blockmanager* bm,__segment *s){
 	res+=b->punit_num;
 	
 	s->used_page_num++;
-	if(page>_PPB) printk("Should have aborted here base_get_page_num.\n");
+	if(page>_PPB) {
+        printk("Should have aborted here base_get_page_num page %u _PPB %u.\n", page, _PPB);
+    }
 	return res;
 }
 
@@ -308,7 +310,7 @@ int base_pick_page_num(struct blockmanager* bm,__segment *s){
 	res+=page<<6;
 	res+=b->punit_num;
 
-	if(page>_PPB) printk("Should have aborted here base_get_page_num.\n");
+	if(page>_PPB) printk("Should have aborted here base_pick_page_num.\n");
 	return res;
 }
 

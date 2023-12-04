@@ -225,18 +225,21 @@ static int count_filled_entry(void) {
 }
 
 static void print_hash_collision_cdf(uint64_t *hc) {
-    printk("print_hash_collision_cdf FIXME.");
-	//int total = 0;
-	//for (int i = 0; i < MAX_HASH_COLLISION; i++) {
-	//	total += hc[i];
-	//}
-	//float _cdf = 0;
-	//for (int i = 0; i < MAX_HASH_COLLISION; i++) {
-	//	if (hc[i]) {
-	//		_cdf += (float)hc[i]/total;
-	//		printk("%d,%lld,%.6f\n", i, hc[i], _cdf);
-	//	}
-	//}
+
+	int total = 0;
+	for (int i = 0; i < MAX_HASH_COLLISION; i++) {
+		total += hc[i];
+	}
+
+    printk("Total HC this time %d\n", total);
+
+	int _cdf = 0;
+	for (int i = 0; i < MAX_HASH_COLLISION; i++) {
+		if (hc[i]) {
+			_cdf += 100 * hc[i] / total;
+			printk("%d,%lld,%d\n", i, hc[i], _cdf);
+		}
+	}
 }
 
 void print_demand_stat(struct demand_stat *const _stat) {
@@ -264,8 +267,14 @@ void print_demand_stat(struct demand_stat *const _stat) {
 
 	int amplified_read = _stat->trans_r + _stat->data_r_dgc + _stat->trans_r_dgc + _stat->trans_r_tgc;
 	int amplified_write = _stat->trans_w + _stat->data_w_dgc + _stat->trans_w_dgc + _stat->trans_w_tgc;
-	printk("RAF: FIXME\n"); //%.2f\n", (float)(_stat->data_r + amplified_read)/_stat->data_r);
-	printk("WAF: FIXME\n"); //%.2f\n", (float)(_stat->data_w + amplified_write)/_stat->data_w);
+
+    if(_stat->data_r > 0) {
+        printk("RAF: %lld\n", 100 * (_stat->data_r + amplified_read) /_stat->data_r);
+    }
+
+    if(_stat->data_w > 0) {
+        printk("WAF: %lld\n",  100 * (_stat->data_w + amplified_write)/_stat->data_w);
+    }
 	printk("\n");
 
 	/* r/w specific traffic */
@@ -308,7 +317,7 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	int total_entry_cnt = d_cache->env.nr_valid_tentries;
 	printk("Total entry:  %d\n", total_entry_cnt);
 	printk("Filled entry: %d\n", filled_entry_cnt);
-	printk("Load factor: FIXME\n"); //  %.2f%%\n", (float)filled_entry_cnt/total_entry_cnt*100);
+	printk("Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
 	printk("\n");
 
 	printk("[write(insertion)]");
@@ -325,13 +334,19 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("[Read]");
 	printk("fp_match:     %lld\n", _stat->fp_match_r);
 	printk("fp_collision: %lld\n", _stat->fp_collision_r);
-	printk("rate: FIXME\n"); // %.2f\n", (float)_stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
-	printk("\n");
+
+    if(_stat->fp_match_r + _stat->fp_collision_r > 0) {
+        printk("rate: %llu\n", 100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
+    }
+    printk("\n");
 
 	printk("[Write]");
 	printk("fp_match:     %lld\n", _stat->fp_match_w);
 	printk("fp_collision: %lld\n", _stat->fp_collision_w);
-	printk("rate: FIXME\n"); // %.2f\n", (float)_stat->fp_collision_w/(_stat->fp_match_w+_stat->fp_collision_w)*100);
+
+    if(_stat->fp_match_w + _stat->fp_collision_w > 0) {
+        printk("rate: %lld\n", 100 * _stat->fp_collision_w/(_stat->fp_match_w+_stat->fp_collision_w)*100);
+    }
 	printk("\n");
 #endif
 }

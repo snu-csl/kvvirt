@@ -161,10 +161,12 @@ snode *skiplist_strict_range_search(skiplist *list,KEYT key){
 
 static int getLevel(void){
 	int level=1;
-    unsigned int temp;
-    get_random_bytes(&temp, sizeof(temp));
+    unsigned int temp, res;
+    res = get_random_bytes_arch(&temp, sizeof(temp));
+    BUG_ON(res != sizeof(temp));
 	while(temp % PROB==1){
-        get_random_bytes(&temp, sizeof(temp));
+        res = get_random_bytes_arch(&temp, sizeof(temp));
+        BUG_ON(res != sizeof(temp));
 		level++;
 		if(level+1>=MAX_L) break;
 	}

@@ -87,7 +87,7 @@ struct request {
     uint64_t sqid;
 };
 
-struct algo_req{
+struct algo_req {
 	uint32_t ppa;
 	request * parents;
 	//MeasureTime latency_lower;
@@ -103,6 +103,7 @@ struct algo_req{
      */
 
     uint64_t sqid;
+    bool need_retry;
 };
 
 struct lower_info {

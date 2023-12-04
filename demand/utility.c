@@ -12,6 +12,7 @@ struct algo_req *make_algo_req_default(uint8_t type, value_set *value) {
 	a_req->type_lower = 0;
 	a_req->rapid = false;
 	a_req->end_req = demand_end_req;
+    a_req->need_retry = false;
 
 	struct demand_params *d_params = (struct demand_params *)kzalloc(sizeof(struct demand_params), GFP_KERNEL);
 	d_params->value = value;
@@ -71,11 +72,11 @@ void copy_key_from_value(KEYT *dst, value_set *src, int offset) {
 #else
 	PTR ptr = src->value;
 #endif
-	dst->len = *(uint8_t *)ptr;
+	dst->len = *(uint8_t*) ptr;
 	dst->key = (char *)kzalloc(dst->len, GFP_KERNEL);
-	memcpy(dst->key, ptr+1, dst->len);
-
+	memcpy(dst->key, ptr + sizeof(uint8_t), dst->len);
 }
+
 void copy_value(value_set *dst, value_set *src, int size) {
 	memcpy(dst->value, src->value, size);
 }
@@ -198,7 +199,9 @@ void insert_retry_read(request *const req) {
 	if (req->parents) {
 		q_enqueue((void *)req, d_member.range_q);
 	} else {
-        printk("Insert_retry_read FIXME\n");
+        printk("insert_retry_read FIXME %pS %pS %pS\n", 
+                __builtin_return_address(0), __builtin_return_address(1), 
+                __builtin_return_address(2));
 		//inf_assign_try(req);
 	}
 }

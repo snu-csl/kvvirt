@@ -44,7 +44,7 @@ static void print_cache_env(struct cache_env *const _env) {
 	//printk(" | Caching Ratio:            %0.3f%%\n", _env->caching_ratio * 100);
 	printk(" | Caching Ratio:            same as PFTL\n");
 	printk(" |  - Max cached tpages:     %d (%u bytes)\n", 
-            _env->max_cached_tpages, _env->max_cached_tpages * PAGESIZE);
+          _env->max_cached_tpages, _env->max_cached_tpages * PAGESIZE);
 	//printk(" |  (PageFTL cached tpages:  %d)\n", _env->nr_tpages_optimal_caching);
 	printk(" |---------- Demand Cache Log END\n");
 	printk("\n");
@@ -58,7 +58,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 
 	//_env->caching_ratio = d_env.caching_ratio;
 	//_env->max_cached_tpages = _env->nr_tpages_optimal_caching * _env->caching_ratio;
-	_env->max_cached_tpages = (d_env.size / K) / PAGESIZE;
+	_env->max_cached_tpages = _env->nr_valid_tpages; // (d_env.size / K) / PAGESIZE;
 	_env->max_cached_tentries = 0; // not used here
 
 #ifdef DVALUE
@@ -123,13 +123,13 @@ int cg_create(cache_t c_type, struct demand_cache *dc) {
 }
 
 static void cg_print_member(void) {
-	printk("=====================");
-	printk(" Cache Finish Status ");
-	printk("=====================");
+	//printk("=====================");
+	//printk(" Cache Finish Status ");
+	//printk("=====================");
 
-	printk("Max Cached tpages:     %d\n", cenv->max_cached_tpages);
-	printk("Current Cached tpages: %d\n", cmbr->nr_cached_tpages);
-	printk("\n");
+	//printk("Max Cached tpages:     %d\n", cenv->max_cached_tpages);
+	//printk("Current Cached tpages: %d\n", cmbr->nr_cached_tpages);
+	//printk("\n");
 }
 
 static void cg_member_kfree(struct cache_member *_member) {
@@ -161,7 +161,9 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
 	struct inflight_params *i_params;
     uint64_t nsec = 0;
 
+    //printk("%s lpa %u\n", __func__, lpa);
 	if (IS_INITIAL_PPA(cmt->t_ppa)) {
+        //printk("%s lpa %u returning 0\n", __func__, lpa);
 		return 0;
 	}
 
@@ -169,6 +171,7 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
 	i_params->jump = GOTO_LIST;
 
 	value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+    _value_mr->ssd = d_member.ssd;
 	nsec = __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, 
                                          make_algo_req_rw(MAPPINGR, _value_mr, 
                                          req, wb_entry));
@@ -194,6 +197,7 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 	struct inflight_params *i_params;
 
 	if (cg_is_full()) {
+        //printk("%s lpa %u translation cache full.\n", __func__, lpa);
 		victim = (struct cmt_struct *)lru_pop(cmbr->lru);
 		cmbr->nr_cached_tpages--;
 
@@ -210,9 +214,12 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 			victim->t_ppa = get_tpage(bm);
 			victim->state = CLEAN;
 
+            //printk("%s dirty page %u.\n", __func__, victim->t_ppa);
+
 			//struct pt_struct pte = cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
 
 			value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
+            _value_mw->ssd = d_member.ssd;
 			nsecs = __demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC, 
                                        make_algo_req_rw(MAPPINGW, _value_mw, 
                                        req, wb_entry));
@@ -242,7 +249,7 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 				i_params->jump = GOTO_COMPLETE;
 				//i_params->pte = cmt->pt[OFFSET(retry_lpa)];
 
-                printk("Should have called inf_assign_try in cg_list_up!\n");
+                //printk("Should have called inf_assign_try in cg_list_up!\n");
 				//inf_assign_try(retry_req);
 			}
 		} else if (wb_entry) {
@@ -268,15 +275,20 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 
 int cg_wait_if_flying(lpa_t lpa, request *const req, snode *wb_entry) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
+
+    //printk("%s lpa %u\n", __func__, lpa);
+
 	if (cmt->is_flying) {
 		cstat->blocked_miss++;
 
 		if (req) q_enqueue((void *)req, cmt->retry_q);
 		else if (wb_entry) q_enqueue((void *)wb_entry, cmt->retry_q);
-		else printk("Should have aborted!!!! %s:%d\n", __FILE__, __LINE__);;
+		else //printk("Should have aborted!!!! %s:%d\n", __FILE__, __LINE__);;
 
+        //printk("%s returning 1\n", __func__);   
 		return 1;
 	}
+    //printk("%s returning 0\n", __func__);   
 	return 0;
 }
 
@@ -302,8 +314,8 @@ int cg_update(lpa_t lpa, struct pt_struct pte) {
 		cmbr->mem_table[IDX(lpa)][OFFSET(lpa)] = pte;
 
 		//static int cnt = 0;
-		//if (++cnt % 10240 == 0) printk("cg_update %d\n", cnt);
-		//printk("cg_update %d\n", ++cnt);
+		//if (++cnt % 10240 == 0) //printk("cg_update %d\n", cnt);
+		////printk("cg_update %d\n", ++cnt);
 	}
 	return 0;
 }
@@ -320,6 +332,7 @@ bool cg_is_hit(lpa_t lpa) {
 }
 
 bool cg_is_full(void) {
+    return false;
 	return (cmbr->nr_cached_tpages >= cenv->max_cached_tpages);
 }
 
@@ -332,7 +345,7 @@ struct pt_struct cg_get_pte(lpa_t lpa) {
 		return cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
 	}
 /*	if (unlikely(cmt->pt == NULL)) {
-		printk("Should have aborted!!!! %s:%d
+		//printk("Should have aborted!!!! %s:%d
 , __FILE__, __LINE__);;
 	}
 	return cmt->pt[OFFSET(lpa)]; */
