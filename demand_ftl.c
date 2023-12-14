@@ -449,6 +449,7 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 	uint32_t i;
 	const uint32_t nr_parts = SSD_PARTITIONS;
 
+    size = 512LU << 20;
     dsize = size;
 
 	ssd_init_params(&spp, size, nr_parts);
@@ -1017,6 +1018,7 @@ bool end_r(struct request *req)
     return true;
 }
 
+char read_buf[4096];
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -1056,7 +1058,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = (char*)kzalloc(PAGESIZE, GFP_KERNEL);
+    value->value = read_buf;
     value->ssd = conv_ftl->ssd;
     value->length = 1024;
     d_req.value = value;
@@ -1087,6 +1089,8 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
         ret->status = NVME_SC_SUCCESS;
     }
 
+    kfree(value);
+    kfree(key.key);
     return true;
 }
 
