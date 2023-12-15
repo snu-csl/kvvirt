@@ -38,21 +38,25 @@ static struct cache_stat *cstat;
 
 
 static void print_cache_env(struct cache_env *const _env) {
+    struct ssdparams spp = d_member.ssd->sp;
+
 	printk("\n");
 	printk(" |---------- Demand Cache Log: Coarse-grained Cache\n");
 	printk(" | Total trans pages:        %d\n", _env->nr_valid_tpages);
 	//printk(" | Caching Ratio:            %0.3f%%\n", _env->caching_ratio * 100);
 	printk(" | Caching Ratio:            same as PFTL\n");
 	printk(" |  - Max cached tpages:     %d (%u bytes)\n", 
-          _env->max_cached_tpages, _env->max_cached_tpages * PAGESIZE);
+          _env->max_cached_tpages, _env->max_cached_tpages * spp.pgsz);
 	//printk(" |  (PageFTL cached tpages:  %d)\n", _env->nr_tpages_optimal_caching);
 	printk(" |---------- Demand Cache Log END\n");
 	printk("\n");
 }
 static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
+    struct ssdparams spp = d_member.ssd->sp;
+
 	_env->c_type = c_type;
 
-	_env->nr_tpages_optimal_caching = d_env.nr_pages * 4 / PAGESIZE;
+	_env->nr_tpages_optimal_caching = d_env.nr_pages * 4 / spp.pgsz;
 	_env->nr_valid_tpages = d_env.nr_pages / EPP + ((d_env.nr_pages % EPP) ? 1 : 0);
 	_env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
@@ -159,6 +163,7 @@ int cg_destroy(void) {
 int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_completed) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	struct inflight_params *i_params;
+    struct ssdparams spp = d_member.ssd->sp;
     uint64_t nsec = 0;
 
     //printk("%s lpa %u\n", __func__, lpa);
@@ -170,9 +175,9 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
 	i_params = get_iparams(req, wb_entry);
 	i_params->jump = GOTO_LIST;
 
-	value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+	value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, spp.pgsz);
     _value_mr->ssd = d_member.ssd;
-	nsec = __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, 
+	nsec = __demand.li->read(cmt->t_ppa, spp.pgsz, _value_mr, ASYNC, 
                                          make_algo_req_rw(MAPPINGR, _value_mr, 
                                          req, wb_entry));
 

@@ -1035,7 +1035,7 @@ bool end_r(struct request *req)
     //printk("%s ending read key %s offset %llu ppa %llu\n", __func__, req->key.key, offset, req->ppa);
 
     req->ppa = (G_IDX(req->ppa) * pgsz) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
-    printk("%s switching ppa to %llu\n", __func__, req->ppa);
+    //printk("%s switching ppa to %llu\n", __func__, req->ppa);
 
     return true;
 }
