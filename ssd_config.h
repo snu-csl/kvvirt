@@ -250,10 +250,10 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NAND_CHANNELS (8)
 #define LUNS_PER_NAND_CH (8)
 #define PLNS_PER_LUN (1)
-#define FLASH_PAGE_SIZE KB(8)
-#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE  * 1)
+#define FLASH_PAGE_SIZE KB(32)
+#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE (FLASH_PAGE_SIZE * _PPB) /*BLKS_PER_PLN should not be 0 */
+#define BLK_SIZE (FLASH_PAGE_SIZE) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */

@@ -43,11 +43,11 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     struct ppa ppa;
 
     ppa.ppa = 0;
-    ppa.g.ch = ppa_ % spp->nchs;
-    ppa.g.lun = (ppa_ / spp->luns_per_ch) % spp->luns_per_ch;
+    ppa.g.ch = (ppa_ / spp->pgs_per_ch) % spp->pgs_per_ch;
+    ppa.g.lun = (ppa_ % spp->pgs_per_ch) / spp->pgs_per_lun;
     ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
-    ppa.g.blk = (ppa_ / spp->blks_per_pl) % spp->blks_per_pl;
-    ppa.g.pg = (ppa_ / (spp->nchs * spp->luns_per_ch)) % spp->pgs_per_blk;
+    ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
+    ppa.g.pg = ppa_ % spp->pgs_per_blk;
 
     //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
@@ -76,10 +76,12 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
     BUG_ON(!value);
     BUG_ON(req->sqid == UINT_MAX);
 
-    //printk("Writing PPA %u size %u in virt_push_data sqid %u. data %s\n", 
-    //        PPA, size, nvmev_vdev->sqes[1]->qid, (char*) value->value);
+    printk("Writing PPA %u (%u) size %u pagesize %u in virt_push_data sqid %u\n", 
+            PPA, PPA * value->ssd->sp.pgsz, size, value->ssd->sp.pgsz, nvmev_vdev->sqes[1]->qid);
 
-    memcpy(nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE), value->value, size);
+    memcpy(nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), value->value, size);
+
+    printk("Copy done\n");
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -112,9 +114,9 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
     BUG_ON(!req);
     BUG_ON(!value);
 
-    //printk("Reading PPA %u size %u sqid %u %s in virt_dev. req ppa %u\n", 
-    //        PPA, size, nvmev_vdev->sqes[1]->qid, 
-    //        async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
+    printk("Reading PPA %u (%u) size %u sqid %u %s in virt_dev. req ppa %u\n", 
+            PPA, PPA * value->ssd->sp.pgsz, size, nvmev_vdev->sqes[1]->qid, 
+            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -133,7 +135,7 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
         //printk("Value->value %p\n", value->value);
 
         memcpy(value->value, 
-               nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE), size);
+               nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), size);
         //printk("Got %s (%s)\n", 
         //        (char*) value->value, 
         //        (char*) (nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE)));
@@ -146,10 +148,13 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
                 (void*) req->end_req, (void*) req, true);
     }
 
-    if(req->need_retry) {
+    if(req && req->need_retry) {
+        printk("Need a retry.\n");
         kfree(req);
         return UINT_MAX - 1;
     } else {
+        kfree(req->params);
+        kfree(req);
         return nsecs_completed;
     }
 }

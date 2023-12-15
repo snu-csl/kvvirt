@@ -163,7 +163,7 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
 
     //printk("%s lpa %u\n", __func__, lpa);
 	if (IS_INITIAL_PPA(cmt->t_ppa)) {
-        //printk("%s lpa %u returning 0\n", __func__, lpa);
+        //printk("Unmapped PPA for LPA %u\n", lpa);
 		return 0;
 	}
 
@@ -198,6 +198,7 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 
 	if (cg_is_full()) {
         //printk("%s lpa %u translation cache full.\n", __func__, lpa);
+        BUG_ON(true);
 		victim = (struct cmt_struct *)lru_pop(cmbr->lru);
 		cmbr->nr_cached_tpages--;
 
@@ -234,6 +235,7 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
     nsecs_latest = max(nsecs_latest, nsecs);
 
 	cmt->pt = cmbr->mem_table[IDX(lpa)];
+    //printk("Mapping PPA %u for LPA %u\n", cmt->t_ppa, lpa);
 	cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
 	cmbr->nr_cached_tpages++;
 
@@ -301,12 +303,15 @@ int cg_touch(lpa_t lpa) {
 int cg_update(lpa_t lpa, struct pt_struct pte) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 
+    printk("cg_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
+
 	if (cmt->pt) {
 		cmt->pt[OFFSET(lpa)] = pte;
 
 		if (!IS_INITIAL_PPA(cmt->t_ppa) && cmt->state == CLEAN) {
 			invalidate_page(__demand.bm, cmt->t_ppa, MAP);
 		}
+
 		cmt->state = DIRTY;
 		lru_update(cmbr->lru, cmt->lru_ptr);
 	} else {
@@ -339,6 +344,7 @@ bool cg_is_full(void) {
 struct pt_struct cg_get_pte(lpa_t lpa) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	if (cmt->pt) {
+        printk("%s returning %u for lpa %u\n", __func__, cmt->pt[OFFSET(lpa)].ppa, lpa);
 		return cmt->pt[OFFSET(lpa)];
 	} else {
 		/* FIXME: to handle later update after evict */

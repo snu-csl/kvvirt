@@ -35,6 +35,7 @@ enum {
 enum {
 	USER_IO = 0,
 	GC_IO = 1,
+    MAP_IO= 2,
 };
 
 enum {
@@ -212,7 +213,13 @@ struct ssdparams {
 
     unsigned long nr_segs;
 
+    /*
+     * HASH DFTL.
+     */
+
     unsigned long dram_size; /* DRAM size for caching KV/KV mapping entries. */
+    unsigned long tt_map_blks;
+    unsigned long tt_data_blks;
 };
 
 struct ssd {

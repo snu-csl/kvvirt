@@ -7,6 +7,7 @@
 
 #include "../nvmev.h"
 #include "../ssd.h"
+#include "../demand_ftl.h"
 
 #include "d_type.h"
 #include "d_param.h"
@@ -19,6 +20,12 @@
 
 #include <linux/highmem.h>
 #include <linux/vmalloc.h>
+
+struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
+uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
+void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
+void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa);
+void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 
 extern struct demand_stat d_stat;
 
@@ -77,7 +84,7 @@ struct inflight_params{
 };
 
 struct flush_node {
-	ppa_t ppa;
+    ppa_t ppa;
 	value_set *value;
 };
 
@@ -91,11 +98,10 @@ struct flush_list {
 struct demand_env {
 	int nr_pages;
 	int nr_blocks;
-	int nr_segments;
 
-	int nr_tsegments;
+	int nr_tblks;
 	int nr_tpages;
-	int nr_dsegments;
+	int nr_dblks;
 	int nr_dpages;
 
 	volatile uint64_t wb_flush_size;

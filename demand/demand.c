@@ -79,9 +79,9 @@ static void print_demand_env(const struct demand_env *_env) {
 #else
 	printk(" |---------- algorithm_log : Demand-based FTL\n");
 #endif
-	printk(" | Total Segments:         %d\n", _env->nr_segments);
-	printk(" |  -Translation Segments: %d\n", _env->nr_tsegments);
-	printk(" |  -Data Segments:        %d\n", _env->nr_dsegments);
+	printk(" | Total Blocks:         %d\n",   _env->nr_blocks);
+	printk(" |  -Translation Blocks: %d\n", _env->nr_tblks);
+	printk(" |  -Data Blocks:        %d\n", _env->nr_dblks);
 	printk(" | Total Pages:            %d\n", _env->nr_pages);
 	printk(" |  -Translation Pages:    %d\n", _env->nr_tpages);
 	printk(" |  -Data Pages:           %d\n", _env->nr_dpages);
@@ -104,12 +104,11 @@ static void demand_env_init(struct demand_env *const _env, const struct ssdparam
                             uint64_t size) {
 	_env->nr_pages = spp->tt_pgs;
 	_env->nr_blocks = spp->tt_blks;
-	_env->nr_segments = spp->nr_segs;
 
-	_env->nr_tsegments = MAPPART_SEGS;
-	_env->nr_tpages = _env->nr_tsegments * _PPS;
-	_env->nr_dsegments = _env->nr_segments - _env->nr_tsegments;
-	_env->nr_dpages = _env->nr_dsegments * _PPS;
+	_env->nr_tblks = spp->tt_map_blks;
+	_env->nr_tpages = spp->tt_map_blks * spp->pgs_per_blk;
+	_env->nr_dblks = spp->tt_data_blks;
+	_env->nr_dpages = spp->tt_data_blks * spp->pgs_per_blk;
 
 /*	_env->caching_ratio = CACHING_RATIO;
 	_env->nr_tpages_optimal_caching = _env->nr_pages * 4 / PAGESIZE;

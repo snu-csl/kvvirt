@@ -68,7 +68,7 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	uint64_t blk_size, total_size;
 
 	spp->secsz = 512;
-	spp->secs_per_pg = 16;
+	spp->secs_per_pg = 8;
 	spp->pgsz = spp->secsz * spp->secs_per_pg;
 
 	spp->nchs = NAND_CHANNELS;
@@ -90,19 +90,19 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 		NVMEV_ASSERT(BLK_SIZE > 0);
 		blk_size = BLK_SIZE;
 		spp->blks_per_pl = DIV_ROUND_UP(capacity, blk_size * spp->pls_per_lun *
-								  spp->luns_per_ch * spp->nchs);
-	}
+                spp->luns_per_ch * spp->nchs);
+    }
 
-	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
-	NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+    NVMEV_ASSERT((ONESHOT_PAGE_SIZE % spp->pgsz) == 0 && (FLASH_PAGE_SIZE % spp->pgsz) == 0);
+    NVMEV_ASSERT((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
-	spp->pgs_per_oneshotpg = ONESHOT_PAGE_SIZE / (spp->pgsz);
-	spp->oneshotpgs_per_blk = DIV_ROUND_UP(blk_size, ONESHOT_PAGE_SIZE);
+    spp->pgs_per_oneshotpg = ONESHOT_PAGE_SIZE / (spp->pgsz);
+    spp->oneshotpgs_per_blk = DIV_ROUND_UP(blk_size, ONESHOT_PAGE_SIZE);
 
-	spp->pgs_per_flashpg = FLASH_PAGE_SIZE / (spp->pgsz);
-	spp->flashpgs_per_blk = (ONESHOT_PAGE_SIZE / FLASH_PAGE_SIZE) * spp->oneshotpgs_per_blk;
+    spp->pgs_per_flashpg = FLASH_PAGE_SIZE / (spp->pgsz);
+    spp->flashpgs_per_blk = (ONESHOT_PAGE_SIZE / FLASH_PAGE_SIZE) * spp->oneshotpgs_per_blk;
 
-	spp->pgs_per_blk = spp->pgs_per_oneshotpg * spp->oneshotpgs_per_blk;
+    spp->pgs_per_blk = spp->pgs_per_oneshotpg * spp->oneshotpgs_per_blk;
 
 	spp->write_unit_size = WRITE_UNIT_SIZE;
 
@@ -159,6 +159,9 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
     spp->dram_size = DRAM_SIZE;
 
 	check_params(spp);
+
+    printk("pgs_per_ch %ld pgs_per_lun %ld pgs_per_pl %ld pgs_per_blk %d tt_pgs %ld\n",
+            spp->pgs_per_ch, spp->pgs_per_lun, spp->pgs_per_pl, spp->pgs_per_blk, spp->tt_pgs);
 
 	total_size = (unsigned long)spp->tt_luns * spp->blks_per_lun * spp->pgs_per_blk *
 		     spp->secsz * spp->secs_per_pg;

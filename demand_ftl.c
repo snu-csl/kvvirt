@@ -6,6 +6,7 @@
 #include "nvmev.h"
 #include "demand_ftl.h"
 
+#include "demand/d_param.h"
 #include "demand/demand.h"
 #include "demand/utility.h"
 
@@ -57,7 +58,7 @@ static inline void set_maptbl_ent(struct conv_ftl *conv_ftl, uint64_t lpn, struc
 	conv_ftl->maptbl[lpn] = *ppa;
 }
 
-static uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa)
+uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	uint64_t pgidx;
@@ -208,6 +209,8 @@ static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint32_t io_type)
 {
 	if (io_type == USER_IO) {
 		return &ftl->wp;
+    } else if (io_type == MAP_IO) {
+        return &ftl->map_wp;
 	} else if (io_type == GC_IO) {
 		return &ftl->gc_wp;
 	}
@@ -224,6 +227,8 @@ static void prepare_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	NVMEV_ASSERT(wp);
 	NVMEV_ASSERT(curline);
 
+    printk("Giving line %d\n", curline->id);
+
 	/* wp->curline is always our next-to-write super-block */
 	*wp = (struct write_pointer){
 		.curline = curline,
@@ -235,7 +240,7 @@ static void prepare_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	};
 }
 
-static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
+void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct line_mgmt *lm = &conv_ftl->lm;
@@ -280,7 +285,7 @@ static void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 		NVMEV_DEBUG_VERBOSE("wpp: line is moved to victim list\n");
 		NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
 		/* there must be some invalid pages in this line */
-		NVMEV_ASSERT(wpp->curline->ipc > 0);
+		//NVMEV_ASSERT(wpp->curline->ipc > 0);
 		pqueue_insert(lm->victim_line_pq, wpp->curline);
 		lm->victim_line_cnt++;
 	}
@@ -303,7 +308,7 @@ out:
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
 }
 
-static struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type)
+struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type)
 {
 	struct ppa ppa;
 	struct write_pointer *wp = __get_wp(conv_ftl, io_type);
@@ -366,11 +371,12 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 	init_rmap(conv_ftl); // reverse mapping table (?)
 
 	/* initialize all the lines */
-	//init_lines(conv_ftl);
+	init_lines(conv_ftl);
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
-	//prepare_write_pointer(conv_ftl, USER_IO);
-	//prepare_write_pointer(conv_ftl, GC_IO);
+	prepare_write_pointer(conv_ftl, USER_IO);
+    prepare_write_pointer(conv_ftl, MAP_IO);
+	prepare_write_pointer(conv_ftl, GC_IO);
 
 	init_write_flow_control(conv_ftl);
 
@@ -405,10 +411,10 @@ void demand_init(uint64_t size, struct ssd* ssd)
     struct ssdparams *spp = &ssd->sp;
     spp->nr_segs = size / (_PPS * PAGESIZE);
 
-    virt_info.NOB = size / (_PPS * PAGESIZE);
+    virt_info.NOB = spp->tt_blks;
     virt_info.NOP = spp->tt_pgs;
-    virt_info.SOB = (spp->pgs_per_blk * spp->secsz * spp->secs_per_pg) * BPS;
-    virt_info.SOP = PAGESIZE;
+    virt_info.SOB = spp->pgs_per_blk * spp->secsz * spp->secs_per_pg;
+    virt_info.SOP = spp->pgsz;
     virt_info.PPB = spp->pgs_per_blk;
     virt_info.PPS = spp->pgs_per_blk * BPS;
     virt_info.TS = size;
@@ -417,9 +423,18 @@ void demand_init(uint64_t size, struct ssd* ssd)
 
     virt_info.create(&virt_info, &pt_bm);
 
+    uint64_t grains_per_mapblk = spp->pgs_per_blk * EPP;
+    uint64_t tt_grains = spp->tt_pgs * GRAIN_PER_PAGE; 
+
+    spp->tt_map_blks = tt_grains / grains_per_mapblk;
+    spp->tt_data_blks = spp->tt_blks - spp->tt_map_blks;
+
+    printk("grains_per_mapblk %llu tt_grains %llu tt_map %lu tt_data %lu\n", 
+            grains_per_mapblk, tt_grains, spp->tt_map_blks, spp->tt_data_blks);
+
     int temp[PARTNUM];
-    temp[MAP_S] = MAPPART_SEGS;
-    temp[DATA_S] = spp->nr_segs - MAPPART_SEGS;
+    temp[MAP_S] = spp->tt_map_blks;
+    temp[DATA_S] = spp->tt_data_blks;
     pt_bm.pt_create(&pt_bm, PARTNUM, temp, &virt_info);
 
     //printk("Before demand create.\n");
@@ -449,7 +464,6 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 	uint32_t i;
 	const uint32_t nr_parts = SSD_PARTITIONS;
 
-    size = 512LU << 20;
     dsize = size;
 
 	ssd_init_params(&spp, size, nr_parts);
@@ -462,6 +476,8 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 		ssd_init(ssd, &spp, cpu_nr_dispatcher);
 		conv_init_ftl(&conv_ftls[i], &cpp, ssd);
 	}
+
+    ftl = &conv_ftls[0];
 
 	/* PCIe, Write buffer are shared by all instances*/
 	for (i = 1; i < nr_parts; i++) {
@@ -559,7 +575,7 @@ static inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa)
 }
 
 /* update SSD status about one page from PG_VALID -> PG_VALID */
-static void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
+void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct line_mgmt *lm = &conv_ftl->lm;
@@ -567,6 +583,8 @@ static void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct nand_page *pg = NULL;
 	bool was_full_line = false;
 	struct line *line;
+
+    printk("Marking page %llu invalid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update corresponding page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
@@ -606,12 +624,14 @@ static void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	}
 }
 
-static void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa)
+void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct nand_block *blk = NULL;
 	struct nand_page *pg = NULL;
 	struct line *line;
+
+    printk("Marking page %llu valid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
@@ -1005,6 +1025,8 @@ bool end_w(struct request *req)
 
 bool end_r(struct request *req) 
 {
+    uint64_t pgsz = req->ssd->sp.pgsz;
+
     if(req->ppa == UINT_MAX - 1) {
         return true;
     }
@@ -1012,8 +1034,8 @@ bool end_r(struct request *req)
     uint64_t offset = G_OFFSET(req->ppa);
     //printk("%s ending read key %s offset %llu ppa %llu\n", __func__, req->key.key, offset, req->ppa);
 
-    req->ppa = (G_IDX(req->ppa) * PAGESIZE) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
-    //printk("%s switching ppa to %llu\n", __func__, req->ppa);
+    req->ppa = (G_IDX(req->ppa) * pgsz) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
+    printk("%s switching ppa to %llu\n", __func__, req->ppa);
 
     return true;
 }
@@ -1042,7 +1064,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     d_req.req = req;
     d_req.hash_params = NULL;
 
-    key.key = (char*)kzalloc(16, GFP_KERNEL);
+    key.key = (char*)kzalloc(17, GFP_KERNEL);
 
     BUG_ON(!key.key);
     BUG_ON(!cmd->kv_retrieve.key);
@@ -1051,6 +1073,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     uint8_t length = cmd_key_length(tmp);
 
     memcpy(key.key, cmd->kv_retrieve.key, length);
+    key.key[16] = '\0';
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 
@@ -1135,7 +1158,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.hash_params = NULL;
 
     key.key = NULL;
-    key.key = (char*)kzalloc(16, GFP_KERNEL);
+    key.key = (char*)kzalloc(17, GFP_KERNEL);
 
     BUG_ON(!key.key);
     BUG_ON(!cmd->kv_store.key);
@@ -1144,6 +1167,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     uint8_t length = cmd_key_length(tmp);
 
     memcpy(key.key, cmd->kv_retrieve.key, length);
+    key.key[16] = '\0';
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 

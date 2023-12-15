@@ -4,6 +4,8 @@
 #define _NVMEVIRT_CONV_FTL_H
 
 #include <linux/types.h>
+#include <linux/spinlock.h>
+
 #include "pqueue/pqueue.h"
 #include "ssd_config.h"
 #include "ssd.h"
@@ -24,6 +26,12 @@
 	 is_kv_delete_cmd(opcode) || is_kv_iter_req_cmd(opcode) || is_kv_iter_read_cmd(opcode) || \
 	 is_kv_exist_cmd(opcode)) ||                                                              \
 		is_kv_batch_cmd(opcode)
+
+/*
+ * For DFTL.
+ */
+
+extern struct conv_ftl *ftl;
 
 typedef enum {
 	// generic command status
@@ -89,6 +97,7 @@ struct conv_ftl {
 	struct ppa *maptbl; /* page level mapping table */
 	uint64_t *rmap; /* reverse mapptbl, assume it's stored in OOB */
 	struct write_pointer wp;
+    struct write_pointer map_wp;
 	struct write_pointer gc_wp;
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
@@ -103,5 +112,6 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 			   struct nvmev_result *ret);
 bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, 
                          struct nvmev_result *ret);
+
 
 #endif

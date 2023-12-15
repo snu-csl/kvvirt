@@ -25,11 +25,11 @@ __segment *d_reserve;
 __segment *t_reserve;
 
 int page_create(blockmanager *bm) {
-	d_reserve = bm->pt_get_segment(bm, DATA_S, true);
-	d_active = NULL;
+	//d_reserve = bm->pt_get_segment(bm, DATA_S, true);
+	//d_active = NULL;
 
-	t_reserve = bm->pt_get_segment(bm, MAP_S, true);
-	t_active = NULL;
+	//t_reserve = bm->pt_get_segment(bm, MAP_S, true);
+	//t_active = NULL;
 
 	return 0;
 }

@@ -46,8 +46,6 @@ static inline unsigned long long __get_wallclock(void)
 static unsigned int __do_perform_internal_copy(uint64_t ppa, void* dst, 
                                                uint64_t len, bool read)
 {
-    BUG_ON(len > PAGESIZE);
-
     uint64_t offset = ppa;
 
     if(read) {

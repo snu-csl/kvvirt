@@ -187,6 +187,8 @@ static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint32_t io_type)
 {
 	if (io_type == USER_IO) {
 		return &ftl->wp;
+    } else if (io_type == MAP_IO) {
+        return &ftl->map_wp;
 	} else if (io_type == GC_IO) {
 		return &ftl->gc_wp;
 	}
@@ -349,6 +351,7 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
 	prepare_write_pointer(conv_ftl, USER_IO);
+    prepare_write_pointer(conv_ftl, MAP_IO);
 	prepare_write_pointer(conv_ftl, GC_IO);
 
 	init_write_flow_control(conv_ftl);

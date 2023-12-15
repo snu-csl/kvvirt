@@ -94,69 +94,85 @@ void pbm_create_print(blockmanager *bm, int pnum){
 uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
 	bm->li=li;
 
-    uint64_t NOS = li->TS / (_PPS * PAGESIZE);
+	//bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
+	//bm->private_data=(void*)p;
+	//p->base_block=(__block*)vmalloc(sizeof(__block) * li->NOB);
+    //printk("p->base_block allocation %luMB\n", (sizeof(__block) * li->NOB >> 20));
 
-    printk("NOS %llu\n", NOS);
+    //BUG_ON(!p->base_block);
+    //printk("FIXME pbm_create base_block_manager.c manually entering seg_idx.\n");
 
-	bbm_pri *p=(bbm_pri*)kzalloc(sizeof(bbm_pri), GFP_KERNEL);
-	bm->private_data=(void*)p;
-	p->base_block=(__block*)vmalloc(sizeof(__block) * (NOS * PUNIT));
+    //uint64_t bitset = 0;
+    //for(int i = 0; i < li->NOB; i++) {
+    //    __block *b=&p->base_block[i];
+    //    b->block_num=i;
+    //    b->punit_num=UINT_MAX;
+    //    b->bitset=(uint8_t*)kzalloc((li->PPB/8) * 1, GFP_KERNEL);
+    //    bitset += sizeof(uint8_t*) * (li->PPB/8); 
+    //    b->now = 0;
+    //    //printk("Done checking block_idx %d\n", i);
+    //}
 
-    BUG_ON(!p->base_block);
-    printk("FIXME pbm_create base_block_manager.c manually entering seg_idx.\n");
+    ////int seg_idx=0;
+	////int block_idx=0;
+	////for(int i=0; i<NOS; i++){
+	////	for(int j=0; j<PUNIT; j++){
+    ////        printk("Checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
+	////		__block *b=&p->base_block[block_idx];
+	////		b->block_num=seg_idx;
+	////		b->punit_num=j;
+	////		b->bitset=(uint8_t*)kzalloc((_PPB/8) * 1, GFP_KERNEL);
+    ////        b->now = 0;
+	////		block_idx++;
+    ////        printk("Done checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
+	////	}
+    ////    seg_idx += _PPS;
+	////}
 
-    int seg_idx=0;
-	int block_idx=0;
-	for(int i=0; i<NOS; i++){
-		for(int j=0; j<PUNIT; j++){
-            printk("Checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
-			__block *b=&p->base_block[block_idx];
-			b->block_num=seg_idx;
-			b->punit_num=j;
-			b->bitset=(uint8_t*)kzalloc((_PPB/8) * 1, GFP_KERNEL);
-            b->now = 0;
-			block_idx++;
-            printk("Done checking PUNIT %d block_idx %d seg_idx %d\n", j, block_idx, seg_idx);
-		}
-        seg_idx += _PPS;
-	}
+    //printk("Moving on pnum %d.\n", pnum);
 
-    printk("Moving on\n");
+	//p_info* pinfo=(p_info*)kzalloc(sizeof(p_info), GFP_KERNEL);
+	//p->private_data=(void*)pinfo;
+	//pinfo->pnum=pnum;
+	//pinfo->now_assign=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
+	//pinfo->max_assign=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
+	//pinfo->p_channel=(channel**)kzalloc(sizeof(channel) *pnum, GFP_KERNEL);
+	//pinfo->from=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
+	//pinfo->to=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
 
-	p_info* pinfo=(p_info*)kzalloc(sizeof(p_info), GFP_KERNEL);
-	p->private_data=(void*)pinfo;
-	pinfo->pnum=pnum;
-	pinfo->now_assign=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
-	pinfo->max_assign=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
-	pinfo->p_channel=(channel**)kzalloc(sizeof(channel) *pnum, GFP_KERNEL);
-	pinfo->from=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
-	pinfo->to=(int*)kzalloc(sizeof(int)*pnum, GFP_KERNEL);
-	int start=0;
-	int end=0;
-	for(int i=pnum-1 ; i>=0; i--)
-//	for(int i=0 ; i<pnum; i++)
-	{
-		pinfo->now_assign[i]=0;
-		pinfo->max_assign[i]=epn[i];
-		pinfo->p_channel[i]=(channel*)kzalloc(sizeof(channel)*BPS, GFP_KERNEL);
-		end+=epn[i];
-		pinfo->from[i]=start;
-		pinfo->to[i]=end-1;
-		printk("%s assign block %d ~ %d( %d ~ %d )\n",i==0?"MAP":"DATA",start,end-1,p->base_block[pinfo->from[i]*64].block_num,p->base_block[(pinfo->to[i])*64].block_num+_PPS-1);
-		for(int j=0; j<PUNIT; j++){
-			channel *c=&pinfo->p_channel[i][j];
-			q_init(&c->free_block,end-start);
-			mh_init(&c->max_heap,end-start,pt_mh_swap_hptr,pt_mh_assign_hptr,pt_get_cnt);
-			for(int k=start; k<end;k++){
-				__block *n=&p->base_block[k*BPS+j%BPS];
-				q_enqueue((void*)n,c->free_block);
-			}
-		}
-		start=end;
-	}
+    //printk("Passed alloc.\n");
 
-	p->seg_map=drb_create();
-	p->seg_map_idx=0;
+	//int start=0;
+	//int end=0;
+	//for(int i=pnum-1 ; i>=0; i--)
+//	//for(int i=0 ; i<pnum; i++)
+	//{
+    //    printk("Checking pnum %d\n", pnum);
+	//	pinfo->now_assign[i]=0;
+	//	pinfo->max_assign[i]=epn[i];
+    //    printk("max_assign for %d %u\n", i, epn[i]);
+	//	//pinfo->p_channel[i]=(channel*)kzalloc(sizeof(channel)*BPS, GFP_KERNEL);
+	//	end+=epn[i];
+    //    printk("end for %d %u\n", i, end);
+	//	pinfo->from[i]=start;
+	//	pinfo->to[i]=end-1;
+    //    printk("Blocks %d to %d for %s.\n", start, end - 1, i == 0 ? "MAP" : "DATA");
+
+	//	//printk("%s assign block %d ~ %d( %d ~ %d )\n",i==0?"MAP":"DATA\n",start,end-1,p->base_block[pinfo->from[i]*64].block_num,p->base_block[(pinfo->to[i])*64].block_num+_PPS-1);
+	//	//for(int j=0; j<PUNIT; j++){
+	//	//	channel *c=&pinfo->p_channel[i][j];
+	//	//	q_init(&c->free_block,end-start);
+	//	//	mh_init(&c->max_heap,end-start,pt_mh_swap_hptr,pt_mh_assign_hptr,pt_get_cnt);
+	//	//	for(int k=start; k<end;k++){
+	//	//		__block *n=&p->base_block[k*BPS+j%BPS];
+	//	//		q_enqueue((void*)n,c->free_block);
+	//	//	}
+	//	//}
+	//	start=end;
+	//}
+
+	//p->seg_map=drb_create();
+	//p->seg_map_idx=0;
 //	pbm_create_print(bm,pnum);
 	return 1;
 }
