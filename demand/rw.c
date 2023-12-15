@@ -21,7 +21,7 @@ struct conv_ftl *ftl;
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
-        printk("WB hit for key %s!\n", req->key.key);
+        //printk("WB hit for key %s!\n", req->key.key);
 		d_stat.wb_hit++;
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
@@ -95,7 +95,7 @@ uint64_t __demand_read(request *const req) {
 
 read_retry:
 	lpa = get_lpa(req->key, req->hash_params);
-    printk("Got LPA %u for key %s!\n", lpa, req->key.key);
+    //printk("Got LPA %u for key %s!\n", lpa, req->key.key);
 	pte.ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
 	pte.key_fp = FP_MAX;
@@ -147,7 +147,7 @@ read_retry:
 	/* 2. check cache */
 	if (d_cache->is_hit(lpa)) {
 		d_cache->touch(lpa);
-        printk("Cache hit for LPA %u!\n", lpa);
+        //printk("Cache hit for LPA %u!\n", lpa);
 	} else {
 cache_load:
 		rc = d_cache->wait_if_flying(lpa, req, NULL);
@@ -213,8 +213,8 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
     ppa.g.pg = ppa_ % spp->pgs_per_blk;
 
-    printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
-            __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
+    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
 
@@ -256,12 +256,12 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
-        printk("Got PPA %u\n", ppa);
+        //printk("Got PPA %u\n", ppa);
 
-        printk("Actual PPA : %d %d %d %d %d\n", 
-                ppa_s.g.ch, ppa_s.g.lun, ppa_s.g.pl, ppa_s.g.blk, ppa_s.g.pg);
-        printk("Tmp PPA : %d %d %d %d %d\n", 
-                tmp_ppa.g.ch, tmp_ppa.g.lun, tmp_ppa.g.pl, tmp_ppa.g.blk, tmp_ppa.g.pg);
+        //printk("Actual PPA : %d %d %d %d %d\n", 
+        //        ppa_s.g.ch, ppa_s.g.lun, ppa_s.g.pl, ppa_s.g.blk, ppa_s.g.pg);
+        //printk("Tmp PPA : %d %d %d %d %d\n", 
+        //        tmp_ppa.g.ch, tmp_ppa.g.lun, tmp_ppa.g.pl, tmp_ppa.g.blk, tmp_ppa.g.pg);
 
 		int offset = 0;
 
@@ -280,7 +280,7 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 			wb_entry = wb_bucket->bucket[target_length][wb_bucket->idx[target_length]-1];
 			wb_bucket->idx[target_length]--;
 			wb_entry->ppa = PPA_TO_PGA(ppa, offset);
-            printk("PGA %u for PPA %u\n", wb_entry->ppa, ppa);
+            //printk("PGA %u for PPA %u\n", wb_entry->ppa, ppa);
 
             //printk("%s key %s going to ppa %u (%u) offset %u\n", __func__, 
                     //wb_entry->key.key, wb_entry->ppa, ppa, offset*GRAINED_UNIT);
@@ -352,13 +352,13 @@ static void _do_wb_mapping_update(skiplist *wb) {
 		}
 		if (!wb_entry) continue;
 
-        printk("%s updating %s\n", __func__, wb_entry->key.key);
+        //printk("%s updating %s\n", __func__, wb_entry->key.key);
 wb_retry:
 		h_params = (struct hash_params *)wb_entry->hash_params;
 
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
-        printk("wb_entry->ppa is %u\n", wb_entry->ppa);
+        //printk("wb_entry->ppa is %u\n", wb_entry->ppa);
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif
@@ -385,7 +385,7 @@ wb_retry:
 		}
 
 		if (d_cache->is_hit(lpa)) {
-            printk("%s hit for LPA %u\n", __func__, lpa);
+            //printk("%s hit for LPA %u\n", __func__, lpa);
 			d_cache->touch(lpa);
 		} else {
             //printk("%s miss for LPA %u\n", __func__, lpa);
@@ -409,7 +409,7 @@ wb_cache_list_up:
 wb_data_check:
 		/* get page_table entry which contains {ppa, key_fp} */
 		pte = d_cache->get_pte(lpa);
-        printk("%s passed get_pte for LPA %u\n", __func__, lpa);
+        //printk("%s passed get_pte for LPA %u\n", __func__, lpa);
 
 #ifdef HASH_KVSSD
 		/* direct update at initial case */
@@ -430,17 +430,17 @@ wb_data_check:
 		/* hash_table lookup to filter same wb element */
 		rc = d_htable_find(d_member.hash_table, pte.ppa, lpa);
 		if (rc) {
-            printk("%s collided for LPA %u\n", __func__, lpa);
+            //printk("%s collided for LPA %u\n", __func__, lpa);
 			h_params->find = HASH_KEY_DIFF;
 			h_params->cnt++;
 
 			goto wb_retry;
 		}
-        printk("%s passed hash table check for LPA %u\n", __func__, lpa);
+        //printk("%s passed hash table check for LPA %u\n", __func__, lpa);
 
 		/* data check is necessary before update */
 		read_for_data_check(pte.ppa, wb_entry);
-        printk("%s passed data check for LPA %u\n", __func__, lpa);
+        //printk("%s passed data check for LPA %u\n", __func__, lpa);
 		continue;
 #endif
 
@@ -581,7 +581,7 @@ void *demand_end_req(algo_req *a_req) {
 	request *req = a_req->parents;
 	snode *wb_entry = d_params->wb_entry;
 
-    printk("Entered demand_end_req ppa %u\n", a_req->ppa);
+    //printk("Entered demand_end_req ppa %u\n", a_req->ppa);
 
 	struct hash_params *h_params;
 	struct inflight_params *i_params;
@@ -607,9 +607,9 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, req->value, offset);
 
-            printk("Comparing %s and %s\n", check_key.key, req->key.key);
+            //printk("Comparing %s and %s\n", check_key.key, req->key.key);
 			if (KEYCMP(req->key, check_key) == 0) {
-                printk("Match %s and %s.\n", check_key.key, req->key.key);
+                //printk("Match %s and %s.\n", check_key.key, req->key.key);
 				d_stat.fp_match_r++;
 
 				hash_collision_logging(h_params->cnt, DREAD);
@@ -633,7 +633,7 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, d_params->value, offset);
 			if (KEYCMP(wb_entry->key, check_key) == 0) {
-                printk("Match in read for writes.\n");
+                //printk("Match in read for writes.\n");
 				/* hash key found -> update */
 				d_stat.fp_match_w++;
 

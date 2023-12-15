@@ -303,7 +303,7 @@ int cg_touch(lpa_t lpa) {
 int cg_update(lpa_t lpa, struct pt_struct pte) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 
-    printk("cg_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
+    //printk("cg_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
 
 	if (cmt->pt) {
 		cmt->pt[OFFSET(lpa)] = pte;
@@ -344,7 +344,7 @@ bool cg_is_full(void) {
 struct pt_struct cg_get_pte(lpa_t lpa) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	if (cmt->pt) {
-        printk("%s returning %u for lpa %u\n", __func__, cmt->pt[OFFSET(lpa)].ppa, lpa);
+        //printk("%s returning %u for lpa %u\n", __func__, cmt->pt[OFFSET(lpa)].ppa, lpa);
 		return cmt->pt[OFFSET(lpa)];
 	} else {
 		/* FIXME: to handle later update after evict */
