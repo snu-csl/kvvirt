@@ -2,6 +2,7 @@
 
 #include <linux/ktime.h>
 #include <linux/sched/clock.h>
+#include <linux/sort.h>
 
 #include "nvmev.h"
 #include "demand_ftl.h"
@@ -96,12 +97,12 @@ static inline int victim_line_cmp_pri(pqueue_pri_t next, pqueue_pri_t curr)
 
 static inline pqueue_pri_t victim_line_get_pri(void *a)
 {
-	return ((struct line *)a)->vpc;
+	return ((struct line *)a)->vgc;
 }
 
 static inline void victim_line_set_pri(void *a, pqueue_pri_t pri)
 {
-	((struct line *)a)->vpc = pri;
+	((struct line *)a)->vgc = pri;
 }
 
 static inline size_t victim_line_get_pos(void *a)
@@ -114,21 +115,22 @@ static inline void victim_line_set_pos(void *a, size_t pos)
 	((struct line *)a)->pos = pos;
 }
 
-static inline void consume_write_credit(struct conv_ftl *conv_ftl)
+void consume_write_credit(struct conv_ftl *conv_ftl, uint32_t len)
 {
-	conv_ftl->wfc.write_credits--;
+	conv_ftl->wfc.write_credits -= len;
+    NVMEV_DEBUG("Consuming %u credits. %d remaining.\n", len,
+                 conv_ftl->wfc.write_credits);
 }
 
 static void forground_gc(struct conv_ftl *conv_ftl);
-
-static inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
+inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
 {
 	struct write_flow_control *wfc = &(conv_ftl->wfc);
-	if (wfc->write_credits <= 0) {
+	if ((int32_t) wfc->write_credits <= (int32_t) 0) {
 		forground_gc(conv_ftl);
-
 		wfc->write_credits += wfc->credits_to_refill;
-	}
+	} else {
+    }
 }
 
 static void init_lines(struct conv_ftl *conv_ftl)
@@ -155,6 +157,8 @@ static void init_lines(struct conv_ftl *conv_ftl)
 			.id = i,
 			.ipc = 0,
 			.vpc = 0,
+            .vgc = 0,
+            .igc = 0,
 			.pos = 0,
 			.entry = LIST_HEAD_INIT(lm->lines[i].entry),
 		};
@@ -180,8 +184,8 @@ static void init_write_flow_control(struct conv_ftl *conv_ftl)
 	struct write_flow_control *wfc = &(conv_ftl->wfc);
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 
-	wfc->write_credits = spp->pgs_per_line;
-	wfc->credits_to_refill = spp->pgs_per_line;
+	wfc->write_credits = spp->pgs_per_line * GRAIN_PER_PAGE;
+	wfc->credits_to_refill = spp->pgs_per_line * GRAIN_PER_PAGE;
 }
 
 static inline void check_addr(int a, int max)
@@ -227,7 +231,7 @@ static void prepare_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	NVMEV_ASSERT(wp);
 	NVMEV_ASSERT(curline);
 
-    printk("Giving line %d\n", curline->id);
+    printk("Giving line %d to %u\n", curline->id, io_type);
 
 	/* wp->curline is always our next-to-write super-block */
 	*wp = (struct write_pointer){
@@ -246,7 +250,7 @@ void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	struct line_mgmt *lm = &conv_ftl->lm;
 	struct write_pointer *wpp = __get_wp(conv_ftl, io_type);
 
-	NVMEV_DEBUG_VERBOSE("current wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n",
+	NVMEV_DEBUG("current wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n",
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg);
 
 	check_addr(wpp->pg, spp->pgs_per_blk);
@@ -274,25 +278,31 @@ void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 		goto out;
 
 	wpp->pg = 0;
+
+    NVMEV_DEBUG("vgc of curline %d (%ld)\n", 
+                  wpp->curline->vgc, 
+                  spp->pgs_per_line * GRAIN_PER_PAGE);
+
 	/* move current line to {victim,full} line list */
-	if (wpp->curline->vpc == spp->pgs_per_line) {
+	if (wpp->curline->igc == 0) {
 		/* all pgs are still valid, move to full line list */
 		NVMEV_ASSERT(wpp->curline->ipc == 0);
 		list_add_tail(&wpp->curline->entry, &lm->full_line_list);
 		lm->full_line_cnt++;
-		NVMEV_DEBUG_VERBOSE("wpp: move line to full_line_list\n");
+		NVMEV_DEBUG("wpp: move line %d to full_line_list\n", wpp->curline->id);
 	} else {
-		NVMEV_DEBUG_VERBOSE("wpp: line is moved to victim list\n");
-		NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
+		NVMEV_DEBUG("wpp: line %d is moved to victim list\n", wpp->curline->id);
+		//NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
+        NVMEV_ASSERT(wpp->curline->vgc >= 0 && wpp->curline->vgc < spp->pgs_per_line * GRAIN_PER_PAGE);
 		/* there must be some invalid pages in this line */
-		//NVMEV_ASSERT(wpp->curline->ipc > 0);
+		NVMEV_ASSERT(wpp->curline->igc > 0);
 		pqueue_insert(lm->victim_line_pq, wpp->curline);
 		lm->victim_line_cnt++;
 	}
 	/* current line is used up, pick another empty line */
 	check_addr(wpp->blk, spp->blks_per_pl);
 	wpp->curline = get_next_free_line(conv_ftl);
-	NVMEV_DEBUG_VERBOSE("wpp: got new clean line %d\n", wpp->curline->id);
+	NVMEV_DEBUG("wpp: got new clean line %d\n", wpp->curline->id);
 
 	wpp->blk = wpp->curline->id;
 	check_addr(wpp->blk, spp->blks_per_pl);
@@ -304,7 +314,7 @@ void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	/* TODO: assume # of pl_per_lun is 1, fix later */
 	NVMEV_ASSERT(wpp->pl == 0);
 out:
-	NVMEV_DEBUG_VERBOSE("advanced wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
+	NVMEV_DEBUG("advanced wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
 }
 
@@ -375,7 +385,7 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
 	prepare_write_pointer(conv_ftl, USER_IO);
-    prepare_write_pointer(conv_ftl, MAP_IO);
+    //prepare_write_pointer(conv_ftl, MAP_IO);
 	prepare_write_pointer(conv_ftl, GC_IO);
 
 	init_write_flow_control(conv_ftl);
@@ -432,6 +442,17 @@ void demand_init(uint64_t size, struct ssd* ssd)
     printk("grains_per_mapblk %llu tt_grains %llu tt_map %lu tt_data %lu\n", 
             grains_per_mapblk, tt_grains, spp->tt_map_blks, spp->tt_data_blks);
 
+    grain_bitmap = (bool*)vmalloc(tt_grains * sizeof(bool));
+
+    /*
+     * OOB stores LPA to grain information.
+     */
+
+    oob = (uint64_t**)kzalloc((spp->tt_pgs * sizeof(uint64_t*)), GFP_KERNEL);
+    for(int i = 0; i < spp->tt_pgs; i++) {
+        oob[i] = (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
+    }
+    
     int temp[PARTNUM];
     temp[MAP_S] = spp->tt_map_blks;
     temp[DATA_S] = spp->tt_data_blks;
@@ -584,44 +605,199 @@ void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	bool was_full_line = false;
 	struct line *line;
 
-    printk("Marking page %llu invalid\n", ppa2pgidx(conv_ftl, ppa));
+    NVMEV_ERROR("Marking page %llu invalid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update corresponding page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
 	NVMEV_ASSERT(pg->status == PG_VALID);
 	pg->status = PG_INVALID;
 
+	///* update corresponding block status */
+	//blk = get_blk(conv_ftl->ssd, ppa);
+	//NVMEV_ASSERT(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
+	//blk->ipc++;
+	//NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
+	//blk->vpc--;
+    //NVMEV_ASSERT(blk->igc <= spp->pgs_per_line * GRAIN_PER_PAGE);
+
+	///* update corresponding line status */
+	//line = get_line(conv_ftl, ppa);
+	//NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
+	//if (line->vpc == spp->pgs_per_line) {
+	//	//NVMEV_ASSERT(line->ipc == 0);
+	//	//was_full_line = true;
+	//}
+	//line->ipc++;
+	//NVMEV_ASSERT(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+	///* Adjust the position of the victime line in the pq under over-writes */
+	////if (line->pos) {
+	////	/* Note that line->vpc will be updated by this call */
+	////	pqueue_change_priority(lm->victim_line_pq, line->vpc - 1, line);
+	////} else {
+	//line->vpc--;
+	////}
+
+	////if (was_full_line) {
+	////	/* move line: "full" -> "victim" */
+	////	list_del_init(&line->entry);
+	////	lm->full_line_cnt--;
+	////	pqueue_insert(lm->victim_line_pq, line);
+	////	lm->victim_line_cnt++;
+	////}
+}
+
+static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
+{
+    struct ppa ppa;
+
+    ppa.ppa = 0;
+    ppa.g.ch = (ppa_ / spp->pgs_per_ch) % spp->pgs_per_ch;
+    ppa.g.lun = (ppa_ % spp->pgs_per_ch) / spp->pgs_per_lun;
+    ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
+    ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
+    ppa.g.pg = ppa_ % spp->pgs_per_blk;
+
+    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
+
+	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
+
+	return ppa;
+}
+
+/*
+ * Only to be called after mark_page_valid.
+ */
+
+void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len) {
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
+	struct nand_block *blk = NULL;
+	struct nand_page *pg = NULL;
+	struct line *line;
+
+    uint64_t page = G_IDX(grain);
+    struct ppa ppa = ppa_to_struct(spp, page);
+
+    //NVMEV_ERROR("Marking grain %llu length %u in page %llu valid\n", 
+    //             grain, len, page);
+
+	/* update page status */
+	pg = get_pg(conv_ftl->ssd, &ppa);
+
+    if(pg->status != PG_VALID) {
+        NVMEV_ERROR("Page %llu was %d\n", page, pg->status);
+    }
+
+	NVMEV_ASSERT(pg->status == PG_VALID);
+
 	/* update corresponding block status */
-	blk = get_blk(conv_ftl->ssd, ppa);
-	NVMEV_ASSERT(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
-	blk->ipc++;
-	NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
-	blk->vpc--;
+	blk = get_blk(conv_ftl->ssd, &ppa);
+	//NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
+    NVMEV_ASSERT(blk->vgc >= 0 && blk->vgc <= spp->pgs_per_blk * GRAIN_PER_PAGE);
+    blk->vgc += len;
 
 	/* update corresponding line status */
-	line = get_line(conv_ftl, ppa);
-	NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
-	if (line->vpc == spp->pgs_per_line) {
-		NVMEV_ASSERT(line->ipc == 0);
-		was_full_line = true;
+	line = get_line(conv_ftl, &ppa);
+	//NVMEV_ASSERT(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+    NVMEV_ASSERT(line->vgc >= 0 && line->vgc <= spp->pgs_per_line * GRAIN_PER_PAGE);
+    line->vgc += len;
+
+    /*
+     * We leave the grains after the first grain as zero here,
+     * so that during GC we can figure out the length of the KV pairs
+     * by iterating over them.
+     *
+     * A: 1 0 0 0 B: 1 ... -> A is length 4.
+     */
+
+    NVMEV_ASSERT(grain_bitmap[grain] != 1);
+    grain_bitmap[grain] = 1;
+}
+
+bool page_grains_invalid(uint64_t ppa) {
+    uint64_t page = ppa;
+    uint64_t offset = page * GRAIN_PER_PAGE;
+
+    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+        if(grain_bitmap[offset + i] == 1) {
+            NVMEV_DEBUG("Grain %llu page %llu was valid\n",
+                    offset + i, page);
+            return false;
+        }
+    }
+
+    NVMEV_DEBUG("All grains invalid page %llu (%llu)\n", page, offset);
+    return true;
+}
+
+void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len) {
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
+	struct line_mgmt *lm = &conv_ftl->lm;
+	struct nand_block *blk = NULL;
+	struct nand_page *pg = NULL;
+	bool was_full_line = false;
+	struct line *line;
+
+    uint64_t page = G_IDX(grain);
+    struct ppa ppa = ppa_to_struct(spp, page);
+
+    NVMEV_DEBUG("Marking grain %llu length %u in page %llu invalid\n", 
+                 grain, len, ppa2pgidx(conv_ftl, &ppa));
+
+	/* update corresponding page status */
+	pg = get_pg(conv_ftl->ssd, &ppa);
+	NVMEV_ASSERT(pg->status == PG_VALID);
+
+	/* update corresponding block status */
+	blk = get_blk(conv_ftl->ssd, &ppa);
+	//NVMEV_ASSERT(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
+	//NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
+    NVMEV_ASSERT(blk->igc < spp->pgs_per_blk * GRAIN_PER_PAGE);
+    NVMEV_ASSERT(blk->vgc > 0 && blk->vgc <= spp->pgs_per_blk * GRAIN_PER_PAGE);
+    blk->igc += len;
+
+	/* update corresponding line status */
+	line = get_line(conv_ftl, &ppa);
+	//NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
+    NVMEV_ASSERT(line->igc >= 0 && line->igc < spp->pgs_per_line * GRAIN_PER_PAGE);
+    NVMEV_DEBUG("VPC for line %d is %d IPC %d\n", line->id, line->vpc, line->ipc);
+	if (line->vgc == spp->pgs_per_line * GRAIN_PER_PAGE) {
+		NVMEV_ASSERT(line->igc == 0);
+        was_full_line = true;
 	}
-	line->ipc++;
-	NVMEV_ASSERT(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+    NVMEV_ASSERT(line->igc < spp->pgs_per_line * GRAIN_PER_PAGE);
+    line->igc += len;
+
+    NVMEV_DEBUG("IGC for line %d is %d\n", line->id, line->igc);
+
 	/* Adjust the position of the victime line in the pq under over-writes */
 	if (line->pos) {
-		/* Note that line->vpc will be updated by this call */
-		pqueue_change_priority(lm->victim_line_pq, line->vpc - 1, line);
+		/* Note that line->vgc will be updated by this call */
+		pqueue_change_priority(lm->victim_line_pq, line->vgc - len, line);
+        NVMEV_DEBUG("Changing priority of line %d vgc %d\n", line->id, line->vgc);
 	} else {
-		line->vpc--;
+		line->vgc -= len;
 	}
 
-	if (was_full_line) {
-		/* move line: "full" -> "victim" */
-		list_del_init(&line->entry);
-		lm->full_line_cnt--;
-		pqueue_insert(lm->victim_line_pq, line);
-		lm->victim_line_cnt++;
-	}
+    if (was_full_line) {
+        /* move line: "full" -> "victim" */
+        list_del_init(&line->entry);
+        lm->full_line_cnt--;
+        NVMEV_DEBUG("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
+        pqueue_insert(lm->victim_line_pq, line);
+        lm->victim_line_cnt++;
+    }
+
+    NVMEV_DEBUG("VGC for line %d is %d\n", line->id, line->vgc);
+	//NVMEV_ASSERT(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
+    NVMEV_ASSERT(line->vgc >= 0 && line->vgc <= spp->pgs_per_line * GRAIN_PER_PAGE);
+
+    NVMEV_ASSERT(grain_bitmap[grain] != 0);
+    grain_bitmap[grain] = 0;
+
+    if(page_grains_invalid(G_IDX(grain))) {
+        mark_page_invalid(conv_ftl, &ppa);
+    }
 }
 
 void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa)
@@ -631,22 +807,22 @@ void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct nand_page *pg = NULL;
 	struct line *line;
 
-    printk("Marking page %llu valid\n", ppa2pgidx(conv_ftl, ppa));
+    NVMEV_ERROR("Marking page %llu valid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
 	NVMEV_ASSERT(pg->status == PG_FREE);
 	pg->status = PG_VALID;
 
-	/* update corresponding block status */
-	blk = get_blk(conv_ftl->ssd, ppa);
-	NVMEV_ASSERT(blk->vpc >= 0 && blk->vpc < spp->pgs_per_blk);
-	blk->vpc++;
+	///* update corresponding block status */
+	//blk = get_blk(conv_ftl->ssd, ppa);
+	//NVMEV_ASSERT(blk->vpc >= 0 && blk->vpc < spp->pgs_per_blk);
+	//blk->vpc++;
 
-	/* update corresponding line status */
-	line = get_line(conv_ftl, ppa);
-	NVMEV_ASSERT(line->vpc >= 0 && line->vpc < spp->pgs_per_line);
-	line->vpc++;
+	///* update corresponding line status */
+	//line = get_line(conv_ftl, ppa);
+	//NVMEV_ASSERT(line->vpc >= 0 && line->vpc < spp->pgs_per_line);
+	//line->vpc++;
 }
 
 static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
@@ -660,6 +836,7 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		/* reset page status */
 		pg = &blk->pg[i];
 		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
+        NVMEV_ERROR("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa));
 		pg->status = PG_FREE;
 	}
 
@@ -667,6 +844,8 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	NVMEV_ASSERT(blk->npgs == spp->pgs_per_blk);
 	blk->ipc = 0;
 	blk->vpc = 0;
+    blk->igc = 0;
+    blk->vgc = 0;
 	blk->erase_cnt++;
 }
 
@@ -716,6 +895,7 @@ static uint64_t gc_write_page(struct conv_ftl *conv_ftl, struct ppa *old_ppa)
 			.interleave_pci_dma = false,
 			.ppa = &new_ppa,
 		};
+
 		if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
 			gcw.cmd = NAND_WRITE;
 			gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
@@ -744,10 +924,12 @@ static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
 
 	victim_line = pqueue_peek(lm->victim_line_pq);
 	if (!victim_line) {
+        BUG_ON(true);
 		return NULL;
 	}
 
 	if (!force && (victim_line->vpc > (spp->pgs_per_line / 8))) {
+        BUG_ON(true);
 		return NULL;
 	}
 
@@ -755,90 +937,190 @@ static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
 	victim_line->pos = 0;
 	lm->victim_line_cnt--;
 
+    NVMEV_DEBUG("Took victim line %d off the pq\n", victim_line->id);
+	NVMEV_DEBUG("ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", 
+		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
+            conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
+            conv_ftl->lm.free_line_cnt);
+
 	/* victim_line is a danggling node now */
 	return victim_line;
 }
 
-/* here ppa identifies the block we want to clean */
-static void clean_one_block(struct conv_ftl *conv_ftl, struct ppa *ppa)
+bool grain_valid(uint64_t grain) {
+    return grain_bitmap[grain] == 1;
+}
+
+static int len_cmp(const void *a, const void *b)
 {
-	struct ssdparams *spp = &conv_ftl->ssd->sp;
-	struct nand_page *pg_iter = NULL;
-	int cnt = 0;
-	int pg;
+    const struct lpa_len_ppa *da = a, *db = b;
 
-	for (pg = 0; pg < spp->pgs_per_blk; pg++) {
-		ppa->g.pg = pg;
-		pg_iter = get_pg(conv_ftl->ssd, ppa);
-		/* there shouldn't be any free page in victim blocks */
-		NVMEV_ASSERT(pg_iter->status != PG_FREE);
-		if (pg_iter->status == PG_VALID) {
-			gc_read_page(conv_ftl, ppa);
-			/* delay the maptbl update until "write" happens */
-			gc_write_page(conv_ftl, ppa);
-			cnt++;
-		}
-	}
-
-	NVMEV_ASSERT(get_blk(conv_ftl->ssd, ppa)->vpc == cnt);
+    if (db->len < da->len) return -1;
+    if (db->len > da->len) return 1;
+    return 0;
 }
 
 /* here ppa identifies the block we want to clean */
-static void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
+void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct convparams *cpp = &conv_ftl->cp;
 	struct nand_page *pg_iter = NULL;
-	int cnt = 0, i = 0;
-	uint64_t completed_time = 0;
+	int page_cnt = 0, cnt = 0, i = 0, len = 0;
+	uint64_t completed_time = 0, pgidx = 0;
 	struct ppa ppa_copy = *ppa;
+
+    struct lpa_len_ppa *lpa_lens;
+    uint64_t tt_rewrite = 0;
+
+    lpa_lens = (struct lpa_len_ppa*) kzalloc(sizeof(struct lpa_len_ppa) * 
+                                             GRAIN_PER_PAGE * 
+                                             spp->pgs_per_blk, GFP_KERNEL);
+    uint32_t lpa_len_idx = 0;
+
+    NVMEV_ASSERT(lpa_lens);
 
 	for (i = 0; i < spp->pgs_per_flashpg; i++) {
 		pg_iter = get_pg(conv_ftl->ssd, &ppa_copy);
 		/* there shouldn't be any free page in victim blocks */
 		NVMEV_ASSERT(pg_iter->status != PG_FREE);
-		if (pg_iter->status == PG_VALID)
-			cnt++;
+		if (pg_iter->status == PG_VALID) {
+            page_cnt++;
+        }
+
+        pgidx = ppa2pgidx(conv_ftl, &ppa_copy);
+        NVMEV_DEBUG("Attempting to clean pgidx %llu (%u)\n", pgidx, ppa_copy.g.pg);
+        for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+            uint64_t grain = PPA_TO_PGA(pgidx, i);
+
+            if(grain_valid(grain)) {
+                NVMEV_DEBUG("Page %llu grain %d is valid.\n", pgidx, i);
+                NVMEV_DEBUG("The LPA is %llu.\n", oob[pgidx][i]);
+                //valid_lpas[valid_lpa_cnt++] = oob[pgidx][i];
+                
+                len = 1;
+                while(i + len < GRAIN_PER_PAGE && oob[pgidx][i + len] == 0) {
+                    len++;
+                }
+                
+                //lengths[valid_lpa_cnt - 1] = len;
+                NVMEV_DEBUG("Length is %u.\n", len);
+
+                lpa_lens[lpa_len_idx++] =
+                (struct lpa_len_ppa) {oob[pgidx][i], len, grain, UINT_MAX};
+
+                mark_grain_invalid(conv_ftl, grain, len);
+                cnt++;
+                tt_rewrite += len * GRAINED_UNIT;
+            }
+        }
 
 		ppa_copy.g.pg++;
 	}
+
+    NVMEV_DEBUG("Copying %d pairs (%d bytes) from %d pages.\n",
+                cnt, cnt * PIECE, spp->pgs_per_flashpg);
 
 	ppa_copy = *ppa;
 
 	if (cnt <= 0)
 		return;
+   
+    sort(lpa_lens, lpa_len_idx, sizeof(struct lpa_len_ppa), &len_cmp, NULL);
 
 	if (cpp->enable_gc_delay) {
 		struct nand_cmd gcr = {
 			.type = GC_IO,
 			.cmd = NAND_READ,
 			.stime = 0,
-			.xfer_size = spp->pgsz * cnt,
+			.xfer_size = spp->pgsz * page_cnt,
 			.interleave_pci_dma = false,
 			.ppa = &ppa_copy,
 		};
 		completed_time = ssd_advance_nand(conv_ftl->ssd, &gcr);
 	}
 
-	for (i = 0; i < spp->pgs_per_flashpg; i++) {
-		pg_iter = get_pg(conv_ftl->ssd, &ppa_copy);
+    uint64_t grains_rewritten = 0;
+    while(grains_rewritten < cnt) {
+        struct ppa new_ppa = get_new_page(conv_ftl, GC_IO);
+        uint64_t remain = spp->pgsz;
+        uint64_t pgidx = ppa2pgidx(conv_ftl, &new_ppa);
+        uint32_t offset = 0;
+        uint64_t to = 0, from = 0;
+        bool this_pg_grains[GRAIN_PER_PAGE];
 
-		/* there shouldn't be any free page in victim blocks */
-		if (pg_iter->status == PG_VALID) {
-			/* delay the maptbl update until "write" happens */
-			gc_write_page(conv_ftl, &ppa_copy);
-		}
+        NVMEV_DEBUG("Got page %llu in GC\n", pgidx);
+        mark_page_valid(conv_ftl, &new_ppa);
+        advance_write_pointer(conv_ftl, GC_IO);
 
-		ppa_copy.g.pg++;
-	}
+        while(remain > 0 && grains_rewritten < cnt) {
+            uint32_t length = lpa_lens[grains_rewritten].len;
+            uint64_t lpa = lpa_lens[grains_rewritten].lpa;
+            uint64_t old_grain = lpa_lens[grains_rewritten].prev_ppa;
+            uint64_t grain = PPA_TO_PGA(pgidx, offset);
+
+            NVMEV_ERROR("LPA %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
+                         lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
+
+            to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+            from = (G_IDX(old_grain) * spp->pgsz) + 
+                   (G_OFFSET(old_grain)  * GRAINED_UNIT);
+
+            char tmp[128];
+            memcpy(tmp, nvmev_vdev->ns[0].mapped + from, 17);
+            tmp[17] = '\0';
+            NVMEV_DEBUG("Copying key %s from %llu %d bytes\n", 
+                    tmp, from, length * GRAINED_UNIT);
+
+            memcpy(nvmev_vdev->ns[0].mapped + to, 
+                   nvmev_vdev->ns[0].mapped + from, length * GRAINED_UNIT);
+
+            lpa_lens[grains_rewritten].new_ppa = PPA_TO_PGA(pgidx, offset);
+            oob[pgidx][offset] = lpa;
+            mark_grain_valid(conv_ftl, grain, length);
+
+            offset += length;
+            remain -= length * GRAINED_UNIT;
+            grains_rewritten++;
+        }
+
+        NVMEV_ERROR("Marking %d grains invalid after GC copies.\n", GRAIN_PER_PAGE - offset);
+        mark_grain_valid(conv_ftl, PPA_TO_PGA(pgidx, offset), GRAIN_PER_PAGE - offset);
+
+        if (0 && cpp->enable_gc_delay) {
+            struct nand_cmd gcw = {
+                .type = GC_IO,
+                .cmd = NAND_NOP,
+                .stime = 0,
+                .interleave_pci_dma = false,
+                .ppa = &new_ppa,
+            };
+
+            if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+                gcw.cmd = NAND_WRITE;
+                gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+            }
+
+            ssd_advance_nand(conv_ftl->ssd, &gcw);
+        }
+    }
+
+    do_bulk_mapping_update_v(lpa_lens, cnt);
+    kfree(lpa_lens);
+    return;
 }
 
 static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct line_mgmt *lm = &conv_ftl->lm;
 	struct line *line = get_line(conv_ftl, ppa);
+
+    NVMEV_DEBUG("Marking line %d free\n", line->id);
+
 	line->ipc = 0;
 	line->vpc = 0;
+    line->igc = 0;
+    line->vgc = 0;
 	/* move this line to free line list */
 	list_add_tail(&line->entry, &lm->free_line_list);
 	lm->free_line_cnt++;
@@ -850,6 +1132,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct ppa ppa;
 	int flashpg;
+    uint64_t pgidx;
 
 	victim_line = select_victim_line(conv_ftl, force);
 	if (!victim_line) {
@@ -857,11 +1140,12 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	}
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_DEBUG_VERBOSE("GC-ing line:%d,ipc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
-		    victim_line->ipc, victim_line->vpc, conv_ftl->lm.victim_line_cnt,
-		    conv_ftl->lm.full_line_cnt, conv_ftl->lm.free_line_cnt);
+	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
+            conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
+            conv_ftl->lm.free_line_cnt);
 
-	conv_ftl->wfc.credits_to_refill = victim_line->ipc;
+	conv_ftl->wfc.credits_to_refill = victim_line->igc;
 
 	/* copy back valid data */
 	for (flashpg = 0; flashpg < spp->flashpgs_per_blk; flashpg++) {
@@ -912,7 +1196,9 @@ static void forground_gc(struct conv_ftl *conv_ftl)
 		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		do_gc(conv_ftl, true);
-	}
+	} else {
+        NVMEV_DEBUG("Skipped GC!\n");
+    }
 }
 
 static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struct ppa ppa2)
@@ -1064,7 +1350,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     d_req.req = req;
     d_req.hash_params = NULL;
 
-    key.key = (char*)kzalloc(17, GFP_KERNEL);
+    key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
 
     BUG_ON(!key.key);
     BUG_ON(!cmd->kv_retrieve.key);
@@ -1077,7 +1363,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 
-    //printk("Read for key %s len %u\n", key.key, key.len);
+    NVMEV_DEBUG("Read for key %s len %u\n", key.key, key.len);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
@@ -1158,7 +1444,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.hash_params = NULL;
 
     key.key = NULL;
-    key.key = (char*)kzalloc(17, GFP_KERNEL);
+    key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
 
     BUG_ON(!key.key);
     BUG_ON(!cmd->kv_store.key);
@@ -1171,7 +1457,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     key.len = cmd_key_length(*cmd);
     d_req.key = key;
 
-    //printk("Write for key %s len %u\n", key.key, length);
+    NVMEV_DEBUG("Write for key %s len %u\n", key.key, length);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
