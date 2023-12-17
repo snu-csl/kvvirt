@@ -2,9 +2,10 @@
  * Demand-based FTL Interface
  */
 
+#include "cache.h"
+#include "../city.h"
 #include "demand.h"
 #include "page.h"
-#include "cache.h"
 
 #define _PPS (_PPB*BPS)
 
@@ -418,7 +419,12 @@ static uint32_t hashing_key(char* key,uint8_t len) {
 	return hashkey;
 }
 
-static uint32_t hashing_key_fp(char* key,uint8_t len) {
+unsigned char data[4096];
+static uint64_t hashing_key_fp(char* key,uint8_t len) {
+    //uint64_t ret = 0;
+    //ret = CityHash64(data, 4096); 
+    //return ret;
+
 	char* string;
 	Sha256Context ctx;
 	SHA256_HASH hash;
@@ -445,7 +451,8 @@ static uint32_t hashing_key_fp(char* key,uint8_t len) {
 }
 
 static struct hash_params *make_hash_params(request *const req) {
-	struct hash_params *h_params = (struct hash_params *)kzalloc(sizeof(struct hash_params), GFP_KERNEL);
+	struct hash_params *h_params = 
+    (struct hash_params *)kzalloc(sizeof(struct hash_params), GFP_KERNEL);
 	h_params->hash = hashing_key(req->key.key, req->key.len);
 #ifdef STORE_KEY_FP
 	h_params->key_fp = hashing_key_fp(req->key.key, req->key.len);

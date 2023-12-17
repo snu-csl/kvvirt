@@ -230,7 +230,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NR_NAMESPACES 1
 
 #define OP 70
-#define PAGESIZE KB(8)
+#define PAGESIZE KB(4)
 #define _PPB (256)
 #define BPS (64)
 #define _PPS (_PPB*BPS)
@@ -252,8 +252,8 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define PLNS_PER_LUN (1)
 #define FLASH_PAGE_SIZE KB(32)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
-#define BLKS_PER_PLN (0)
-#define BLK_SIZE (FLASH_PAGE_SIZE) /*BLKS_PER_PLN should not be 0 */
+#define BLKS_PER_PLN (8192)
+#define BLK_SIZE (0) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */

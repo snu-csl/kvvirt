@@ -57,7 +57,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 	_env->c_type = c_type;
 
 	_env->nr_tpages_optimal_caching = d_env.nr_pages * 4 / spp.pgsz;
-	_env->nr_valid_tpages = d_env.nr_pages / EPP + ((d_env.nr_pages % EPP) ? 1 : 0);
+	_env->nr_valid_tpages = (d_env.nr_pages / EPP) + ((d_env.nr_pages % EPP) ? 1 : 0);
 	_env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
 	//_env->caching_ratio = d_env.caching_ratio;
@@ -70,6 +70,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 	_env->nr_valid_tentries *= GRAIN_PER_PAGE / 2;
 #endif
 
+    printk("%d %d %d\n", d_env.nr_pages, EPP, _env->nr_valid_tentries);
 	print_cache_env(_env);
 }
 

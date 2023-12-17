@@ -72,7 +72,7 @@ struct cmt_struct {
 };
 
 struct hash_params {
-	uint32_t hash;
+	uint64_t hash;
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
 #endif

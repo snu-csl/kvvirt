@@ -449,12 +449,14 @@ void demand_init(uint64_t size, struct ssd* ssd)
      * OOB stores LPA to grain information.
      */
 
-    oob = (uint64_t**)kzalloc((spp->tt_pgs * sizeof(uint64_t*)), GFP_KERNEL);
+    oob = (uint64_t**)vmalloc((spp->tt_pgs * sizeof(uint64_t*)));
+
+    printk("Initial alloc done.\n");
     for(int i = 0; i < spp->tt_pgs; i++) {
         oob[i] = (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
-        for(int j = 0; j < GRAIN_PER_PAGE; j++) {
-            oob[i][j] = 2;
-        }
+        //for(int j = 0; j < GRAIN_PER_PAGE; j++) {
+        //    oob[i][j] = 2;
+        //}
     }
     
     int temp[PARTNUM];
@@ -609,7 +611,7 @@ void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	bool was_full_line = false;
 	struct line *line;
 
-    NVMEV_ERROR("Marking page %llu invalid\n", ppa2pgidx(conv_ftl, ppa));
+    NVMEV_DEBUG("Marking page %llu invalid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update corresponding page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
@@ -684,7 +686,7 @@ void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len) {
     uint64_t page = G_IDX(grain);
     struct ppa ppa = ppa_to_struct(spp, page);
 
-    NVMEV_ERROR("Marking grain %llu length %u in page %llu valid\n", 
+    NVMEV_DEBUG("Marking grain %llu length %u in page %llu valid\n", 
                  grain, len, page);
 
 	/* update page status */
@@ -818,7 +820,7 @@ void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct nand_page *pg = NULL;
 	struct line *line;
 
-    NVMEV_ERROR("Marking page %llu valid\n", ppa2pgidx(conv_ftl, ppa));
+    NVMEV_DEBUG("Marking page %llu valid\n", ppa2pgidx(conv_ftl, ppa));
 
 	/* update page status */
 	pg = get_pg(conv_ftl->ssd, ppa);
@@ -847,7 +849,7 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		/* reset page status */
 		pg = &blk->pg[i];
 		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
-        NVMEV_ERROR("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa) + i);
+        NVMEV_DEBUG("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa) + i);
 		pg->status = PG_FREE;
 	}
 
@@ -973,7 +975,7 @@ static int len_cmp(const void *a, const void *b)
 
 void clear_oob(uint64_t pgidx) {
     for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        oob[pgidx][i]  = 2;
+        oob[pgidx][i]  = 0;
     }
 }
 
@@ -1087,7 +1089,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             uint64_t old_grain = lpa_lens[grains_rewritten].prev_ppa;
             uint64_t grain = PPA_TO_PGA(pgidx, offset);
 
-            NVMEV_ERROR("LPA %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
+            NVMEV_DEBUG("LPA %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
                          lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
 
             to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);

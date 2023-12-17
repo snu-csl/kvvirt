@@ -17,7 +17,7 @@ typedef ppa_t pga_t;
 
 #if (FP_SIZE<=8)
 typedef uint8_t fp_t;
-#define FP_MAX UINT8_MAX
+#define FP_MAX UINT_MAX
 
 #elif (FP_SIZE<=16)
 typedef uint16_t fp_t;

@@ -98,7 +98,10 @@ void copy_key_from_grain(KEYT *dst, value_set *src, int offset) {
 lpa_t get_lpa(KEYT key, void *_h_params) {
 #ifdef HASH_KVSSD
 	struct hash_params *h_params = (struct hash_params *)_h_params;
-	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % (d_cache->env.nr_valid_tentries-1) + 1;
+	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
+                    (d_cache->env.nr_valid_tentries-1) + 1;
+    NVMEV_DEBUG("Got LPA %u key %s (%d %d)\n", 
+                h_params->lpa, key.key, d_cache->env.nr_valid_tentries, EPP);
 	return h_params->lpa;
 #else
 	return key;
