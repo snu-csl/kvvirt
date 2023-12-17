@@ -62,7 +62,7 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 	}
 
 	if (request_time < cur_time) {
-		NVMEV_DEBUG("[%s] Reqeust time is before the current time 0x%llx 0x%llx\n",
+		NVMEV_DEBUG_VERBOSE("[%s] Reqeust time is before the current time 0x%llx 0x%llx\n",
 			    __func__, request_time, cur_time);
 		return request_time; // return minimum delay
 	}

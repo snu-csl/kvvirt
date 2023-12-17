@@ -47,6 +47,7 @@ typedef struct snode{ //skiplist's node
 	uint32_t lpa;
 	void *hash_params;
 	void *params;
+    uint32_t len;
 #endif
 
 #ifdef Lsmtree

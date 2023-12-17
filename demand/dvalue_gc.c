@@ -160,6 +160,38 @@ static int lpa_compare(const void *a, const void *b) {
 	else return 1;
 }
 
+int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains) {
+	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
+
+	/* read mapping table which needs update */
+	for (int i = 0; i < nr_valid_grains; i++) {
+        lpa_t lpa = ppas[i].lpa;
+
+		if (d_cache->is_hit(lpa)) {
+			struct pt_struct pte = d_cache->get_pte(lpa);
+			pte.ppa = ppas[i].new_ppa;
+			d_cache->update(lpa, pte);
+            NVMEV_DEBUG("Updating mapping of LPA %u to PPA %u\n", lpa, pte.ppa);
+			skip_update[i] = true;
+		} else {
+            BUG_ON(true);
+		}
+	}
+
+	/* write */
+	for (int i = 0; i < nr_valid_grains; i++) {
+		if (skip_update[i]) {
+			continue;
+		}
+    
+        BUG_ON(true);
+	}
+
+	kfree(skip_update);
+	return 0;
+}
+
+
 static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t type) {
 	sort(gcb_node_arr, nr_valid_grains, sizeof(struct gc_bucket_node *), lpa_compare, NULL);
 
@@ -179,6 +211,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 			skip_update[i] = true;
 
 		} else {
+            BUG_ON(true);
 			struct cmt_struct *cmt = d_cache->get_cmt(lpa);
 			if (cmt->t_ppa == UINT_MAX) {
 				continue;

@@ -783,7 +783,7 @@ static int nvmev_io_worker(void *data)
 			}
 
 			if (w->is_copied == false) {
-                NVMEV_DEBUG("%s: picked up %u, %d %d %d\n", worker->thread_name, curr,
+                NVMEV_DEBUG_VERBOSE("%s: picked up %u, %d %d %d\n", worker->thread_name, curr,
                             w->sqid, w->cqid, w->sq_entry);
 
 #ifdef PERF_DEBUG

@@ -94,6 +94,8 @@ struct nand_block {
 	int npgs;
 	int ipc; /* invalid page count */
 	int vpc; /* valid page count */
+    int igc; /* invalid grain count */
+    int vgc; /* valid grain count */
 	int erase_cnt;
 	int wp; /* current write pointer */
 };

@@ -8,12 +8,14 @@
 #ifdef DVALUE
 
 #include "demand.h"
+#include "../demand_ftl.h"
 
 extern struct demand_env d_env;
 extern struct demand_member d_member;
 extern struct demand_stat d_stat;
 
-static bool *grain_bitmap; // the grain is valid ? 1 : 0
+uint64_t **oob = NULL;
+bool* grain_bitmap = NULL;
 
 int grain_create(void) {
 	grain_bitmap = (bool *)vmalloc(d_env.nr_grains * sizeof(bool));

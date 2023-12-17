@@ -585,6 +585,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         x->value=value;
         x->isvalid=deletef;
         x->sqid = sqid;
+        x->len = value->length;
         return x;
     }
     else{
@@ -610,6 +611,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         x->ppa=UINT_MAX;
         x->value=value;
         x->sqid = sqid;
+        x->len = value->length;
 
 #ifdef KVSSD
         list->all_length+=KEYLEN(key);

@@ -76,8 +76,16 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
     BUG_ON(!value);
     BUG_ON(req->sqid == UINT_MAX);
 
-    //printk("Writing PPA %u (%u) size %u pagesize %u in virt_push_data sqid %u\n", 
-    //        PPA, PPA * value->ssd->sp.pgsz, size, value->ssd->sp.pgsz, nvmev_vdev->sqes[1]->qid);
+    char tmp[128];
+    memcpy(tmp, nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), 16);
+    tmp[17] = '\0';
+
+    char tmp2[128];
+    memcpy(tmp2, nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz) + 1024, 16);
+    tmp2[17] = '\0';
+
+    NVMEV_DEBUG("Writing PPA %u (%u) size %u pagesize %u in virt_push_data %s %s\n", 
+                PPA, PPA * value->ssd->sp.pgsz, size, value->ssd->sp.pgsz, tmp, tmp2);
 
     memcpy(nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), value->value, size);
 

@@ -21,11 +21,24 @@
 #include <linux/highmem.h>
 #include <linux/vmalloc.h>
 
+struct lpa_len_ppa {
+    uint64_t lpa; /* the lpa we find in the reverse map. */
+    uint32_t len; /* the length of the key-value pair. */
+    uint64_t prev_ppa; /* to copy from during GC */
+    uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
+};
+
 struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
 uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
 void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
+void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
+void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
+inline void consume_write_credit(struct conv_ftl *conv_ftl, uint32_t len);
+inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl);
+void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
+int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains);
 
 extern struct demand_stat d_stat;
 

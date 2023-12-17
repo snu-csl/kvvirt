@@ -18,6 +18,22 @@ extern struct demand_cache *d_cache;
 
 struct conv_ftl *ftl;
 
+void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset) {
+    BUG_ON(!oob);
+
+    NVMEV_DEBUG("Trying to set OOB for PPA %llu offset %llu\n", ppa, offset);
+    oob[ppa][offset] = lpa;
+}
+
+void print_oob(uint64_t ppa) {
+    return;
+    NVMEV_DEBUG("OOB for PPA %llu is: \n", ppa);
+    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+        NVMEV_DEBUG("%llu ", oob[ppa][i]);
+    }
+    NVMEV_DEBUG("\n");
+}
+
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
@@ -183,6 +199,7 @@ cache_check_complete:
 #endif
 data_read:
 	/* 3. read actual data */
+    NVMEV_DEBUG("Got PPA %u for LPA %u\n", pte.ppa, lpa);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
@@ -249,14 +266,15 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 		value_set *new_vs = inf_get_valueset(NULL, FS_MALLOC_W, spp.pgsz);
 		PTR page = new_vs->value;
 		int remain = spp.pgsz;
+        uint32_t credits = 0;
 
         struct ppa ppa_s = get_new_page(ftl, USER_IO);
         advance_write_pointer(ftl, USER_IO);
-        //mark_page_valid(ftl, &ppa_s);
+        mark_page_valid(ftl, &ppa_s);
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
-        //printk("Got PPA %u\n", ppa);
+        NVMEV_DEBUG("%s assigning PPA %u\n", __func__, ppa);
 
         //printk("Actual PPA : %d %d %d %d %d\n", 
         //        ppa_s.g.ch, ppa_s.g.lun, ppa_s.g.pl, ppa_s.g.blk, ppa_s.g.pg);
@@ -289,17 +307,27 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 			memcpy(&page[offset*GRAINED_UNIT], 
                    wb_entry->value->value, 
                    wb_entry->value->length * GRAINED_UNIT);
+            char tmp[128];
+            memcpy(tmp, wb_entry->value->value, 17);
+            tmp[17] = '\0';
+            NVMEV_DEBUG("%s writing %s to %u (%u)\n", 
+                        __func__, tmp, ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
 
 			inf_free_valueset(wb_entry->value, FS_MALLOC_W);
 			wb_entry->value = NULL;
 
-			validate_grain(bm, wb_entry->ppa);
+			//validate_grain(bm, wb_entry->ppa);
+            mark_grain_valid(ftl, wb_entry->ppa, target_length);
 
+            credits += target_length;
 			offset += target_length;
 			remain -= target_length * GRAINED_UNIT;
 
 			ordering_done++;
 		}
+
+        consume_write_credit(ftl, credits);
+        check_and_refill_write_credit(ftl);
 
 		fl->size++;
 	}
@@ -352,13 +380,13 @@ static void _do_wb_mapping_update(skiplist *wb) {
 		}
 		if (!wb_entry) continue;
 
-        //printk("%s updating %s\n", __func__, wb_entry->key.key);
+        NVMEV_DEBUG("%s updating %s len %u\n", __func__, wb_entry->key.key, wb_entry->len);
 wb_retry:
 		h_params = (struct hash_params *)wb_entry->hash_params;
 
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
-        //printk("wb_entry->ppa is %u\n", wb_entry->ppa);
+        NVMEV_DEBUG("wb_entry->ppa is %u length %u\n", wb_entry->ppa, wb_entry->len);
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif
@@ -385,7 +413,7 @@ wb_retry:
 		}
 
 		if (d_cache->is_hit(lpa)) {
-            //printk("%s hit for LPA %u\n", __func__, lpa);
+            NVMEV_DEBUG("%s hit for LPA %u\n", __func__, lpa);
 			d_cache->touch(lpa);
 		} else {
             //printk("%s miss for LPA %u\n", __func__, lpa);
@@ -445,23 +473,23 @@ wb_data_check:
 #endif
 
 wb_update:
+        NVMEV_DEBUG("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
-            struct ppa p = ppa_to_struct(&d_member.ssd->sp, G_IDX(pte.ppa));
-            //mark_page_invalid(ftl, &p); 
+            NVMEV_DEBUG("%s LPA %u old PPA %u overwrite.\n", __func__, lpa, pte.ppa);
+            mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
             
             /*
              * TODO
-             * Invalidate grain
+             * Changing value size.
              */
 
-			//invalidate_page(bm, pte.ppa, DATA);
 			static int over_cnt = 0; over_cnt++;
 			if (over_cnt % 102400 == 0) printk("overwrite: %d\n", over_cnt);
 		}
 wb_direct_update:
 		d_cache->update(lpa, new_pte);
-        //printk("%s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("2 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;
@@ -472,7 +500,8 @@ wb_direct_update:
 		d_member.max_try = (h_params->cnt > d_member.max_try) ? h_params->cnt : d_member.max_try;
 		hash_collision_logging(h_params->cnt, DWRITE);
 
-		//set_oob(bm, lpa, new_pte.ppa, DATA);
+		d_set_oob(lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa));
+        print_oob(G_IDX(new_pte.ppa));
 #endif
 	}
 
@@ -500,12 +529,12 @@ uint64_t _do_wb_flush(skiplist *wb) {
 		value_set *value = fl->list[i].value;
         value->ssd = d_member.ssd;
 
-        //printk("PPA %u gets value len %u %s\n", ppa, value->length, (char*) value->value);
+        NVMEV_DEBUG("PPA %u value len %d\n", ppa, value->length);
 
 		nsecs_latest = 
         __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
                            make_algo_req_rw(DATAW, value, NULL, NULL));
-	}
+    }
 
 	fl->size = 0;
 	memset(fl->list, 0, d_env.wb_flush_size * sizeof(struct flush_node));

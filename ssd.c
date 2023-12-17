@@ -374,7 +374,7 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 	struct ssd_channel *ch;
 	struct ppa *ppa = ncmd->ppa;
 	uint32_t cell;
-	NVMEV_DEBUG(
+	NVMEV_DEBUG_VERBOSE(
 		"SSD: %p, Enter stime: %lld, ch %d lun %d blk %d page %d command %d ppa 0x%llx\n",
 		ssd, ncmd->stime, ppa->g.ch, ppa->g.lun, ppa->g.blk, ppa->g.pg, c, ppa->ppa);
 
