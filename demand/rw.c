@@ -18,11 +18,15 @@ extern struct demand_cache *d_cache;
 
 struct conv_ftl *ftl;
 
-void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset) {
+void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
     NVMEV_DEBUG("Trying to set OOB for PPA %llu offset %llu\n", ppa, offset);
     oob[ppa][offset] = lpa;
+
+    for(int i = 1; i < len; i++) {
+        oob[ppa][offset + i] = 0;
+    }
 }
 
 void print_oob(uint64_t ppa) {
@@ -500,7 +504,7 @@ wb_direct_update:
 		d_member.max_try = (h_params->cnt > d_member.max_try) ? h_params->cnt : d_member.max_try;
 		hash_collision_logging(h_params->cnt, DWRITE);
 
-		d_set_oob(lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa));
+		d_set_oob(lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa), wb_entry->len);
         print_oob(G_IDX(new_pte.ppa));
 #endif
 	}

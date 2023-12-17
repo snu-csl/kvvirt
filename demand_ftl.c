@@ -331,6 +331,7 @@ struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type)
 	ppa.g.pl = wp->pl;
 
 	NVMEV_ASSERT(ppa.g.pl == 0);
+    NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &ppa)));
 
 	return ppa;
 }
@@ -451,6 +452,9 @@ void demand_init(uint64_t size, struct ssd* ssd)
     oob = (uint64_t**)kzalloc((spp->tt_pgs * sizeof(uint64_t*)), GFP_KERNEL);
     for(int i = 0; i < spp->tt_pgs; i++) {
         oob[i] = (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
+        for(int j = 0; j < GRAIN_PER_PAGE; j++) {
+            oob[i][j] = 2;
+        }
     }
     
     int temp[PARTNUM];
@@ -612,6 +616,8 @@ void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	NVMEV_ASSERT(pg->status == PG_VALID);
 	pg->status = PG_INVALID;
 
+    clear_oob(ppa2pgidx(conv_ftl, ppa));
+
 	///* update corresponding block status */
 	//blk = get_blk(conv_ftl->ssd, ppa);
 	//NVMEV_ASSERT(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
@@ -678,8 +684,8 @@ void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len) {
     uint64_t page = G_IDX(grain);
     struct ppa ppa = ppa_to_struct(spp, page);
 
-    //NVMEV_ERROR("Marking grain %llu length %u in page %llu valid\n", 
-    //             grain, len, page);
+    NVMEV_ERROR("Marking grain %llu length %u in page %llu valid\n", 
+                 grain, len, page);
 
 	/* update page status */
 	pg = get_pg(conv_ftl->ssd, &ppa);
@@ -752,6 +758,11 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
 	blk = get_blk(conv_ftl->ssd, &ppa);
 	//NVMEV_ASSERT(blk->ipc >= 0 && blk->ipc < spp->pgs_per_blk);
 	//NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
+    
+    if(blk->igc >= spp->pgs_per_blk * GRAIN_PER_PAGE) {
+        NVMEV_ERROR("IGC was %d\n", blk->igc);
+    }
+    
     NVMEV_ASSERT(blk->igc < spp->pgs_per_blk * GRAIN_PER_PAGE);
     NVMEV_ASSERT(blk->vgc > 0 && blk->vgc <= spp->pgs_per_blk * GRAIN_PER_PAGE);
     blk->igc += len;
@@ -836,7 +847,7 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		/* reset page status */
 		pg = &blk->pg[i];
 		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
-        NVMEV_ERROR("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa));
+        NVMEV_ERROR("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa) + i);
 		pg->status = PG_FREE;
 	}
 
@@ -960,6 +971,22 @@ static int len_cmp(const void *a, const void *b)
     return 0;
 }
 
+void clear_oob(uint64_t pgidx) {
+    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+        oob[pgidx][i]  = 2;
+    }
+}
+
+bool oob_empty(uint64_t pgidx) {
+    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+        if(oob[pgidx][i] == 1) {
+            NVMEV_ERROR("Page %llu offset %d was %llu\n", pgidx, i, oob[pgidx][i]);
+            return false;
+        }
+    }
+    return true;
+}
+
 /* here ppa identifies the block we want to clean */
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
@@ -1050,6 +1077,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         bool this_pg_grains[GRAIN_PER_PAGE];
 
         NVMEV_DEBUG("Got page %llu in GC\n", pgidx);
+        NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
         mark_page_valid(conv_ftl, &new_ppa);
         advance_write_pointer(conv_ftl, GC_IO);
 
@@ -1077,6 +1105,11 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
             lpa_lens[grains_rewritten].new_ppa = PPA_TO_PGA(pgidx, offset);
             oob[pgidx][offset] = lpa;
+
+            for(int i = 1; i < length; i++) {
+                oob[pgidx][offset + i] = 0;
+            }
+
             mark_grain_valid(conv_ftl, grain, length);
 
             offset += length;
@@ -1084,8 +1117,10 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             grains_rewritten++;
         }
 
-        NVMEV_ERROR("Marking %d grains invalid after GC copies.\n", GRAIN_PER_PAGE - offset);
-        mark_grain_valid(conv_ftl, PPA_TO_PGA(pgidx, offset), GRAIN_PER_PAGE - offset);
+        //if(GRAIN_PER_PAGE - offset > 0) {
+        //    NVMEV_ERROR("Marking %d grains invalid after GC copies.\n", GRAIN_PER_PAGE - offset);
+        //    mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), GRAIN_PER_PAGE - offset);
+        //}
 
         if (0 && cpp->enable_gc_delay) {
             struct nand_cmd gcw = {

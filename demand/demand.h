@@ -28,6 +28,8 @@ struct lpa_len_ppa {
     uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
 };
 
+void clear_oob(uint64_t pgidx);
+bool oob_empty(uint64_t pgidx);
 struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
 uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
