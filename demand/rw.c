@@ -462,7 +462,6 @@ wb_data_check:
 		/* hash_table lookup to filter same wb element */
 		rc = d_htable_find(d_member.hash_table, pte.ppa, lpa);
 		if (rc) {
-            printk("%s collided for LPA %u cnt %d\n", __func__, lpa, h_params->cnt + 1);
 			h_params->find = HASH_KEY_DIFF;
 			h_params->cnt++;
 
@@ -666,7 +665,7 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, d_params->value, offset);
 			if (KEYCMP(wb_entry->key, check_key) == 0) {
-                NVMEV_ERROR("Key MATCH : %s and %s\n", check_key.key, wb_entry->key.key);
+                //NVMEV_ERROR("Key MATCH : %s and %s\n", check_key.key, wb_entry->key.key);
                 //printk("Match in read for writes.\n");
 				/* hash key found -> update */
 				d_stat.fp_match_w++;
@@ -677,7 +676,7 @@ void *demand_end_req(algo_req *a_req) {
 
 				q_enqueue((void *)wb_entry, d_member.wb_retry_q);
 			} else {
-                NVMEV_ERROR("Key mismatch: %s and %s\n", check_key.key, wb_entry->key.key);
+                //NVMEV_ERROR("Key mismatch: %s and %s\n", check_key.key, wb_entry->key.key);
 
 				/* retry */
 				d_stat.fp_collision_w++;

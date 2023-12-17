@@ -393,12 +393,16 @@ void demand_destroy(lower_info *li, algorithm *algo){
 }
 
 #ifdef HASH_KVSSD
-static uint32_t hashing_key(char* key,uint8_t len) {
+static uint64_t hashing_key(char* key,uint8_t len) {
+    uint64_t ret = 0;
+    ret = CityHash64(key, len); 
+    return ret;
+
 	char* string;
 	Sha256Context ctx;
 	SHA256_HASH hash;
 	int bytes_arr[8];
-	uint32_t hashkey;
+	uint64_t hashkey;
 
 	string = key;
 
@@ -419,8 +423,8 @@ static uint32_t hashing_key(char* key,uint8_t len) {
 	return hashkey;
 }
 
-unsigned char data[4096];
 static uint64_t hashing_key_fp(char* key,uint8_t len) {
+    BUG_ON(true);
     //uint64_t ret = 0;
     //ret = CityHash64(data, 4096); 
     //return ret;

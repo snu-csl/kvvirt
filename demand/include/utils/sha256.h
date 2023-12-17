@@ -25,7 +25,7 @@ typedef struct
 	uint8_t     buf[64];
 } Sha256Context;
 
-#define SHA256_HASH_SIZE           ( 256 / 8 )
+#define SHA256_HASH_SIZE           ( 256 / 4 )
 
 typedef struct
 {
