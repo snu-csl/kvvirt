@@ -32,6 +32,17 @@ static unsigned int cmd_key_length(struct nvme_kv_command cmd)
 	}
 }
 
+static unsigned int cmd_value_length(struct nvme_kv_command cmd)
+{
+	if (cmd.common.opcode == nvme_cmd_kv_store) {
+		return cmd.kv_store.value_len << 2;
+	} else if (cmd.common.opcode == nvme_cmd_kv_retrieve) {
+		return cmd.kv_retrieve.value_len << 2;
+	} else {
+		return cmd.kv_store.value_len << 2;
+	}
+}
+
 static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -45,6 +56,19 @@ static bool should_gc(struct conv_ftl *conv_ftl)
 
 static inline bool should_gc_high(struct conv_ftl *conv_ftl)
 {
+    NVMEV_ERROR("Free LC %d:\n", conv_ftl->lm.free_line_cnt);
+
+    if(conv_ftl->lm.free_line_cnt <= 3) {
+        struct list_head *p;
+        struct line *my;
+        list_for_each(p, &conv_ftl->lm.free_line_list) {
+            /* my points to the structure in which the list is embedded */
+            my = list_entry(p, struct line, entry);
+            NVMEV_ERROR("%d\n", my->id);
+        }
+        NVMEV_ERROR("\n");
+    }
+
 	return conv_ftl->lm.free_line_cnt <= conv_ftl->cp.gc_thres_lines_high;
 }
 
@@ -126,6 +150,7 @@ static void forground_gc(struct conv_ftl *conv_ftl);
 inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl)
 {
 	struct write_flow_control *wfc = &(conv_ftl->wfc);
+    NVMEV_DEBUG("WC %d\n", (int32_t) wfc->write_credits);
 	if ((int32_t) wfc->write_credits <= (int32_t) 0) {
 		forground_gc(conv_ftl);
 		wfc->write_credits += wfc->credits_to_refill;
@@ -244,7 +269,7 @@ static void prepare_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	};
 }
 
-void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
+bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct line_mgmt *lm = &conv_ftl->lm;
@@ -302,6 +327,11 @@ void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 	/* current line is used up, pick another empty line */
 	check_addr(wpp->blk, spp->blks_per_pl);
 	wpp->curline = get_next_free_line(conv_ftl);
+
+    if(!wpp->curline) {
+        return false;
+    }
+
 	NVMEV_DEBUG("wpp: got new clean line %d\n", wpp->curline->id);
 
 	wpp->blk = wpp->curline->id;
@@ -316,6 +346,8 @@ void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 out:
 	NVMEV_DEBUG("advanced wpp: ch:%d, lun:%d, pl:%d, blk:%d, pg:%d (curline %d)\n",
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg, wpp->curline->id);
+
+    return true;
 }
 
 struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type)
@@ -407,8 +439,8 @@ static void conv_remove_ftl(struct conv_ftl *conv_ftl)
 static void conv_init_params(struct convparams *cpp)
 {
 	cpp->op_area_pcent = OP_AREA_PERCENT;
-	cpp->gc_thres_lines = 2; /* Need only two lines.(host write, gc)*/
-	cpp->gc_thres_lines_high = 2; /* Need only two lines.(host write, gc)*/
+	cpp->gc_thres_lines = 3; /* Need only two lines.(host write, gc)*/
+	cpp->gc_thres_lines_high = 3; /* Need only two lines.(host write, gc)*/
 	cpp->enable_gc_delay = 1;
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
@@ -454,9 +486,9 @@ void demand_init(uint64_t size, struct ssd* ssd)
     printk("Initial alloc done.\n");
     for(int i = 0; i < spp->tt_pgs; i++) {
         oob[i] = (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
-        //for(int j = 0; j < GRAIN_PER_PAGE; j++) {
-        //    oob[i][j] = 2;
-        //}
+        for(int j = 0; j < GRAIN_PER_PAGE; j++) {
+            oob[i][j] = 2;
+        }
     }
     
     int temp[PARTNUM];
@@ -796,7 +828,7 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
         /* move line: "full" -> "victim" */
         list_del_init(&line->entry);
         lm->full_line_cnt--;
-        NVMEV_DEBUG("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
+        NVMEV_ERROR("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
         pqueue_insert(lm->victim_line_pq, line);
         lm->victim_line_cnt++;
     }
@@ -937,7 +969,7 @@ static struct line *select_victim_line(struct conv_ftl *conv_ftl, bool force)
 
 	victim_line = pqueue_peek(lm->victim_line_pq);
 	if (!victim_line) {
-        BUG_ON(true);
+        NVMEV_ERROR("Had no victim line for GC!\n");
 		return NULL;
 	}
 
@@ -975,7 +1007,7 @@ static int len_cmp(const void *a, const void *b)
 
 void clear_oob(uint64_t pgidx) {
     for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        oob[pgidx][i]  = 0;
+        oob[pgidx][i] = 2;
     }
 }
 
@@ -1033,7 +1065,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 }
                 
                 //lengths[valid_lpa_cnt - 1] = len;
-                NVMEV_DEBUG("Length is %u.\n", len);
+                BUG_ON(len != 2);
 
                 lpa_lens[lpa_len_idx++] =
                 (struct lpa_len_ppa) {oob[pgidx][i], len, grain, UINT_MAX};
@@ -1046,9 +1078,6 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
 		ppa_copy.g.pg++;
 	}
-
-    NVMEV_DEBUG("Copying %d pairs (%d bytes) from %d pages.\n",
-                cnt, cnt * PIECE, spp->pgs_per_flashpg);
 
 	ppa_copy = *ppa;
 
@@ -1069,6 +1098,9 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		completed_time = ssd_advance_nand(conv_ftl->ssd, &gcr);
 	}
 
+    NVMEV_ERROR("Copying %d pairs (%d bytes) from %d pages.\n",
+                cnt, cnt * PIECE, spp->pgs_per_flashpg);
+
     uint64_t grains_rewritten = 0;
     while(grains_rewritten < cnt) {
         struct ppa new_ppa = get_new_page(conv_ftl, GC_IO);
@@ -1078,7 +1110,8 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         uint64_t to = 0, from = 0;
         bool this_pg_grains[GRAIN_PER_PAGE];
 
-        NVMEV_DEBUG("Got page %llu in GC\n", pgidx);
+        struct write_pointer *wp = __get_wp(conv_ftl, GC_IO);
+        NVMEV_ERROR("Got page %llu in GC line %d\n", pgidx, wp->curline->id);
         NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
         mark_page_valid(conv_ftl, &new_ppa);
         advance_write_pointer(conv_ftl, GC_IO);
@@ -1152,7 +1185,7 @@ static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	struct line_mgmt *lm = &conv_ftl->lm;
 	struct line *line = get_line(conv_ftl, ppa);
 
-    NVMEV_DEBUG("Marking line %d free\n", line->id);
+    NVMEV_ERROR("Marking line %d free\n", line->id);
 
 	line->ipc = 0;
 	line->vpc = 0;
@@ -1177,7 +1210,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	}
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+	NVMEV_ERROR("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
 		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
             conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
             conv_ftl->lm.free_line_cnt);
@@ -1230,11 +1263,11 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 static void forground_gc(struct conv_ftl *conv_ftl)
 {
 	if (should_gc_high(conv_ftl)) {
-		NVMEV_DEBUG_VERBOSE("should_gc_high passed");
+		NVMEV_ERROR("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		do_gc(conv_ftl, true);
 	} else {
-        NVMEV_DEBUG("Skipped GC!\n");
+        NVMEV_ERROR("Skipped GC!\n");
     }
 }
 
@@ -1266,13 +1299,13 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
 	size_t nsid = 0;  // 0-based
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
-    //printk("In quick copy for a %s!\n", read ? "read" : "write");
+    printk("In quick copy for a %s length %llu!\n", read ? "read" : "write", buf_len);
 
     nsid = 0;
 
     if(read) {
         offset = cmd->kv_retrieve.rsvd2;
-        length = cmd->kv_retrieve.value_len << 2;
+        length = buf_len;
     } else {
         offset = cmd->kv_store.rsvd2;
         length = cmd->kv_store.value_len << 2;
@@ -1346,17 +1379,39 @@ bool end_w(struct request *req)
     return true;
 }
 
+uint32_t __get_vlen(uint64_t grain) {
+    NVMEV_ERROR("vlen get for grain %llu offset %lld\n", grain, G_OFFSET(grain));
+
+    uint32_t ret = 1, i = G_OFFSET(grain);
+    while(i + ret < GRAIN_PER_PAGE && oob[G_IDX(grain)][i + ret] == 0) {
+        ret++;
+    }
+
+    NVMEV_ERROR("Returning %u\n", ret * GRAINED_UNIT);
+    return ret * GRAINED_UNIT;
+}
+
 bool end_r(struct request *req) 
 {
-    uint64_t pgsz = req->ssd->sp.pgsz;
+    if(req->ppa == UINT_MAX) {
+        req->ppa = UINT_MAX;
+        return false;
+    }
+
+    //uint32_t real_vlen = 
+    //    *(uint32_t*) ((uint8_t*) req->value->value + req->key.len + sizeof(uint8_t));
+    req->cmd->kv_retrieve.value_len = req->value->length;
+    NVMEV_DEBUG("Set value length to %u for key %s\n", 
+                req->value->length, req->cmd->kv_retrieve.key);
+
+    //NVMEV_ERROR("2 Got a real VLEN of %u (%u %lu %lu)\n", 
+    //        real_vlen, req->key.len, sizeof(uint8_t), sizeof(uint32_t));
 
     if(req->ppa == UINT_MAX - 1) {
         return true;
     }
 
-    uint64_t offset = G_OFFSET(req->ppa);
-    //printk("%s ending read key %s offset %llu ppa %llu\n", __func__, req->key.key, offset, req->ppa);
-
+    uint64_t pgsz = req->ssd->sp.pgsz;
     req->ppa = (G_IDX(req->ppa) * pgsz) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
     //printk("%s switching ppa to %llu\n", __func__, req->ppa);
 
@@ -1393,11 +1448,15 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     BUG_ON(!cmd->kv_retrieve.key);
     BUG_ON(!cmd);
 
-    uint8_t length = cmd_key_length(tmp);
+    uint8_t klen = cmd_key_length(tmp);
+    uint32_t vlen = cmd_value_length(*cmd);
 
-    memcpy(key.key, cmd->kv_retrieve.key, length);
-    key.key[16] = '\0';
-    key.len = cmd_key_length(*cmd);
+    key.key = NULL;
+    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
+
+    memcpy(key.key, cmd->kv_retrieve.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
     d_req.key = key;
 
     NVMEV_DEBUG("Read for key %s len %u\n", key.key, key.len);
@@ -1406,9 +1465,10 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
     value->value = read_buf;
     value->ssd = conv_ftl->ssd;
-    value->length = 1024;
+    value->length = vlen;
     d_req.value = value;
     d_req.end_req = &end_r;
+    d_req.cmd = cmd;
     nsecs_latest = nsecs_xfer_completed = __demand.read(&d_req);
 
     //printk("Demand passed for key %s len %u data %s\n", key.key, key.len, (char*) value->value);
@@ -1429,6 +1489,13 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     }
 
     if(d_req.ppa == UINT_MAX) {
+        NVMEV_DEBUG("NOT_EXIST for key %s len %u\n", key.key, key.len);
+
+        if(key.key[0] == 'L') {
+            NVMEV_DEBUG("NOT_EXIST Log key. Bid %llu log num %u\n", 
+                    *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+        }
+
         ret->status = KV_ERR_KEY_NOT_EXIST;
     } else {
         ret->nsecs_target = nsecs_latest;
@@ -1480,32 +1547,52 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.req = req;
     d_req.hash_params = NULL;
 
+    uint8_t klen = cmd_key_length(tmp);
+    uint32_t vlen = cmd_value_length(*cmd);
+
     key.key = NULL;
-    key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
+    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
 
     BUG_ON(!key.key);
     BUG_ON(!cmd->kv_store.key);
     BUG_ON(!cmd);
 
-    uint8_t length = cmd_key_length(tmp);
+    NVMEV_ASSERT(vlen > klen);
 
-    memcpy(key.key, cmd->kv_retrieve.key, length);
-    key.key[16] = '\0';
-    key.len = cmd_key_length(*cmd);
+    memcpy(key.key, cmd->kv_retrieve.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
     d_req.key = key;
 
-    NVMEV_DEBUG("Write for key %s len %u\n", key.key, length);
+    NVMEV_DEBUG("Write for key %s klen %u vlen %u\n", key.key, klen, vlen);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = (char*)kzalloc(1024, GFP_KERNEL);
+    value->value = (char*)kzalloc(vlen, GFP_KERNEL);
     value->ssd = conv_ftl->ssd;
-    value->length = 1024;
+    value->length = vlen;
     d_req.value = value;
     d_req.end_req = &end_w;
     d_req.sqid = req->sq_id;
 
     __quick_copy(cmd, value->value, value->length);
+
+    uint8_t nklen = *(uint8_t*) value->value;
+    if(key.key[0] == 'L') {
+        NVMEV_DEBUG("Log key. Bid %llu log num %u\n", 
+                *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+    }
+
+    if(nklen != klen) {
+        NVMEV_ERROR("Klen mismatch %u %u\n", klen, nklen);
+        ret->nsecs_target = local_clock();
+
+        cmd->kv_store.rsvd2 = UINT_MAX;
+        ret->status = NVME_SC_SUCCESS;
+
+        return true;
+    }
+
     nsecs_latest = nsecs_xfer_completed = __demand.write(&d_req);
 
 	//if ((cmd->rw.control & NVME_RW_FUA) || (spp->write_early_completion == 0)) {
@@ -1559,17 +1646,6 @@ static inline unsigned long long __get_wallclock(void)
 	return cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 }
 
-static unsigned int cmd_value_length(struct nvme_kv_command cmd)
-{
-	if (cmd.common.opcode == nvme_cmd_kv_store) {
-		return cmd.kv_store.value_len << 2;
-	} else if (cmd.common.opcode == nvme_cmd_kv_retrieve) {
-		return cmd.kv_retrieve.value_len << 2;
-	} else {
-		return cmd.kv_store.value_len << 2;
-	}
-}
-
 bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	struct nvme_command *cmd = req->cmd;
@@ -1591,8 +1667,9 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
             ret->nsecs_target = __get_wallclock() + 10;
             break;
         default:
-            NVMEV_ERROR("%s: command not implemented: %s (0x%x)\n", __func__,
-                    nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
+            //NVMEV_ERROR("%s: command not implemented: %s (0x%x)\n", __func__,
+            //        nvme_opcode_string(cmd->common.opcode), cmd->common.opcode);
+            ret->nsecs_target = __get_wallclock() + 10;
             break;
     }
 

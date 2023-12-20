@@ -18,6 +18,8 @@ extern struct demand_cache *d_cache;
 
 struct conv_ftl *ftl;
 
+bool FAIL_MODE = false;
+
 void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
@@ -46,9 +48,10 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
 #endif
-		copy_value(req->value, wb_entry->value, wb_entry->value->length * GRAINED_UNIT);
+        copy_value(req->value, wb_entry->value, wb_entry->value->length * GRAINED_UNIT);
 		req->type_ftl = 0;
 		req->type_lower = 0;
+        req->value->length = wb_entry->value->length * GRAINED_UNIT;
 		return 1;
 	}
 	return 0;
@@ -167,7 +170,7 @@ read_retry:
 	/* 2. check cache */
 	if (d_cache->is_hit(lpa)) {
 		d_cache->touch(lpa);
-        //printk("Cache hit for LPA %u!\n", lpa);
+        NVMEV_DEBUG("Cache hit for LPA %u!\n", lpa);
 	} else {
 cache_load:
 		rc = d_cache->wait_if_flying(lpa, req, NULL);
@@ -207,7 +210,11 @@ data_read:
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-    if(nsecs_latest == UINT_MAX - 1) {
+    if(rc == UINT_MAX) {
+        req->ppa = UINT_MAX;
+        warn_notfound(__FILE__, __LINE__);
+        goto read_ret;
+    } else if(nsecs_latest == UINT_MAX - 1) {
         //printk("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
         goto read_retry;
     }
@@ -242,7 +249,8 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 	return ppa;
 }
 
-static void _do_wb_assign_ppa(skiplist *wb) {
+uint32_t cnt = 0;
+static bool _do_wb_assign_ppa(skiplist *wb) {
 	blockmanager *bm = __demand.bm;
 	struct flush_list *fl = d_member.flush_list;
     struct ssdparams spp = d_member.ssd->sp;
@@ -273,12 +281,26 @@ static void _do_wb_assign_ppa(skiplist *wb) {
         uint32_t credits = 0;
 
         struct ppa ppa_s = get_new_page(ftl, USER_IO);
-        advance_write_pointer(ftl, USER_IO);
+        if(!advance_write_pointer(ftl, USER_IO)) {
+            NVMEV_ERROR("Failing wb flush because we had no available pages!\n");
+            /*
+             * TODO
+             * Leak here of remaining wb_entries.
+             */
+
+            /*
+             * So we can just rmmod nvmev instead of rebooting the VM.
+             */
+
+            FAIL_MODE = true;
+            return false;
+        }
+
         mark_page_valid(ftl, &ppa_s);
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
-        NVMEV_DEBUG("%s assigning PPA %u\n", __func__, ppa);
+        NVMEV_DEBUG("%s assigning PPA %u (%u)\n", __func__, ppa, cnt++);
 
         //printk("Actual PPA : %d %d %d %d %d\n", 
         //        ppa_s.g.ch, ppa_s.g.lun, ppa_s.g.pl, ppa_s.g.blk, ppa_s.g.pg);
@@ -312,8 +334,8 @@ static void _do_wb_assign_ppa(skiplist *wb) {
                    wb_entry->value->value, 
                    wb_entry->value->length * GRAINED_UNIT);
             char tmp[128];
-            memcpy(tmp, wb_entry->value->value, 17);
-            tmp[17] = '\0';
+            memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
+            tmp[wb_entry->key.len] = '\0';
             NVMEV_DEBUG("%s writing %s to %u (%u)\n", 
                         __func__, tmp, ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
 
@@ -355,6 +377,8 @@ static void _do_wb_assign_ppa(skiplist *wb) {
 	}
 #endif
 	kfree(iter);
+
+    return true;
 }
 
 static void _do_wb_mapping_update(skiplist *wb) {
@@ -556,6 +580,9 @@ uint64_t _do_wb_flush(skiplist *wb) {
 
 static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
+    NVMEV_DEBUG("K1 %s KLEN %u K2 %s\n", 
+            (char*) wb_entry->key.key, *(uint8_t*) (wb_entry->value->value), 
+            (char*) (wb_entry->value->value + 1));
 #ifdef HASH_KVSSD
 	wb_entry->hash_params = (void *)req->hash_params;
 #endif
@@ -576,8 +603,11 @@ uint64_t __demand_write(request *const req) {
 	if (wb_is_full(wb)) {
 		//printk("write buffer flush!\n");
 		/* assign ppa first */
-		_do_wb_assign_ppa(wb);
-        //printk("passed assign_ppa\n");
+		if(!_do_wb_assign_ppa(wb)) {
+            wb = d_member.write_buffer =  skiplist_init();
+            NVMEV_ERROR("Failing!\n");
+            goto failed;
+        }
 
 		/* mapping update [lpa, origin]->[lpa, new] */
 		_do_wb_mapping_update(wb);
@@ -594,6 +624,7 @@ uint64_t __demand_write(request *const req) {
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
    
+failed:
     nsecs_completed =
     ssd_advance_write_buffer(req->ssd, nsecs_start, length);
 
@@ -640,15 +671,16 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, req->value, offset);
 
-            //printk("Comparing %s and %s\n", check_key.key, req->key.key);
+            printk("Comparing %s and %s\n", check_key.key, req->key.key);
 			if (KEYCMP(req->key, check_key) == 0) {
-                //printk("Match %s and %s.\n", check_key.key, req->key.key);
+                printk("Match %s and %s.\n", check_key.key, req->key.key);
 				d_stat.fp_match_r++;
 
 				hash_collision_logging(h_params->cnt, DREAD);
 				kfree(h_params);
 				req->end_req(req);
 			} else {
+                printk("Mismatch %s and %s.\n", check_key.key, req->key.key);
 				d_stat.fp_collision_r++;
 
 				h_params->find = HASH_KEY_DIFF;
@@ -666,7 +698,6 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, d_params->value, offset);
 			if (KEYCMP(wb_entry->key, check_key) == 0) {
-                NVMEV_ERROR("Key MATCH : %s and %s\n", check_key.key, wb_entry->key.key);
                 //printk("Match in read for writes.\n");
 				/* hash key found -> update */
 				d_stat.fp_match_w++;
@@ -677,8 +708,6 @@ void *demand_end_req(algo_req *a_req) {
 
 				q_enqueue((void *)wb_entry, d_member.wb_retry_q);
 			} else {
-                NVMEV_ERROR("Key mismatch: %s and %s\n", check_key.key, wb_entry->key.key);
-
 				/* retry */
 				d_stat.fp_collision_w++;
 

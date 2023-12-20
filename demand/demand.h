@@ -32,7 +32,7 @@ void clear_oob(uint64_t pgidx);
 bool oob_empty(uint64_t pgidx);
 struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
 uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
-void advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
+bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
 void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
@@ -43,6 +43,8 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
 int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains);
 
 extern struct demand_stat d_stat;
+
+extern bool FAIL_MODE;
 
 /* Structures */
 // Page table entry

@@ -85,6 +85,7 @@ struct request {
     struct nvmev_request *req;
     struct ssd *ssd;
     uint64_t sqid;
+    struct nvme_kv_command *cmd;
 };
 
 struct algo_req {

@@ -80,6 +80,8 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
                 PPA, PPA * value->ssd->sp.pgsz, size, value->ssd->sp.pgsz);
 
     memcpy(nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), value->value, size);
+    NVMEV_DEBUG("2 Klen %u K %s\n", *(uint8_t*) nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz),
+                                    (char*) (nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz) + 1));
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
