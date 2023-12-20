@@ -75,32 +75,37 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 	size_t nsid = 0;  // 0-based
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
+    bool delete = cmd->common.opcode == nvme_cmd_kv_delete;
     //printk("In io_kv for a %s!\n", read ? "read" : "write");
+
+    if(delete) {
+        return 0;
+    }
 
     nsid = 0;
 
     if(read) {
         offset = cmd->kv_retrieve.rsvd2;
-        length = cmd->kv_retrieve.value_len << 2;
+        length = cmd->kv_retrieve.value_len;
     } else {
         offset = cmd->kv_store.rsvd2;
         length = cmd->kv_store.value_len << 2;
     }
 
     if(offset == UINT_MAX - 1) {
-        //printk("This request was satisfied from the write buffer. "
-        //        "Skipping copy.\n");
+        printk("This request was satisfied from the write buffer. "
+                "Skipping copy. Vlen %lu\n", length);
         return length;
     } else if (offset == UINT_MAX) {
-        //printk("This KV pair wasn't found! "
-        //        "Skipping copy.\n");
+        printk("This KV pair wasn't found! "
+                "Skipping copy.\n");
         return 0;
     }
 
     BUG_ON(!read);
 
 	remaining = length;
-    //printk("Length %lu\n", length);
+    printk("Length %lu\n", length);
 
 	while (remaining) {
 		size_t io_size;
@@ -156,8 +161,12 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 	if (paddr_list != NULL)
 		kunmap_atomic(paddr_list);
 
-    //printk("Done\n");
-	return length;
+    if(read) {
+        NVMEV_DEBUG("Returning length %lu in io_kv\n", length);
+        return length;
+    } else {
+        return 0;
+    }
 }
 #endif
 
@@ -791,9 +800,6 @@ static int nvmev_io_worker(void *data)
 #endif
 				if (w->is_internal) {
                     if(w->cb) {
-                        printk("KV internal copy for w %p (%p)\n", w, w->args);
-                        __do_perform_internal_copy(w->ppa, w->mem, w->len, w->read);
-                        w->cb(w->args);
                     }
 				} else if (io_using_dma) {
 					__do_perform_io_using_dma(w->sqid, w->sq_entry);
@@ -814,7 +820,7 @@ static int nvmev_io_worker(void *data)
 						nvmev_vdev->sqes[w->sqid];
 					ns = &nvmev_vdev->ns[0];
                     if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
-                        __do_perform_io_kv(w->sqid, w->sq_entry);
+                        w->result0 = w->result1 = __do_perform_io_kv(w->sqid, w->sq_entry);
                     } else {
                         __do_perform_io(w->sqid, w->sq_entry);
                     }

@@ -74,6 +74,9 @@ void copy_key_from_value(KEYT *dst, value_set *src, int offset) {
 #endif
 	dst->len = *(uint8_t*) ptr;
 	dst->key = (char *)kzalloc(dst->len, GFP_KERNEL);
+
+    NVMEV_DEBUG("Got length %u for key %s\n", dst->len, (char*) ptr + sizeof(uint8_t));
+
 	memcpy(dst->key, ptr + sizeof(uint8_t), dst->len);
 }
 
@@ -100,8 +103,7 @@ lpa_t get_lpa(KEYT key, void *_h_params) {
 	struct hash_params *h_params = (struct hash_params *)_h_params;
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
                     (d_cache->env.nr_valid_tentries-1) + 1;
-    NVMEV_DEBUG("Got LPA %u key %s (%d %d)\n", 
-                h_params->lpa, key.key, d_cache->env.nr_valid_tentries, EPP);
+    NVMEV_DEBUG("Got LPA %u key %s\n", h_params->lpa, key.key);
 	return h_params->lpa;
 #else
 	return key;

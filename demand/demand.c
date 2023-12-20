@@ -488,6 +488,10 @@ uint32_t demand_read(request *const req){
 }
 
 uint64_t demand_write(request *const req) {
+    if(FAIL_MODE) {
+        return 0;
+    }
+
 	uint32_t rc;
 	mutex_lock(&d_member.op_lock);
 #ifdef HASH_KVSSD
