@@ -32,17 +32,17 @@ bool base_check_full(struct blockmanager *,__segment *active, uint8_t type);
 bool base_is_gc_needed (struct blockmanager*);
 __gsegment* base_get_gc_target (struct blockmanager*);
 void base_trim_segment (struct blockmanager*, __gsegment*, struct lower_info*);
-int base_populate_bit (struct blockmanager*, uint32_t ppa);
-int base_unpopulate_bit (struct blockmanager*, uint32_t ppa);
-int base_erase_bit (struct blockmanager*, uint32_t ppa);
-bool base_is_valid_page (struct blockmanager*, uint32_t ppa);
-bool base_is_invalid_page (struct blockmanager*, uint32_t ppa);
-void base_set_oob(struct blockmanager*, char *data, int len, uint32_t ppa);
-char* base_get_oob(struct blockmanager*, uint32_t ppa);
+int base_populate_bit (struct blockmanager*, uint64_t ppa);
+int base_unpopulate_bit (struct blockmanager*, uint64_t ppa);
+int base_erase_bit (struct blockmanager*, uint64_t ppa);
+bool base_is_valid_page (struct blockmanager*, uint64_t ppa);
+bool base_is_invalid_page (struct blockmanager*, uint64_t ppa);
+void base_set_oob(struct blockmanager*, char *data, int len, uint64_t ppa);
+char* base_get_oob(struct blockmanager*, uint64_t ppa);
 void base_release_segment(struct blockmanager*, __segment *);
 __segment* base_change_reserve(struct blockmanager* ,__segment *reserve);
 int base_get_page_num(struct blockmanager* ,__segment *);
 int base_pick_page_num(struct blockmanager* ,__segment *);
 
-uint32_t base_map_ppa(struct blockmanager* , uint32_t lpa);
+uint32_t base_map_ppa(struct blockmanager* , uint64_t lpa);
 #endif

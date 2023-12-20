@@ -57,14 +57,14 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	return 0;
 }
 
-static uint32_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
+static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
     struct ssdparams spp = d_member.ssd->sp;
     uint64_t nsecs = 0;
 
 	if (IS_INITIAL_PPA(ppa)) {
         //printk("%s IS_INITIAL_PPA failure.\n", __func__);
 		warn_notfound(__FILE__, __LINE__);
-		return UINT_MAX;
+		return U64_MAX;
 	}
 
     struct algo_req *a_req = make_algo_req_rw(DATAR, NULL, req, NULL);
@@ -86,14 +86,14 @@ static uint32_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
         *nsecs_completed = nsecs;
     }
 
-    if(nsecs == UINT_MAX - 1) {
+    if(nsecs == U64_MAX - 1) {
         return 1;
     } else {
         return 0;
     }
 }
 
-static uint32_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
+static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
     struct ssdparams spp = d_member.ssd->sp;
 	value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp.pgsz);
 	struct algo_req *a_req = make_algo_req_rw(DATAR, _value_dr_check, NULL, wb_entry);
@@ -108,7 +108,7 @@ static uint32_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 }
 
 uint64_t __demand_read(request *const req) {
-	uint32_t rc = 0;
+	uint64_t rc = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
@@ -119,14 +119,14 @@ uint64_t __demand_read(request *const req) {
 read_retry:
 	lpa = get_lpa(req->key, req->hash_params);
     //printk("Got LPA %u for key %s!\n", lpa, req->key.key);
-	pte.ppa = UINT_MAX;
+	pte.ppa = U64_MAX;
 #ifdef STORE_KEY_FP
 	pte.key_fp = FP_MAX;
 #endif
 
 #ifdef HASH_KVSSD
 	if (h_params->cnt > d_member.max_try) {
-		rc = UINT_MAX;
+		rc = U64_MAX;
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
 	}
@@ -162,7 +162,7 @@ read_retry:
 	if (rc) {
         nsecs_completed =
         ssd_advance_pcie(req->ssd, req->req->nsecs_start, 1024);
-        req->ppa = UINT_MAX - 1;
+        req->ppa = U64_MAX - 1;
 		req->end_req(req);
 		goto read_ret;
 	}
@@ -170,7 +170,7 @@ read_retry:
 	/* 2. check cache */
 	if (d_cache->is_hit(lpa)) {
 		d_cache->touch(lpa);
-        NVMEV_DEBUG("Cache hit for LPA %u!\n", lpa);
+        NVMEV_DEBUG("Cache hit for LPA %llu!\n", lpa);
 	} else {
 cache_load:
 		rc = d_cache->wait_if_flying(lpa, req, NULL);
@@ -180,8 +180,8 @@ cache_load:
 		rc = d_cache->load(lpa, req, NULL, &nsecs_completed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
-            req->ppa = UINT_MAX;
-			rc = UINT_MAX;
+            req->ppa = U64_MAX;
+			rc = U64_MAX;
 			warn_notfound(__FILE__, __LINE__);
 		}
 		goto read_ret;
@@ -206,16 +206,17 @@ cache_check_complete:
 #endif
 data_read:
 	/* 3. read actual data */
-    NVMEV_DEBUG("Got PPA %u for LPA %u\n", pte.ppa, lpa);
+    NVMEV_DEBUG("Got PPA %lluu for LPA %llu %llu %llu\n", pte.ppa, lpa, nsecs_latest, nsecs_completed);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
-    nsecs_latest = max(nsecs_latest, nsecs_completed);
+    nsecs_latest = 
+    nsecs_latest == U64_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
 
-    if(rc == UINT_MAX) {
-        req->ppa = UINT_MAX;
+    if(rc == U64_MAX) {
+        req->ppa = U64_MAX;
         warn_notfound(__FILE__, __LINE__);
         goto read_ret;
-    } else if(nsecs_latest == UINT_MAX - 1) {
-        //printk("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
+    } else if(nsecs_latest == U64_MAX - 1) {
+        NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
         goto read_retry;
     }
 
@@ -300,7 +301,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
-        NVMEV_DEBUG("%s assigning PPA %u (%u)\n", __func__, ppa, cnt++);
+        NVMEV_DEBUG("%s assigning PPA %llu (%u)\n", __func__, ppa, cnt++);
 
         //printk("Actual PPA : %d %d %d %d %d\n", 
         //        ppa_s.g.ch, ppa_s.g.lun, ppa_s.g.pl, ppa_s.g.blk, ppa_s.g.pg);
@@ -336,7 +337,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
             char tmp[128];
             memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
             tmp[wb_entry->key.len] = '\0';
-            NVMEV_DEBUG("%s writing %s to %u (%u)\n", 
+            NVMEV_DEBUG("%s writing %s to %llu (%llu)\n", 
                         __func__, tmp, ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
 
 			inf_free_valueset(wb_entry->value, FS_MALLOC_W);
@@ -414,7 +415,7 @@ wb_retry:
 
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
-        NVMEV_DEBUG("wb_entry->ppa is %u length %u\n", wb_entry->ppa, wb_entry->len);
+        NVMEV_DEBUG("wb_entry->ppa is %llu length %u\n", wb_entry->ppa, wb_entry->len);
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif
@@ -441,7 +442,7 @@ wb_retry:
 		}
 
 		if (d_cache->is_hit(lpa)) {
-            NVMEV_DEBUG("%s hit for LPA %u\n", __func__, lpa);
+            NVMEV_DEBUG("%s hit for LPA %llu\n", __func__, lpa);
 			d_cache->touch(lpa);
 		} else {
             //printk("%s miss for LPA %u\n", __func__, lpa);
@@ -500,10 +501,10 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_DEBUG("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
-            NVMEV_DEBUG("%s LPA %u old PPA %u overwrite.\n", __func__, lpa, pte.ppa);
+            NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite.\n", __func__, lpa, pte.ppa);
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
             
             /*
@@ -516,7 +517,7 @@ wb_update:
 		}
 wb_direct_update:
 		d_cache->update(lpa, new_pte);
-        NVMEV_DEBUG("2 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;
@@ -556,7 +557,7 @@ uint64_t _do_wb_flush(skiplist *wb) {
 		value_set *value = fl->list[i].value;
         value->ssd = d_member.ssd;
 
-        NVMEV_DEBUG("PPA %u value len %d\n", ppa, value->length);
+        NVMEV_DEBUG("PPA %llu value len %d\n", ppa, value->length);
 
 		nsecs_latest = 
         __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
@@ -579,7 +580,7 @@ uint64_t _do_wb_flush(skiplist *wb) {
 
 static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
-    NVMEV_DEBUG("K1 %s KLEN %u K2 %s\n", 
+    NVMEV_DEBUG("%s K1 %s KLEN %u K2 %s\n", __func__,
             (char*) wb_entry->key.key, *(uint8_t*) (wb_entry->value->value), 
             (char*) (wb_entry->value->value + 1));
 #ifdef HASH_KVSSD
@@ -616,6 +617,7 @@ uint64_t __demand_write(request *const req) {
 		nsecs_latest = _do_wb_flush(wb);
         //printk("passed flush\n");
         wb = d_member.write_buffer =  skiplist_init();
+        NVMEV_DEBUG("Assigned new WB.\n");
 	}
 
     ////printk("Advancing WB %llu start %llu length.\n", nsecs_start, length);
@@ -637,6 +639,16 @@ failed:
 uint32_t __demand_remove(request *const req) {
 	//printk("Hello! remove() is not implemented yet! lol!");
 	return 0;
+}
+
+uint32_t get_vlen(uint64_t ppa, uint64_t offset) {
+    uint32_t len = 1;
+    while(offset + len < GRAIN_PER_PAGE && oob[ppa][offset + len] == 0) {
+        len++;
+    }
+
+    NVMEV_DEBUG("%s returning a vlen of %u\n", __func__, len * GRAINED_UNIT);
+    return len * GRAINED_UNIT;
 }
 
 void *demand_end_req(algo_req *a_req) {
@@ -670,16 +682,18 @@ void *demand_end_req(algo_req *a_req) {
 
 			copy_key_from_value(&check_key, req->value, offset);
 
-            printk("Comparing %s and %s\n", check_key.key, req->key.key);
+            NVMEV_DEBUG("Comparing %s and %s\n", check_key.key, req->key.key);
 			if (KEYCMP(req->key, check_key) == 0) {
-                printk("Match %s and %s.\n", check_key.key, req->key.key);
+                NVMEV_DEBUG("Match %s and %s.\n", check_key.key, req->key.key);
 				d_stat.fp_match_r++;
 
+                a_req->need_retry = false;
 				hash_collision_logging(h_params->cnt, DREAD);
 				kfree(h_params);
+                req->value->length = get_vlen(G_IDX(req->ppa), offset);
 				req->end_req(req);
 			} else {
-                printk("Mismatch %s and %s.\n", check_key.key, req->key.key);
+                NVMEV_DEBUG("Mismatch %s and %s.\n", check_key.key, req->key.key);
 				d_stat.fp_collision_r++;
 
 				h_params->find = HASH_KEY_DIFF;

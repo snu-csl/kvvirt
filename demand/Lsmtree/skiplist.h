@@ -44,7 +44,7 @@ typedef struct snode{ //skiplist's node
 	bool isvalid;
 
 #ifdef HASH_KVSSD
-	uint32_t lpa;
+	uint64_t lpa;
 	void *hash_params;
 	void *params;
     uint32_t len;

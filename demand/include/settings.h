@@ -80,7 +80,7 @@ enum{
 #define SIMULATION 0
 
 #define FSTYPE uint8_t
-#define ppa_t uint32_t
+#define ppa_t uint64_t
 #ifdef KVSSD
 #define KEYFORMAT(input) input.len>DEFKEYLENGTH?DEFKEYLENGTH:input.len,input.key
 typedef struct str_key{

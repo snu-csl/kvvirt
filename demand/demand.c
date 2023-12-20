@@ -167,7 +167,7 @@ static int demand_member_init(struct demand_member *const _member, const struct 
 	_member->flush_list = fl;
 
 #ifdef HASH_KVSSD
-	_member->max_try = 0;
+	_member->max_try = 5;
 #endif
 
 	_member->hash_table = d_htable_init(d_env.wb_flush_size * 2);
@@ -216,7 +216,7 @@ static int count_filled_entry(void) {
 	for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
 		struct pt_struct *pt = d_cache->member.mem_table[i];
 		for (int j = 0; j < EPP; j++) {
-			if (pt[j].ppa != UINT_MAX) {
+			if (pt[j].ppa != U64_MAX) {
 				ret++;
 			}
 		}
@@ -394,9 +394,9 @@ void demand_destroy(lower_info *li, algorithm *algo){
 
 #ifdef HASH_KVSSD
 static uint64_t hashing_key(char* key,uint8_t len) {
-    uint64_t ret = 0;
-    ret = CityHash64(key, len); 
-    return ret;
+    //uint64_t ret = 0;
+    //ret = CityHash64(key, len); 
+    //return ret;
 
 	char* string;
 	Sha256Context ctx;
@@ -479,7 +479,7 @@ uint32_t demand_read(request *const req){
 	}
 #endif
 	rc = __demand_read(req);
-	if (rc == UINT_MAX) {
+	if (rc == U64_MAX) {
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
 	}

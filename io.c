@@ -85,19 +85,19 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     nsid = 0;
 
     if(read) {
-        offset = cmd->kv_retrieve.rsvd2;
+        offset = cmd->kv_retrieve.rsvd;
         length = cmd->kv_retrieve.value_len;
     } else {
-        offset = cmd->kv_store.rsvd2;
+        offset = cmd->kv_store.rsvd;
         length = cmd->kv_store.value_len << 2;
     }
 
-    if(offset == UINT_MAX - 1) {
-        printk("This request was satisfied from the write buffer. "
+    if(offset == U64_MAX - 1) {
+        NVMEV_DEBUG("This request was satisfied from the write buffer. "
                 "Skipping copy. Vlen %lu\n", length);
         return length;
-    } else if (offset == UINT_MAX) {
-        printk("This KV pair wasn't found! "
+    } else if (offset == U64_MAX) {
+        NVMEV_DEBUG("This KV pair wasn't found! "
                 "Skipping copy.\n");
         return 0;
     }
@@ -105,7 +105,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     BUG_ON(!read);
 
 	remaining = length;
-    printk("Length %lu\n", length);
+    //printk("Length %lu\n", length);
 
 	while (remaining) {
 		size_t io_size;

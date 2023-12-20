@@ -106,7 +106,7 @@ uint32_t pbm_create(blockmanager *bm, int pnum, int *epn, lower_info *li){
     //for(int i = 0; i < li->NOB; i++) {
     //    __block *b=&p->base_block[i];
     //    b->block_num=i;
-    //    b->punit_num=UINT_MAX;
+    //    b->punit_num=U64_MAX;
     //    b->bitset=(uint8_t*)kzalloc((li->PPB/8) * 1, GFP_KERNEL);
     //    bitset += sizeof(uint8_t*) * (li->PPB/8); 
     //    b->now = 0;

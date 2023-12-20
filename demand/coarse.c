@@ -66,8 +66,8 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 	_env->max_cached_tentries = 0; // not used here
 
 #ifdef DVALUE
-	_env->nr_valid_tpages *= (GRAIN_PER_PAGE * 8);
-	_env->nr_valid_tentries *= (GRAIN_PER_PAGE * 8);
+	_env->nr_valid_tpages *= GRAIN_PER_PAGE;
+	_env->nr_valid_tentries *= GRAIN_PER_PAGE;
 #endif
 
     printk("%d %d %d\n", d_env.nr_pages, EPP, _env->nr_valid_tentries);
@@ -80,7 +80,7 @@ static void cg_member_init(struct cache_member *const _member) {
 	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
 		cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
 
-		cmt[i]->t_ppa = UINT_MAX;
+		cmt[i]->t_ppa = U64_MAX;
 		cmt[i]->idx = i;
 		cmt[i]->pt = NULL;
 		cmt[i]->lru_ptr = NULL;
@@ -99,7 +99,7 @@ static void cg_member_init(struct cache_member *const _member) {
 	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
 		_member->mem_table[i] = (struct pt_struct *)kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
 		for (int j = 0; j < EPP; j++) {
-			_member->mem_table[i][j].ppa = UINT_MAX;
+			_member->mem_table[i][j].ppa = U64_MAX;
 #ifdef STORE_KEY_FP
 			_member->mem_table[i][j].key_fp = 0;
 #endif

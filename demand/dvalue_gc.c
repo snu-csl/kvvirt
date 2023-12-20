@@ -171,7 +171,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains) {
 			struct pt_struct pte = d_cache->get_pte(lpa);
 			pte.ppa = ppas[i].new_ppa;
 			d_cache->update(lpa, pte);
-            NVMEV_DEBUG("Updating mapping of LPA %u to PPA %u\n", lpa, pte.ppa);
+            NVMEV_DEBUG("Updating mapping of LPA %llu to PPA %llu\n", lpa, pte.ppa);
 			skip_update[i] = true;
 		} else {
             BUG_ON(true);
@@ -213,7 +213,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 		} else {
             BUG_ON(true);
 			struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-			if (cmt->t_ppa == UINT_MAX) {
+			if (cmt->t_ppa == U64_MAX) {
 				continue;
 			}
 			value_set *_value_mr = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
@@ -221,7 +221,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 			__demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, make_algo_req_default(GCMR_DGC, _value_mr));
 
 			invalidate_page(bm, cmt->t_ppa, MAP);
-			cmt->t_ppa = UINT_MAX;
+			cmt->t_ppa = U64_MAX;
 			
 			nr_update_tpages++;
 		}

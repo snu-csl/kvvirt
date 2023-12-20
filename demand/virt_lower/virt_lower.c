@@ -57,7 +57,34 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 	return ppa;
 }
 
-uint64_t virt_push_data(uint32_t PPA, uint32_t size, 
+void print_kvs(uint64_t off) {
+    int64_t remain = 4096;
+
+    uint8_t klen = 0;
+    uint32_t vlen = 0, g_len = 0;
+
+    while(remain > 0) {
+        klen = *(uint8_t*) (nvmev_vdev->ns[0].mapped + off);
+
+        if(klen == 0) {
+            break;
+        }
+
+        vlen = *(uint32_t*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t) + klen);
+        //if(vlen % 512 == 0) {
+        //    off += vlen;
+        //} else {
+        g_len = (((vlen + sizeof(uint8_t) + klen + sizeof(uint32_t)) / 512 ) + 1) * 512;
+        off += g_len;
+        //}
+
+        remain -= g_len;
+        NVMEV_DEBUG("Klen %u vlen %u off %llu remain %lld ", klen, vlen, off, remain);
+    }
+    NVMEV_DEBUG("\n");
+}
+
+uint64_t virt_push_data(uint64_t PPA, uint32_t size, 
                         value_set* value, bool async,
                         algo_req *const req){
     uint64_t nsecs_completed, nsecs_latest;
@@ -74,14 +101,19 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
     BUG_ON(!value->ssd);
     BUG_ON(!req);
     BUG_ON(!value);
-    BUG_ON(req->sqid == UINT_MAX);
+    BUG_ON(req->sqid == U64_MAX);
 
-    NVMEV_DEBUG("Writing PPA %u (%u) size %u pagesize %u in virt_push_datas\n", 
-                PPA, PPA * value->ssd->sp.pgsz, size, value->ssd->sp.pgsz);
+    uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
-    memcpy(nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), value->value, size);
-    NVMEV_DEBUG("2 Klen %u K %s\n", *(uint8_t*) nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz),
-                                    (char*) (nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz) + 1));
+    NVMEV_DEBUG("Writing PPA %llu (%llu) size %u pagesize %u in virt_push_datas\n", 
+                PPA, off, size, value->ssd->sp.pgsz);
+
+    memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
+    print_kvs(off);
+
+    //NVMEV_DEBUG("2 Klen %u K %s vlen %u\n", klen,
+    //            (char*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t)),
+    //            *(uint32_t*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t) + klen));
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -96,7 +128,7 @@ uint64_t virt_push_data(uint32_t PPA, uint32_t size,
 	return nsecs_completed;
 }
 
-uint64_t virt_pull_data(uint32_t PPA, uint32_t size, 
+uint64_t virt_pull_data(uint64_t PPA, uint32_t size, 
                      value_set* value, bool async,
                      algo_req *const req) {	
     uint64_t nsecs_completed, nsecs_latest;
@@ -114,9 +146,12 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
     BUG_ON(!req);
     BUG_ON(!value);
 
-    //printk("Reading PPA %u (%u) size %u sqid %u %s in virt_dev. req ppa %u\n", 
-    //        PPA, PPA * value->ssd->sp.pgsz, size, nvmev_vdev->sqes[1]->qid, 
-    //        async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
+    uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
+
+    NVMEV_DEBUG("Reading PPA %llu (%llu) size %u sqid %u %s in virt_dev. req ppa %llu\n", 
+            PPA, off, size, nvmev_vdev->sqes[1]->qid, 
+            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
+    print_kvs(off);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -134,8 +169,7 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
         //printk("Value %p\n", value);
         //printk("Value->value %p\n", value->value);
 
-        memcpy(value->value, 
-               nvmev_vdev->ns[0].mapped + (PPA * value->ssd->sp.pgsz), size);
+        memcpy(value->value, nvmev_vdev->ns[0].mapped + off, size);
         //printk("Got %s (%s)\n", 
         //        (char*) value->value, 
         //        (char*) (nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE)));
@@ -149,17 +183,18 @@ uint64_t virt_pull_data(uint32_t PPA, uint32_t size,
     }
 
     if(req && req->need_retry) {
-        //printk("Need a retry.\n");
+        NVMEV_DEBUG("Need a retry.\n");
         kfree(req);
-        return UINT_MAX - 1;
+        return U64_MAX - 1;
     } else {
+        NVMEV_DEBUG("Don't need a retry, returning nsecs_completed.\n");
         kfree(req->params);
         kfree(req);
         return nsecs_completed;
     }
 }
 
-void *virt_trim_block(uint32_t PPA, bool async){
+void *virt_trim_block(uint64_t PPA, bool async){
 	virt_info.req_type_cnt[TRIM]++;
 	uint64_t range[2];
 	//range[0]=PPA*virt_info.SOP;

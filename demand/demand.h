@@ -80,7 +80,7 @@ struct hash_params {
 #endif
 	int cnt;
 	int find;
-	uint32_t lpa;
+	uint64_t lpa;
 
 #ifdef DVALUE
 	int fl_idx;

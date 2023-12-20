@@ -826,8 +826,8 @@ static void forground_gc(struct conv_ftl *conv_ftl)
 static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struct ppa ppa2)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
-	uint32_t ppa1_page = ppa1.g.pg / spp->pgs_per_flashpg;
-	uint32_t ppa2_page = ppa2.g.pg / spp->pgs_per_flashpg;
+	uint64_t ppa1_page = ppa1.g.pg / spp->pgs_per_flashpg;
+	uint64_t ppa2_page = ppa2.g.pg / spp->pgs_per_flashpg;
 
 	return (ppa1.h.blk_in_ssd == ppa2.h.blk_in_ssd) && (ppa1_page == ppa2_page);
 }

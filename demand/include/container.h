@@ -30,7 +30,7 @@ typedef struct value_set{
 	PTR value;
 	uint32_t length;
 	int dmatag; //-1 == not dma_alloc, others== dma_alloc
-	uint32_t ppa;
+	uint64_t ppa;
 	bool from_app;
 	PTR rmw_value;
 	uint8_t status;
@@ -89,7 +89,7 @@ struct request {
 };
 
 struct algo_req {
-	uint32_t ppa;
+	uint64_t ppa;
 	request * parents;
 	//MeasureTime latency_lower;
 	uint8_t type;
@@ -110,16 +110,16 @@ struct algo_req {
 struct lower_info {
 	uint32_t (*create)(struct lower_info*, blockmanager *bm);
 	void* (*destroy)(struct lower_info*);
-	uint64_t (*write)(uint32_t ppa, uint32_t size, 
+	uint64_t (*write)(uint64_t ppa, uint32_t size, 
                       value_set *value, bool async,
                       algo_req * const req);
-	uint64_t (*read)(uint32_t ppa, uint32_t size, 
+	uint64_t (*read)(uint64_t ppa, uint32_t size, 
                   value_set *value, bool async,
                   algo_req * const req);
-	void* (*read_hw)(uint32_t ppa, char *key,uint32_t key_len, value_set *value,bool async,algo_req * const req);
-	void* (*device_badblock_checker)(uint32_t ppa,uint32_t size,void *(*process)(uint64_t, uint8_t));
-	void* (*trim_block)(uint32_t ppa,bool async);
-	void* (*trim_a_block)(uint32_t ppa,bool async);
+	void* (*read_hw)(uint64_t ppa, char *key,uint32_t key_len, value_set *value,bool async,algo_req * const req);
+	void* (*device_badblock_checker)(uint64_t ppa,uint32_t size,void *(*process)(uint64_t, uint8_t));
+	void* (*trim_block)(uint64_t ppa,bool async);
+	void* (*trim_a_block)(uint64_t ppa,bool async);
 	void* (*refresh)(struct lower_info*);
 	void (*stop)(void);
 	int (*lower_alloc) (int type, char** buf);
@@ -225,13 +225,13 @@ struct blockmanager{
 	bool (*is_gc_needed) (struct blockmanager*);
 	__gsegment* (*get_gc_target) (struct blockmanager*);
 	void (*trim_segment) (struct blockmanager*, __gsegment*, struct lower_info*);
-	int (*populate_bit) (struct blockmanager*, uint32_t ppa);
-	int (*unpopulate_bit) (struct blockmanager*, uint32_t ppa);
-	int (*erase_bit)(struct blockmanager*, uint32_t ppa);
-	bool (*is_valid_page) (struct blockmanager*, uint32_t ppa);
-	bool (*is_invalid_page) (struct blockmanager*, uint32_t ppa);
-	void (*set_oob)(struct blockmanager*, char* data, int len, uint32_t ppa);
-	char *(*get_oob)(struct blockmanager*, uint32_t ppa);
+	int (*populate_bit) (struct blockmanager*, uint64_t ppa);
+	int (*unpopulate_bit) (struct blockmanager*, uint64_t ppa);
+	int (*erase_bit)(struct blockmanager*, uint64_t ppa);
+	bool (*is_valid_page) (struct blockmanager*, uint64_t ppa);
+	bool (*is_invalid_page) (struct blockmanager*, uint64_t ppa);
+	void (*set_oob)(struct blockmanager*, char* data, int len, uint64_t ppa);
+	char *(*get_oob)(struct blockmanager*, uint64_t ppa);
 	__segment* (*change_reserve)(struct blockmanager *, __segment *reserve);
 
 	uint32_t (*pt_create) (struct blockmanager*, int part_num, int *each_part_seg_num, lower_info *);

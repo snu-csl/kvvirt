@@ -11,13 +11,13 @@
 #include "./include/demand_settings.h"
 #include "./include/types.h"
 
-typedef uint32_t lpa_t;
-typedef uint32_t ppa_t;
+typedef uint64_t lpa_t;
+typedef uint64_t ppa_t;
 typedef ppa_t pga_t;
 
 #if (FP_SIZE<=8)
 typedef uint8_t fp_t;
-#define FP_MAX UINT_MAX
+#define FP_MAX U64_MAX
 
 #elif (FP_SIZE<=16)
 typedef uint16_t fp_t;
@@ -25,7 +25,7 @@ typedef uint16_t fp_t;
 
 #elif (FP_SIZE<=32) 
 typedef uint32_t fp_t;
-#define FP_MAX UINT_MAX
+#define FP_MAX U64_MAX
 
 #elif (FP_SIZE<=64) 
 typedef uint64_t fp_t;

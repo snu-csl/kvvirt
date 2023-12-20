@@ -187,7 +187,7 @@ void base_trim_segment (struct blockmanager* bm, __gsegment* gs, struct lower_in
 	kfree(gs);
 }
 
-int base_populate_bit (struct blockmanager* bm, uint32_t ppa){
+int base_populate_bit (struct blockmanager* bm, uint64_t ppa){
 	int res=1;
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	uint32_t bn=GETBLOCKIDX(checker,ppa);
@@ -202,7 +202,7 @@ int base_populate_bit (struct blockmanager* bm, uint32_t ppa){
 	return res;
 }
 
-int base_unpopulate_bit (struct blockmanager* bm, uint32_t ppa){
+int base_unpopulate_bit (struct blockmanager* bm, uint64_t ppa){
 	int res=1;
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	uint32_t bn=GETBLOCKIDX(checker,ppa);
@@ -225,7 +225,7 @@ int base_unpopulate_bit (struct blockmanager* bm, uint32_t ppa){
 	return res;
 }
 
-int base_erase_bit (struct blockmanager* bm, uint32_t ppa){
+int base_erase_bit (struct blockmanager* bm, uint64_t ppa){
 	int res=1;
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	uint32_t bn=GETBLOCKIDX(checker,ppa);
@@ -246,7 +246,7 @@ int base_erase_bit (struct blockmanager* bm, uint32_t ppa){
 	return res;
 }
 
-bool base_is_valid_page (struct blockmanager* bm, uint32_t ppa){
+bool base_is_valid_page (struct blockmanager* bm, uint64_t ppa){
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	uint32_t bn=GETBLOCKIDX(checker,ppa);
 	uint32_t pn=GETPAGEIDX(ppa);
@@ -256,17 +256,17 @@ bool base_is_valid_page (struct blockmanager* bm, uint32_t ppa){
 	return p->base_block[bn].bitset[bt]&(1<<of);
 }
 
-bool base_is_invalid_page (struct blockmanager* bm, uint32_t ppa){
+bool base_is_invalid_page (struct blockmanager* bm, uint64_t ppa){
 	return !base_is_valid_page(bm,ppa);
 }
 
-void base_set_oob(struct blockmanager* bm, char *data,int len, uint32_t ppa){
+void base_set_oob(struct blockmanager* bm, char *data,int len, uint64_t ppa){
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	__block *b=&p->base_block[GETBLOCKIDX(checker,ppa)];
 	memcpy(b->oob_list[GETPAGEIDX(ppa)].d,data,len);
 }
 
-char *base_get_oob(struct blockmanager*bm,  uint32_t ppa){
+char *base_get_oob(struct blockmanager*bm,  uint64_t ppa){
 	bbm_pri *p=(bbm_pri*)bm->private_data;
 	uint32_t bidx=GETBLOCKIDX(checker,ppa);
 	__block *b=&p->base_block[bidx];
