@@ -3,6 +3,7 @@
 #include <linux/ktime.h>
 #include <linux/sched/clock.h>
 #include <linux/sort.h>
+#include <linux/xarray.h>
 
 #include "nvmev.h"
 #include "demand_ftl.h"
@@ -211,6 +212,25 @@ static void init_write_flow_control(struct conv_ftl *conv_ftl)
 
 	wfc->write_credits = spp->pgs_per_line * GRAIN_PER_PAGE;
 	wfc->credits_to_refill = spp->pgs_per_line * GRAIN_PER_PAGE;
+}
+
+static void alloc_gc_mem(struct conv_ftl *conv_ftl) {
+    struct gc_data *gcd = &conv_ftl->gcd;
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+    gcd->inv_mappings = 
+    (uint64_t**) kzalloc(spp->inv_ppl * sizeof(uint64_t*), GFP_KERNEL);
+    gcd->idxs = 
+    (uint64_t*) kzalloc(spp->inv_ppl * sizeof(uint64_t), GFP_KERNEL);
+
+    NVMEV_ASSERT(gcd->inv_mappings);
+    NVMEV_ASSERT(gcd->idxs);
+
+    for(int i = 0; i < spp->inv_ppl; i++) {
+        gcd->inv_mappings[i] = 
+        (uint64_t*) kzalloc(INV_ENTRY_SZ * GRAIN_PER_PAGE, GFP_KERNEL);
+        NVMEV_ASSERT(gcd->inv_mappings[i]);
+    }
 }
 
 static inline void check_addr(int a, int max)
@@ -439,8 +459,8 @@ static void conv_remove_ftl(struct conv_ftl *conv_ftl)
 static void conv_init_params(struct convparams *cpp)
 {
 	cpp->op_area_pcent = OP_AREA_PERCENT;
-	cpp->gc_thres_lines = 3; /* Need only two lines.(host write, gc)*/
-	cpp->gc_thres_lines_high = 3; /* Need only two lines.(host write, gc)*/
+	cpp->gc_thres_lines = 2; /* Need only two lines.(host write, gc)*/
+	cpp->gc_thres_lines_high = 2; /* Need only two lines.(host write, gc)*/
 	cpp->enable_gc_delay = 1;
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
@@ -448,6 +468,11 @@ static void conv_init_params(struct convparams *cpp)
 extern struct algorithm __demand;
 extern struct lower_info virt_info;
 extern struct blockmanager pt_bm;
+
+char **inv_mapping_bufs;
+uint64_t *inv_mapping_offs;
+uint64_t **inv_mapping_ppas;
+uint64_t *inv_mapping_cnts;
 
 void demand_init(uint64_t size, struct ssd* ssd) 
 {
@@ -472,9 +497,6 @@ void demand_init(uint64_t size, struct ssd* ssd)
     spp->tt_map_blks = tt_grains / grains_per_mapblk;
     spp->tt_data_blks = spp->tt_blks - spp->tt_map_blks;
 
-    printk("grains_per_mapblk %llu tt_grains %llu tt_map %lu tt_data %lu\n", 
-            grains_per_mapblk, tt_grains, spp->tt_map_blks, spp->tt_data_blks);
-
     grain_bitmap = (bool*)vmalloc(tt_grains * sizeof(bool));
 
     /*
@@ -483,33 +505,55 @@ void demand_init(uint64_t size, struct ssd* ssd)
 
     oob = (uint64_t**)vmalloc((spp->tt_pgs * sizeof(uint64_t*)));
 
-    printk("Initial alloc done.\n");
     for(int i = 0; i < spp->tt_pgs; i++) {
-        oob[i] = (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
+        oob[i] = 
+        (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
         for(int j = 0; j < GRAIN_PER_PAGE; j++) {
             oob[i][j] = 2;
         }
     }
+
+    uint64_t inv_per_line = (spp->flashpgs_per_line * FLASH_PAGE_SIZE) / GRAINED_UNIT;
+    uint64_t inv_per_pg = INV_PAGE_SZ / (sizeof(uint64_t) * 2);
+    uint64_t inv_ppl = spp->inv_ppl = inv_per_line / inv_per_pg;
+
+    NVMEV_DEBUG("inv_per_line %llu inv_per_pg %llu inv_ppl %llu\n", 
+                 inv_per_line, inv_per_pg, inv_ppl);
     
+    inv_mapping_bufs = 
+    (char**) kzalloc(spp->tt_lines * sizeof(char*), GFP_KERNEL);
+    inv_mapping_offs = 
+    (uint64_t*) kzalloc(spp->tt_lines * sizeof(uint64_t), GFP_KERNEL);
+    inv_mapping_ppas = 
+    (uint64_t**) kzalloc(spp->tt_lines * sizeof(uint64_t*), GFP_KERNEL);
+    inv_mapping_cnts = 
+    (uint64_t*) kzalloc(spp->tt_lines * sizeof(uint64_t), GFP_KERNEL);
+
+    for(int i = 0; i < spp->tt_lines; i++) {
+        inv_mapping_bufs[i] =
+        (char*) kzalloc(INV_PAGE_SZ, GFP_KERNEL);
+        inv_mapping_ppas[i] = 
+        (uint64_t*) vmalloc(inv_ppl * sizeof(uint64_t));
+
+        inv_mapping_offs[i] = 0;
+        inv_mapping_cnts[i] = 0;
+
+        NVMEV_ASSERT(inv_mapping_bufs[i]);
+        NVMEV_ASSERT(inv_mapping_ppas[i]);
+    }
+
+    printk("grains_per_mapblk %llu tt_grains %llu tt_map %lu tt_data %lu "
+           "invalid_per_line %llu inv_ppl %llu\n", 
+            grains_per_mapblk, tt_grains, spp->tt_map_blks, spp->tt_data_blks,
+            inv_per_line, inv_ppl);
+
     int temp[PARTNUM];
     temp[MAP_S] = spp->tt_map_blks;
     temp[DATA_S] = spp->tt_data_blks;
     pt_bm.pt_create(&pt_bm, PARTNUM, temp, &virt_info);
 
-    //printk("Before demand create.\n");
     demand_create(&virt_info, &pt_bm, &__demand, ssd, size);
     print_demand_stat(&d_stat);
-
-    printk("NOB %u\n", virt_info.NOB);
-    printk("NOP %u\n", virt_info.NOP);
-    printk("SOB %u\n", virt_info.SOB);
-    printk("SOP %u\n", virt_info.SOP);
-    printk("PPB %u\n", virt_info.PPB);
-    printk("PPS %u\n", virt_info.PPS);
-    printk("TS %llu\n", virt_info.TS);
-    printk("DEV_SIZE %llu\n", virt_info.DEV_SIZE);
-    printk("all_pages_in_dev %llu\n", virt_info.all_pages_in_dev);
-    printk("DRAM SIZE %lu\n", spp->dram_size);
 }
 
 uint64_t dsize = 0;
@@ -549,6 +593,9 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 	}
 
     demand_init(dsize, conv_ftls[0].ssd);
+
+    /* for storing invalid mappings during GC */
+    alloc_gc_mem(&conv_ftls[0]);
 
 	ns->id = id;
 	ns->csi = NVME_CSI_NVM;
@@ -628,7 +675,7 @@ static inline bool mapped_ppa(struct ppa *ppa)
 	return !(ppa->ppa == UNMAPPED_PPA);
 }
 
-static inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa)
+inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	return &(conv_ftl->lm.lines[ppa->g.blk]);
 }
@@ -881,7 +928,7 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 		/* reset page status */
 		pg = &blk->pg[i];
 		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
-        NVMEV_DEBUG("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa) + i);
+        //NVMEV_DEBUG("Marking page %llu free\n", ppa2pgidx(conv_ftl, ppa) + i);
 		pg->status = PG_FREE;
 	}
 
@@ -1021,6 +1068,107 @@ bool oob_empty(uint64_t pgidx) {
     return true;
 }
 
+void __get_inv_mappings(struct conv_ftl *conv_ftl, int line) {
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+    struct gc_data *gcd = &conv_ftl->gcd;
+
+    NVMEV_DEBUG("There are %lld inv mapping pages on disk for this line.\n",
+                inv_mapping_cnts[line]);
+
+    char* buf = (char*) kzalloc(INV_PAGE_SZ, GFP_KERNEL);
+    NVMEV_ASSERT(buf);
+
+    for(int i = 0; i < inv_mapping_cnts[line]; i++) {
+        uint64_t m_ppa = inv_mapping_ppas[line][i];
+        //struct ppa p = ppa_to_struct(spp, m_ppa);
+
+        //struct nand_cmd gcr = {
+        //    .type = GC_IO,
+        //    .cmd = NAND_READ,
+        //    .stime = 0,
+        //    .xfer_size = FLASH_PAGE_SIZE,
+        //    .interleave_pci_dma = false,
+        //    .ppa = &p,
+        //};
+
+        //nsecs_completed = 
+        //__demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
+
+        struct value_set value;
+        value.value = buf;
+        value.ssd = conv_ftl->ssd;
+        value.length = INV_PAGE_SZ;
+
+        /*
+         * TODO return time here.
+         */
+
+        NVMEV_DEBUG("Reading mapping page from PPA %llu\n", m_ppa);
+        __demand.li->read(m_ppa, INV_PAGE_SZ, &value, false, NULL);
+
+        //ssd_advance_nand(conv_ftl->ssd, &gcr);
+
+        for(int j = 0; j < INV_PAGE_SZ / (uint32_t) INV_ENTRY_SZ; j++) {
+            uint64_t lpa, ppa;
+            memcpy(&lpa, buf + (j * INV_ENTRY_SZ), sizeof(uint64_t));
+            memcpy(&ppa, buf + (j * INV_ENTRY_SZ) + sizeof(uint64_t), sizeof(uint64_t));
+
+            NVMEV_DEBUG("%s 1 Inserting inv LPA -> PPA mapping %llu %llu (%u %u %d)\n", 
+                        __func__, lpa, ppa, (uint32_t) lpa, (uint32_t) ppa, j);
+            BUG_ON(lpa > 1000000);
+
+            uint64_t idx_in_line = (ppa / spp->inv_ppl) % spp->inv_ppl;
+            gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = lpa;
+            gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = ppa;
+        }
+    }
+
+    NVMEV_DEBUG("Copying %lld (%lld %lu) inv mapping pairs from mem.\n",
+                inv_mapping_offs[line] / INV_ENTRY_SZ, 
+                inv_mapping_offs[line], INV_ENTRY_SZ);
+
+    for(int j = 0; j < inv_mapping_offs[line] / (uint32_t) INV_ENTRY_SZ; j++) {
+        uint64_t lpa, ppa;
+        memcpy(&lpa, inv_mapping_bufs[line] + (j * INV_ENTRY_SZ), sizeof(uint64_t));
+        memcpy(&ppa, inv_mapping_bufs[line] + (j * INV_ENTRY_SZ) + sizeof(uint64_t), sizeof(uint64_t));
+
+        NVMEV_DEBUG("%s 2 Inserting inv LPA -> PPA mapping %llu %llu (%d)\n", 
+                __func__, lpa, ppa, j);
+        BUG_ON(lpa == 0);
+
+        uint64_t idx_in_line = (ppa / spp->inv_ppl) % spp->inv_ppl;
+
+        //NVMEV_DEBUG("%s idx in the line was %llu idx llu\n", 
+        //        __func__, idx_in_line);//, gcd->idxs[idx_in_line]);
+        gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = lpa;
+        gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = ppa;
+    }
+
+    kfree(buf);
+}
+
+bool __valid_mapping(struct conv_ftl *conv_ftl, uint64_t lpa, uint64_t ppa) {
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+    struct gc_data *gcd = &conv_ftl->gcd;
+
+    uint64_t idx_in_line = (ppa / spp->inv_ppl) % spp->inv_ppl;
+    for(int i = 0; i < gcd->idxs[idx_in_line]; i += 2) {
+        uint64_t inv_lpa = gcd->inv_mappings[idx_in_line][i];
+        uint64_t inv_ppa = gcd->inv_mappings[idx_in_line][i + 1];
+
+        if(inv_lpa == lpa && inv_ppa == ppa) {
+            NVMEV_DEBUG("Found an invalid match for %llu %llu. It's invalid.\n", 
+                        lpa, ppa);
+            return false;
+        }
+    }
+
+    NVMEV_DEBUG("Couldn't find an invalid match for %llu %llu. It's valid.\n", 
+                lpa, ppa);
+
+    return true;
+}
+
 /* here ppa identifies the block we want to clean */
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
@@ -1030,15 +1178,15 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 	int page_cnt = 0, cnt = 0, i = 0, len = 0;
 	uint64_t completed_time = 0, pgidx = 0;
 	struct ppa ppa_copy = *ppa;
+    struct line* l = get_line(conv_ftl, ppa); 
 
     struct lpa_len_ppa *lpa_lens;
     uint64_t tt_rewrite = 0;
 
+    uint64_t lpa_len_idx = 0;
     lpa_lens = (struct lpa_len_ppa*) kzalloc(sizeof(struct lpa_len_ppa) * 
                                              GRAIN_PER_PAGE * 
                                              spp->pgs_per_blk, GFP_KERNEL);
-    uint64_t lpa_len_idx = 0;
-
     NVMEV_ASSERT(lpa_lens);
 
 	for (i = 0; i < spp->pgs_per_flashpg; i++) {
@@ -1050,14 +1198,13 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         }
 
         pgidx = ppa2pgidx(conv_ftl, &ppa_copy);
-        NVMEV_DEBUG("Attempting to clean pgidx %llu (%u)\n", pgidx, ppa_copy.g.pg);
+        //NVMEV_DEBUG("Cleaning page %llu\n", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 
-            if(grain_valid(grain)) {
-                NVMEV_DEBUG("Page %llu grain %d is valid.\n", pgidx, i);
-                NVMEV_DEBUG("The LPA is %llu.\n", oob[pgidx][i]);
-                //valid_lpas[valid_lpa_cnt++] = oob[pgidx][i];
+            if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
+               __valid_mapping(conv_ftl, oob[pgidx][i], pgidx)) {
+                BUG_ON(true);
                 
                 len = 1;
                 while(i + len < GRAIN_PER_PAGE && oob[pgidx][i + len] == 0) {
@@ -1216,6 +1363,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
             conv_ftl->lm.free_line_cnt);
 
 	conv_ftl->wfc.credits_to_refill = victim_line->igc;
+    __get_inv_mappings(conv_ftl, victim_line->id);
 
 	/* copy back valid data */
 	for (flashpg = 0; flashpg < spp->flashpgs_per_blk; flashpg++) {
@@ -1617,6 +1765,63 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	return true;
 }
 
+/*
+ * A batch buffer be structured as follows :
+ * (uint8_t) key length (N) key bytes (uint32_t) value length (N) value <- KV pair 1
+ * (uint8_t) key length (N) key bytes (uint32_t) value length (N) value <- KV pair 2
+ *
+ * For example :
+ *
+ * char* key = "key1"
+ * char* value = "..."
+ *
+ * uint8_t key_length = strlen(key); 
+ * uint32_t vlen = 1024;
+ * uint32_t offset = 0;
+ *
+ * memcpy(buffer + offset, &key_length, sizeof(key_length));
+ * memcpy(buffer + offset + sizeof(key_length), key, key_length);
+ * memcpy(buffer + offset + sizeof(key_length) + key_length, &vlen, sizeof(vlen));
+ * memcpy(buffer + offset + sizeof(key_length) + key_length + vlen, value, vlen);
+ * 
+ * offset += sizeof(key_length) + key_length + sizeof(vlen) + vlen;
+ *
+ * key = "key2"
+ * value = "..."
+ *
+ * key_length = strlen(key);
+ * vlen = 1024;
+ *
+ * memcpy(buffer + offset, &key_length, sizeof(key_length));
+ * memcpy(buffer + offset + sizeof(key_length), key, key_length);
+ * memcpy(buffer + offset + sizeof(key_length) + key_length, &vlen, sizeof(vlen));
+ * memcpy(buffer + offset + sizeof(key_length) + key_length + vlen, value, vlen);
+ *
+ * And so on.
+ *
+ * The value length sent to the KVSSD is the value length of the entire buffer.
+ */
+
+static bool conv_batch(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+    struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
+
+    uint8_t klen = 0;
+    uint32_t offset = 0, vlen = 0;
+    uint32_t remaining = cmd_value_length(*cmd);
+
+    char* value = (char*) kzalloc(remaining, GFP_KERNEL);
+    __quick_copy(cmd, value, remaining);
+    
+    while(remaining > 0) {
+        klen = *(uint8_t*) value + offset;
+        offset += sizeof(klen);
+
+    }
+
+    return true;
+}
+
 static void conv_flush(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
 	uint64_t start, latest;
@@ -1646,6 +1851,8 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
 	struct nvme_command *cmd = req->cmd;
 
     switch (cmd->common.opcode) {
+        case nvme_cmd_kv_batch:
+            //ret->nsecs_target = conv_batch(ns, req, ret);
         case nvme_cmd_kv_store:
             ret->nsecs_target = conv_write(ns, req, ret);
             //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),

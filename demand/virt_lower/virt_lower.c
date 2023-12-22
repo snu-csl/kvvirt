@@ -99,9 +99,7 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
 
     BUG_ON(async);
     BUG_ON(!value->ssd);
-    BUG_ON(!req);
     BUG_ON(!value);
-    BUG_ON(req->sqid == U64_MAX);
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
@@ -123,7 +121,9 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
     //                               value->value, PPA, size, 
     //                               (void*) req->end_req, req, false);
 
-    req->end_req(req);
+    if(req) {
+        req->end_req(req);
+    }
 
 	return nsecs_completed;
 }
@@ -143,15 +143,14 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
 
     BUG_ON(async);
     BUG_ON(!value->ssd);
-    BUG_ON(!req);
     BUG_ON(!value);
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
-    NVMEV_DEBUG("Reading PPA %llu (%llu) size %u sqid %u %s in virt_dev. req ppa %llu\n", 
+    NVMEV_DEBUG("Reading PPA %llu (%llu) size %u sqid %u %s in virt_dev\n", 
             PPA, off, size, nvmev_vdev->sqes[1]->qid, 
-            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY", req->ppa);
-    print_kvs(off);
+            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
+    //print_kvs(off);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -159,22 +158,13 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
 
     //printk("Advanced nand PPA %u\n", PPA);
     if(!async) {
-        //BUG_ON(!req->parents);
-        //BUG_ON(!req->parents->value);
-        //BUG_ON(!req->parents->value->value);
-
         BUG_ON(!value);
         BUG_ON(!value->value);
 
-        //printk("Value %p\n", value);
-        //printk("Value->value %p\n", value->value);
-
         memcpy(value->value, nvmev_vdev->ns[0].mapped + off, size);
-        //printk("Got %s (%s)\n", 
-        //        (char*) value->value, 
-        //        (char*) (nvmev_vdev->ns[0].mapped + (PPA * PAGESIZE)));
-        //printk("Ending a synchronous read req %p ppa %u\n", req, PPA);
-        req->end_req(req);
+        if(req) {
+            req->end_req(req);
+        }
     } else {
         //printk("Scheduling with req %p\n", req);
         schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
@@ -188,8 +178,10 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
         return U64_MAX - 1;
     } else {
         NVMEV_DEBUG("Don't need a retry, returning nsecs_completed.\n");
-        kfree(req->params);
-        kfree(req);
+        if(req) {
+            kfree(req->params);
+            kfree(req);
+        }
         return nsecs_completed;
     }
 }

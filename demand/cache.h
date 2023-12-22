@@ -33,7 +33,12 @@ struct cache_member {
 	int nr_cached_tpages;
 	int nr_cached_tentries;
 
-	/* add attributes here */
+    /*
+     * Grains and lengths in mapping pages.
+     */
+
+    bool *grains;
+    uint16_t *vlens;
 };
 
 struct cache_stat {

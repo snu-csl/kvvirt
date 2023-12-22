@@ -67,6 +67,8 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 {
 	uint64_t blk_size, total_size;
 
+    //capacity = 20LU << 20;
+
 	spp->secsz = 512;
 	spp->secs_per_pg = 8;
 	spp->pgsz = spp->secsz * spp->secs_per_pg;
@@ -152,6 +154,7 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	/* line is special, put it at the end */
 	spp->blks_per_line = spp->tt_luns; /* TODO: to fix under multiplanes */
 	spp->pgs_per_line = spp->blks_per_line * spp->pgs_per_blk;
+    spp->flashpgs_per_line = spp->pgs_per_line / spp->pgs_per_flashpg;
 	spp->secs_per_line = spp->pgs_per_line * spp->secs_per_pg;
 	spp->tt_lines = spp->blks_per_lun;
 	/* TODO: to fix under multiplanes */ // lun size is super-block(line) size

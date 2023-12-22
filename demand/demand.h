@@ -41,6 +41,7 @@ inline void consume_write_credit(struct conv_ftl *conv_ftl, uint32_t len);
 inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl);
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
 int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains);
+inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa);
 
 extern struct demand_stat d_stat;
 
@@ -53,6 +54,7 @@ struct pt_struct {
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
 #endif
+    bool *grains;
 };
 
 // Cached mapping table

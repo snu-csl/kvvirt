@@ -92,6 +92,11 @@ struct write_flow_control {
 	uint32_t credits_to_refill;
 };
 
+struct gc_data {
+    uint64_t** inv_mappings; 
+    uint64_t* idxs;
+};
+
 struct conv_ftl {
 	struct ssd *ssd;
 
@@ -103,6 +108,7 @@ struct conv_ftl {
 	struct write_pointer gc_wp;
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
+    struct gc_data gcd;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
@@ -118,5 +124,12 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 
 extern bool *grain_bitmap;
 extern uint64_t **oob;
+
+#define INV_PAGE_SZ FLASH_PAGE_SIZE
+#define INV_ENTRY_SZ (sizeof(uint64_t) + sizeof(uint64_t))
+extern char** inv_mapping_bufs;
+extern uint64_t* inv_mapping_offs;
+extern uint64_t **inv_mapping_ppas;
+extern uint64_t *inv_mapping_cnts;
 
 #endif

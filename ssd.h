@@ -203,6 +203,7 @@ struct ssdparams {
 
 	unsigned long secs_per_line;
 	unsigned long pgs_per_line;
+    unsigned long flashpgs_per_line;
 	unsigned long blks_per_line;
 	unsigned long tt_lines;
 
@@ -222,6 +223,8 @@ struct ssdparams {
     unsigned long dram_size; /* DRAM size for caching KV/KV mapping entries. */
     unsigned long tt_map_blks;
     unsigned long tt_data_blks;
+
+    unsigned long inv_ppl;
 };
 
 struct ssd {

@@ -23,7 +23,8 @@ bool FAIL_MODE = false;
 void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
-    NVMEV_DEBUG("Trying to set OOB for PPA %llu offset %llu\n", ppa, offset);
+    NVMEV_DEBUG("Trying to set OOB for PPA %llu offset %llu LPA %llu\n", 
+                ppa, offset, lpa);
     oob[ppa][offset] = lpa;
 
     for(int i = 1; i < len; i++) {
@@ -208,8 +209,7 @@ data_read:
 	/* 3. read actual data */
     NVMEV_DEBUG("Got PPA %lluu for LPA %llu %llu %llu\n", pte.ppa, lpa, nsecs_latest, nsecs_completed);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
-    nsecs_latest = 
-    nsecs_latest == U64_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
+    nsecs_latest = nsecs_latest == U64_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
 
     if(rc == U64_MAX) {
         req->ppa = U64_MAX;
@@ -382,6 +382,55 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
+static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
+    struct ssdparams spp = d_member.ssd->sp;
+    struct ppa p = ppa_to_struct(&spp, ppa);
+    struct line* l = get_line(ftl, &p); 
+    int line = l->id;
+    uint64_t nsecs_completed = 0;
+
+    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
+                 lpa, ppa, line, inv_mapping_offs[line]);
+ 
+    if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
+        struct ppa n_p = get_new_page(ftl, USER_IO);
+        NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        mark_page_valid(ftl, &n_p);
+
+        for(int i = 1; i < spp.pgs_per_flashpg; i++) {
+            struct ppa n_p_e = get_new_page(ftl, USER_IO);
+            mark_page_valid(ftl, &n_p_e);
+            NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        }
+
+		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+                line, inv_mapping_offs[line], w_ppa);
+
+        struct value_set value;
+        value.value = inv_mapping_bufs[line];
+        value.ssd = d_member.ssd;
+        value.length = INV_PAGE_SZ;
+
+        nsecs_completed = 
+        __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
+
+        inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
+        
+        memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
+        inv_mapping_offs[line] = 0;
+
+        BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
+    }
+
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
+    inv_mapping_offs[line] += sizeof(lpa);
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &ppa, sizeof(ppa));
+    inv_mapping_offs[line] += sizeof(ppa);
+
+    return nsecs_completed;
+}
+
 static void _do_wb_mapping_update(skiplist *wb) {
 	int rc = 0;
 	blockmanager *bm = __demand.bm;
@@ -415,6 +464,7 @@ wb_retry:
 
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
+        
         NVMEV_DEBUG("wb_entry->ppa is %llu length %u\n", wb_entry->ppa, wb_entry->len);
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
@@ -506,7 +556,8 @@ wb_update:
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite.\n", __func__, lpa, pte.ppa);
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
-            
+            _record_inv_mapping(lpa, G_IDX(pte.ppa));
+
             /*
              * TODO
              * Changing value size.
@@ -580,9 +631,9 @@ uint64_t _do_wb_flush(skiplist *wb) {
 
 static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
-    NVMEV_DEBUG("%s K1 %s KLEN %u K2 %s\n", __func__,
-            (char*) wb_entry->key.key, *(uint8_t*) (wb_entry->value->value), 
-            (char*) (wb_entry->value->value + 1));
+    //NVMEV_DEBUG("%s K1 %s KLEN %u K2 %s\n", __func__,
+    //        (char*) wb_entry->key.key, *(uint8_t*) (wb_entry->value->value), 
+    //        (char*) (wb_entry->value->value + 1));
 #ifdef HASH_KVSSD
 	wb_entry->hash_params = (void *)req->hash_params;
 #endif

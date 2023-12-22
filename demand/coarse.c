@@ -70,7 +70,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 	_env->nr_valid_tentries *= GRAIN_PER_PAGE;
 #endif
 
-    printk("%d %d %d\n", d_env.nr_pages, EPP, _env->nr_valid_tentries);
+    printk("%d %ld %d\n", d_env.nr_pages, EPP, _env->nr_valid_tentries);
 	print_cache_env(_env);
 }
 
@@ -91,22 +91,24 @@ static void cg_member_init(struct cache_member *const _member) {
 		q_init(&cmt[i]->wait_q, d_env.wb_flush_size);
 
 		cmt[i]->dirty_cnt = 0;
-	}
-	_member->cmt = cmt;
+    }
+    _member->cmt = cmt;
 
-	_member->mem_table = 
-    (struct pt_struct **)kzalloc(cenv->nr_valid_tpages * sizeof(struct pt_struct *), GFP_KERNEL);
-	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
-		_member->mem_table[i] = (struct pt_struct *)kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-		for (int j = 0; j < EPP; j++) {
-			_member->mem_table[i][j].ppa = U64_MAX;
+    _member->mem_table = 
+        (struct pt_struct **)kzalloc(cenv->nr_valid_tpages * sizeof(struct pt_struct *), GFP_KERNEL);
+    for (int i = 0; i < cenv->nr_valid_tpages; i++) {
+        _member->mem_table[i] = (struct pt_struct *)kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
+        for (int j = 0; j < EPP; j++) {
+            _member->mem_table[i][j].ppa = U64_MAX;
 #ifdef STORE_KEY_FP
-			_member->mem_table[i][j].key_fp = 0;
+            _member->mem_table[i][j].key_fp = 0;
 #endif
-		}
-	}
+            //_member->mem_table[i][j].grains = 
+            //(bool*) kzalloc(BITS_PER_PAGE * sizeof(bool), GFP_KERNEL);
+        }
+    }
 
-	lru_init(&_member->lru);
+    lru_init(&_member->lru);
 
 	_member->nr_cached_tpages = 0;
 }
