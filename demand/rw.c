@@ -465,7 +465,6 @@ wb_retry:
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
         
-        NVMEV_DEBUG("wb_entry->ppa is %llu length %u\n", wb_entry->ppa, wb_entry->len);
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif

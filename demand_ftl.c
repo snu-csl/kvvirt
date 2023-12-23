@@ -228,7 +228,7 @@ static void alloc_gc_mem(struct conv_ftl *conv_ftl) {
 
     for(int i = 0; i < spp->inv_ppl; i++) {
         gcd->inv_mappings[i] = 
-        (uint64_t*) kzalloc(INV_ENTRY_SZ * GRAIN_PER_PAGE, GFP_KERNEL);
+        (uint64_t*) kzalloc((INV_PAGE_SZ / INV_ENTRY_SZ) * INV_ENTRY_SZ, GFP_KERNEL);
         NVMEV_ASSERT(gcd->inv_mappings[i]);
     }
 }
@@ -852,7 +852,6 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
 	line = get_line(conv_ftl, &ppa);
 	//NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
     NVMEV_ASSERT(line->igc >= 0 && line->igc < spp->pgs_per_line * GRAIN_PER_PAGE);
-    NVMEV_DEBUG("VPC for line %d is %d IPC %d\n", line->id, line->vpc, line->ipc);
 	if (line->vgc == spp->pgs_per_line * GRAIN_PER_PAGE) {
 		NVMEV_ASSERT(line->igc == 0);
         was_full_line = true;
@@ -860,13 +859,10 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
     NVMEV_ASSERT(line->igc < spp->pgs_per_line * GRAIN_PER_PAGE);
     line->igc += len;
 
-    NVMEV_DEBUG("IGC for line %d is %d\n", line->id, line->igc);
-
 	/* Adjust the position of the victime line in the pq under over-writes */
 	if (line->pos) {
 		/* Note that line->vgc will be updated by this call */
 		pqueue_change_priority(lm->victim_line_pq, line->vgc - len, line);
-        NVMEV_DEBUG("Changing priority of line %d vgc %d\n", line->id, line->vgc);
 	} else {
 		line->vgc -= len;
 	}
@@ -880,7 +876,6 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
         lm->victim_line_cnt++;
     }
 
-    NVMEV_DEBUG("VGC for line %d is %d\n", line->id, line->vgc);
 	//NVMEV_ASSERT(line->vpc > 0 && line->vpc <= spp->pgs_per_line);
     NVMEV_ASSERT(line->vgc >= 0 && line->vgc <= spp->pgs_per_line * GRAIN_PER_PAGE);
 
@@ -1072,7 +1067,7 @@ void __get_inv_mappings(struct conv_ftl *conv_ftl, int line) {
     struct ssdparams *spp = &conv_ftl->ssd->sp;
     struct gc_data *gcd = &conv_ftl->gcd;
 
-    NVMEV_DEBUG("There are %lld inv mapping pages on disk for this line.\n",
+    NVMEV_ERROR("There are %lld inv mapping pages on disk for this line.\n",
                 inv_mapping_cnts[line]);
 
     char* buf = (char*) kzalloc(INV_PAGE_SZ, GFP_KERNEL);
@@ -1103,7 +1098,7 @@ void __get_inv_mappings(struct conv_ftl *conv_ftl, int line) {
          * TODO return time here.
          */
 
-        NVMEV_DEBUG("Reading mapping page from PPA %llu\n", m_ppa);
+        NVMEV_ERROR("Reading mapping page from PPA %llu\n", m_ppa);
         __demand.li->read(m_ppa, INV_PAGE_SZ, &value, false, NULL);
 
         //ssd_advance_nand(conv_ftl->ssd, &gcr);
@@ -1113,17 +1108,24 @@ void __get_inv_mappings(struct conv_ftl *conv_ftl, int line) {
             memcpy(&lpa, buf + (j * INV_ENTRY_SZ), sizeof(uint64_t));
             memcpy(&ppa, buf + (j * INV_ENTRY_SZ) + sizeof(uint64_t), sizeof(uint64_t));
 
-            NVMEV_DEBUG("%s 1 Inserting inv LPA -> PPA mapping %llu %llu (%u %u %d)\n", 
-                        __func__, lpa, ppa, (uint32_t) lpa, (uint32_t) ppa, j);
+            //NVMEV_DEBUG("%s 1 Inserting inv LPA -> PPA mapping %llu %llu (%u %u %d)\n", 
+            //            __func__, lpa, ppa, (uint32_t) lpa, (uint32_t) ppa, j);
             BUG_ON(lpa > 1000000);
 
+
             uint64_t idx_in_line = (ppa / spp->inv_ppl) % spp->inv_ppl;
+            //NVMEV_ERROR("Trying %llu %llu %llu %llu\n", 
+            //        idx_in_line, gcd->idxs[idx_in_line], lpa, ppa);
             gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = lpa;
             gcd->inv_mappings[idx_in_line][gcd->idxs[idx_in_line]++] = ppa;
+
+            if(gcd->idxs[idx_in_line] >= INV_PAGE_SZ / INV_ENTRY_SZ) {
+                NVMEV_ERROR("WTF %llu\n", gcd->idxs[idx_in_line]);
+            }
         }
     }
 
-    NVMEV_DEBUG("Copying %lld (%lld %lu) inv mapping pairs from mem.\n",
+    NVMEV_ERROR("Copying %lld (%lld %lu) inv mapping pairs from mem.\n",
                 inv_mapping_offs[line] / INV_ENTRY_SZ, 
                 inv_mapping_offs[line], INV_ENTRY_SZ);
 
@@ -1132,8 +1134,8 @@ void __get_inv_mappings(struct conv_ftl *conv_ftl, int line) {
         memcpy(&lpa, inv_mapping_bufs[line] + (j * INV_ENTRY_SZ), sizeof(uint64_t));
         memcpy(&ppa, inv_mapping_bufs[line] + (j * INV_ENTRY_SZ) + sizeof(uint64_t), sizeof(uint64_t));
 
-        NVMEV_DEBUG("%s 2 Inserting inv LPA -> PPA mapping %llu %llu (%d)\n", 
-                __func__, lpa, ppa, j);
+        //NVMEV_DEBUG("%s 2 Inserting inv LPA -> PPA mapping %llu %llu (%d)\n", 
+        //        __func__, lpa, ppa, j);
         BUG_ON(lpa == 0);
 
         uint64_t idx_in_line = (ppa / spp->inv_ppl) % spp->inv_ppl;
@@ -1204,7 +1206,6 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
             if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
                __valid_mapping(conv_ftl, oob[pgidx][i], pgidx)) {
-                BUG_ON(true);
                 
                 len = 1;
                 while(i + len < GRAIN_PER_PAGE && oob[pgidx][i + len] == 0) {
@@ -1447,7 +1448,6 @@ static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_
 	size_t nsid = 0;  // 0-based
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
-    NVMEV_DEBUG("In quick copy for a %s length %llu!\n", read ? "read" : "write", buf_len);
 
     nsid = 0;
 
@@ -1528,14 +1528,11 @@ bool end_w(struct request *req)
 }
 
 uint32_t __get_vlen(uint64_t grain) {
-    NVMEV_ERROR("vlen get for grain %llu offset %lld\n", grain, G_OFFSET(grain));
-
     uint32_t ret = 1, i = G_OFFSET(grain);
     while(i + ret < GRAIN_PER_PAGE && oob[G_IDX(grain)][i + ret] == 0) {
         ret++;
     }
 
-    NVMEV_ERROR("Returning %u\n", ret * GRAINED_UNIT);
     return ret * GRAINED_UNIT;
 }
 

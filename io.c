@@ -93,12 +93,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     }
 
     if(offset == U64_MAX - 1) {
-        NVMEV_DEBUG("This request was satisfied from the write buffer. "
-                "Skipping copy. Vlen %lu\n", length);
         return length;
     } else if (offset == U64_MAX) {
-        NVMEV_DEBUG("This KV pair wasn't found! "
-                "Skipping copy.\n");
         return 0;
     }
 

@@ -75,8 +75,6 @@ void copy_key_from_value(KEYT *dst, value_set *src, int offset) {
 	dst->len = *(uint8_t*) ptr;
 	dst->key = (char *)kzalloc(dst->len, GFP_KERNEL);
 
-    NVMEV_DEBUG("Got length %u for key %s\n", dst->len, (char*) ptr + sizeof(uint8_t));
-
 	memcpy(dst->key, ptr + sizeof(uint8_t), dst->len);
 }
 

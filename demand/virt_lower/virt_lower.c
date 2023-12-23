@@ -107,7 +107,6 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
                 PPA, off, size, value->ssd->sp.pgsz);
 
     memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
-    print_kvs(off);
 
     //NVMEV_DEBUG("2 Klen %u K %s vlen %u\n", klen,
     //            (char*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t)),
@@ -150,7 +149,6 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
     NVMEV_DEBUG("Reading PPA %llu (%llu) size %u sqid %u %s in virt_dev\n", 
             PPA, off, size, nvmev_vdev->sqes[1]->qid, 
             async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
-    //print_kvs(off);
 
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
@@ -173,11 +171,9 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
     }
 
     if(req && req->need_retry) {
-        NVMEV_DEBUG("Need a retry.\n");
         kfree(req);
         return U64_MAX - 1;
     } else {
-        NVMEV_DEBUG("Don't need a retry, returning nsecs_completed.\n");
         if(req) {
             kfree(req->params);
             kfree(req);
