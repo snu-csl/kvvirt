@@ -391,20 +391,40 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
 
     NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
                  lpa, ppa, line, inv_mapping_offs[line]);
+
+    BUG_ON(lpa > 1000000);
  
     if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
+
+        /*
+         * Anything bigger complicates implementation. Keep to pgsz for now.
+         */
+
+        NVMEV_ASSERT(INV_PAGE_SZ == spp.pgsz);
+
         struct ppa n_p = get_new_page(ftl, USER_IO);
         NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
         mark_page_valid(ftl, &n_p);
+        mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
+    
+        //while(n_p.g.pg >= spp.pgs_per_blk - (INV_PAGE_SZ / spp.pgsz)) {
+        //    mark_grain_invalid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        //    n_p = get_new_page(ftl, USER_IO);
+        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        //    mark_page_valid(ftl, &n_p);
+        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        //}
 
-        for(int i = 1; i < spp.pgs_per_flashpg; i++) {
-            struct ppa n_p_e = get_new_page(ftl, USER_IO);
-            mark_page_valid(ftl, &n_p_e);
-            NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
-        }
+        //for(int i = 1; i < INV_PAGE_SZ / spp.pgsz; i++) {
+        //    struct ppa n_p_e = get_new_page(ftl, USER_IO);
+        //    mark_page_valid(ftl, &n_p_e);
+        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p_e), 0), GRAIN_PER_PAGE);
+        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        //}
 
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+        NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
                 line, inv_mapping_offs[line], w_ppa);
 
         struct value_set value;

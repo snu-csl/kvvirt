@@ -167,6 +167,11 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains) {
 	for (int i = 0; i < nr_valid_grains; i++) {
         lpa_t lpa = ppas[i].lpa;
 
+        if(lpa == U64_MAX) {
+            skip_update[i] = true;
+            continue;
+        }
+
 		if (d_cache->is_hit(lpa)) {
 			struct pt_struct pte = d_cache->get_pte(lpa);
 			pte.ppa = ppas[i].new_ppa;
