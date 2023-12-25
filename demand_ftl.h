@@ -3,6 +3,7 @@
 #ifndef _NVMEVIRT_CONV_FTL_H
 #define _NVMEVIRT_CONV_FTL_H
 
+#include <linux/hashtable.h> 
 #include <linux/types.h>
 #include <linux/spinlock.h>
 
@@ -95,6 +96,23 @@ struct write_flow_control {
 struct gc_data {
     uint64_t** inv_mappings; 
     uint64_t* idxs;
+    
+    /*
+     * When we copy grains of data during GC, parts of
+     * the page which we allocated for the copies
+     * can be unused at the end of the series
+     * of copies in clean_one_flashpg. We record
+     * the page we used during the previous call to
+     * clean_one_flashpg and various other information
+     * so that we can copy to that page in the next
+     * clean_one_flashpg call.
+     */
+
+    struct ppa gc_ppa;
+    uint64_t remain;
+    uint64_t pgidx;
+    uint32_t offset;
+    bool last;
 };
 
 struct conv_ftl {
@@ -124,6 +142,7 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 
 extern bool *grain_bitmap;
 extern uint64_t *pg_inv_cnt;
+extern uint64_t *pg_v_cnt;
 extern uint64_t **oob;
 
 #define INV_PAGE_SZ 4096
@@ -132,5 +151,12 @@ extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 extern uint64_t **inv_mapping_ppas;
 extern uint64_t *inv_mapping_cnts;
+
+extern DECLARE_HASHTABLE(mapping_ht, 20);
+struct ht_mapping {
+    uint64_t lpa;
+    uint64_t ppa;
+    struct hlist_node node;
+};
 
 #endif

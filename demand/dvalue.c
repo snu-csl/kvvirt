@@ -17,6 +17,7 @@ extern struct demand_stat d_stat;
 uint64_t **oob = NULL;
 bool* grain_bitmap = NULL;
 uint64_t* pg_inv_cnt = NULL;
+uint64_t* pg_v_cnt = NULL;
 
 int grain_create(void) {
 	grain_bitmap = (bool *)vmalloc(d_env.nr_grains * sizeof(bool));

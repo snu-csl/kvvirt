@@ -20,6 +20,25 @@ struct conv_ftl *ftl;
 
 bool FAIL_MODE = false;
 
+void __hash_remove(uint64_t lpa) {
+    return;
+    struct ht_mapping *cur = NULL;
+    bool found = false;
+
+    hash_for_each_possible(mapping_ht, cur, node, lpa) {
+        found = true;
+        cur = cur;
+        hash_del(&cur->node);
+    }
+
+    //if(cur) {
+    //    NVMEV_ERROR("Removing old LPA PPA mapping %llu %llu\n",
+    //            cur->lpa, cur->ppa);
+    //    hash_del(&cur->node);
+    //}
+    NVMEV_ASSERT(found);
+}
+
 void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
@@ -353,8 +372,8 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 			ordering_done++;
 		}
 
-        consume_write_credit(ftl, credits);
-        check_and_refill_write_credit(ftl);
+        //consume_write_credit(ftl, credits);
+        //check_and_refill_write_credit(ftl);
 
 		fl->size++;
 	}
@@ -382,7 +401,23 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
+static bool page_grains_invalid(uint64_t ppa) {
+    uint64_t page = ppa;
+    uint64_t offset = page * GRAIN_PER_PAGE;
+
+    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
+        if(grain_bitmap[offset + i] == 1) {
+            NVMEV_DEBUG("Grain %llu page %llu was valid\n",
+                    offset + i, page);
+            return false;
+        }
+    }
+
+    NVMEV_DEBUG("All grains invalid page %llu (%llu)\n", page, offset);
+    return true;
+}
+
+static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
     struct ssdparams spp = d_member.ssd->sp;
     struct ppa p = ppa_to_struct(&spp, ppa);
     struct line* l = get_line(ftl, &p); 
@@ -393,9 +428,9 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
                  lpa, ppa, line, inv_mapping_offs[line]);
 
     BUG_ON(lpa > 1000000);
+    BUG_ON(!credits);
  
     if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
-
         /*
          * Anything bigger complicates implementation. Keep to pgsz for now.
          */
@@ -404,6 +439,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
 
         struct ppa n_p = get_new_page(ftl, USER_IO);
         NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        NVMEV_ASSERT(page_grains_invalid(ppa2pgidx(ftl, &n_p)));
         mark_page_valid(ftl, &n_p);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
         oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
@@ -424,8 +460,8 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
         //}
 
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
-                line, inv_mapping_offs[line], w_ppa);
+        //NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+        //        line, inv_mapping_offs[line], w_ppa);
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];
@@ -441,6 +477,8 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
         inv_mapping_offs[line] = 0;
 
         BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
+
+        *credits += GRAIN_PER_PAGE;
     }
 
     memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
@@ -453,6 +491,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa) {
 
 static void _do_wb_mapping_update(skiplist *wb) {
 	int rc = 0;
+    uint64_t credits = 0;
 	blockmanager *bm = __demand.bm;
 
 	snode *wb_entry;
@@ -484,7 +523,7 @@ wb_retry:
 
 		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
-        
+
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif
@@ -574,8 +613,9 @@ wb_update:
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite.\n", __func__, lpa, pte.ppa);
+            __hash_remove(lpa);
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
-            _record_inv_mapping(lpa, G_IDX(pte.ppa));
+            _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
 
             /*
              * TODO
@@ -591,6 +631,11 @@ wb_direct_update:
 
 		updated++;
 		//inflight--;
+
+        //struct ht_mapping *m = (struct ht_mapping*) kzalloc(sizeof(*m), GFP_KERNEL); 
+        //m->lpa = lpa;
+        //m->ppa = new_pte.ppa;
+        //hash_add(mapping_ht, &m->node, lpa);
 
 		d_htable_insert(d_member.hash_table, new_pte.ppa, lpa);
 
@@ -611,9 +656,21 @@ wb_direct_update:
 	iter = skiplist_get_iterator(wb);
 	for (size_t i = 0; i < d_env.wb_flush_size; i++) {
 		snode *wb_entry = skiplist_get_next(iter);
+        credits += wb_entry->len;
 		if (wb_entry->hash_params) kfree(wb_entry->hash_params);
 		free_iparams(NULL, wb_entry);
 	}
+
+    /*
+     * CAUTION, only consume credits after both the OOBs and grains
+     * have been set for the writes you want to consume the credits for.
+     * Otherwise, GC will be incorrect because it will see pages
+     * with valid grains, but invalid OOBs, or vice versa.
+     */
+
+    consume_write_credit(ftl, credits);
+    check_and_refill_write_credit(ftl);
+
 	kfree(iter);
 }
 
