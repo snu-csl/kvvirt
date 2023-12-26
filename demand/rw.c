@@ -401,22 +401,6 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static bool page_grains_invalid(uint64_t ppa) {
-    uint64_t page = ppa;
-    uint64_t offset = page * GRAIN_PER_PAGE;
-
-    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        if(grain_bitmap[offset + i] == 1) {
-            NVMEV_DEBUG("Grain %llu page %llu was valid\n",
-                    offset + i, page);
-            return false;
-        }
-    }
-
-    NVMEV_DEBUG("All grains invalid page %llu (%llu)\n", page, offset);
-    return true;
-}
-
 static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
     struct ssdparams spp = d_member.ssd->sp;
     struct ppa p = ppa_to_struct(&spp, ppa);
@@ -427,7 +411,6 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
     NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
                  lpa, ppa, line, inv_mapping_offs[line]);
 
-    BUG_ON(lpa > 1000000);
     BUG_ON(!credits);
  
     if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
@@ -439,7 +422,6 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
 
         struct ppa n_p = get_new_page(ftl, USER_IO);
         NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
-        NVMEV_ASSERT(page_grains_invalid(ppa2pgidx(ftl, &n_p)));
         mark_page_valid(ftl, &n_p);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
         oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;

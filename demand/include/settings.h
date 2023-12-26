@@ -30,7 +30,7 @@
 #define P (1024L*T)
 #define MILI (1000000)
 
-#define PIECE 512
+#define PIECE 32
 #define MINVALUE PIECE
 #define MINKEYLENGTH 16
 #define DEFKEYLENGTH 32
