@@ -219,10 +219,12 @@ static void alloc_gc_mem(struct conv_ftl *conv_ftl) {
     struct gc_data *gcd = &conv_ftl->gcd;
     struct ssdparams *spp = &conv_ftl->ssd->sp;
 
+    NVMEV_ERROR("Trying to allocate %lu ptrs\n", spp->inv_ppl);
+
     gcd->inv_mappings = 
-    (uint64_t**) kzalloc(spp->inv_ppl * sizeof(uint64_t*), GFP_KERNEL);
+    (uint64_t**) vmalloc(spp->inv_ppl * sizeof(uint64_t*));
     gcd->idxs = 
-    (uint64_t*) kzalloc(spp->inv_ppl * sizeof(uint64_t), GFP_KERNEL);
+    (uint64_t*) vmalloc(spp->inv_ppl * sizeof(uint64_t));
 
     NVMEV_ASSERT(gcd->inv_mappings);
     NVMEV_ASSERT(gcd->idxs);
@@ -553,7 +555,7 @@ void demand_init(uint64_t size, struct ssd* ssd)
 
     uint64_t inv_per_line = (spp->pgs_per_line * spp->pgsz) / GRAINED_UNIT;
     uint64_t inv_per_pg = INV_PAGE_SZ / (sizeof(uint64_t) * 2);
-    uint64_t inv_ppl = inv_per_line / inv_per_pg;
+    uint64_t inv_ppl = spp->inv_ppl = inv_per_line / inv_per_pg;
 
     NVMEV_DEBUG("inv_per_line %llu inv_per_pg %llu inv_ppl %llu\n", 
                  inv_per_line, inv_per_pg, inv_ppl);
@@ -934,6 +936,14 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
     //grain_bitmap[grain] = 0;
 
     NVMEV_ASSERT(len > 0);
+    if(pg_inv_cnt[page] + (len * GRAINED_UNIT) > spp->pgsz) {
+        NVMEV_ERROR("inv_cnt was %llu page %llu (tried to add %u)\n", 
+                    pg_inv_cnt[page], page, len);
+        printk("Caller is %pS\n", __builtin_return_address(0));
+        printk("Caller is %pS\n", __builtin_return_address(1));
+        printk("Caller is %pS\n", __builtin_return_address(2));
+    }
+
     NVMEV_ASSERT(pg_inv_cnt[page] + (len * GRAINED_UNIT) <= spp->pgsz);
     pg_inv_cnt[page] += len * GRAINED_UNIT;
     //pg_v_cnt[page] -= len * GRAINED_UNIT;
@@ -1314,7 +1324,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             continue;
         }
 
-        //NVMEV_DEBUG("Cleaning page %llu\n", pgidx);
+        NVMEV_DEBUG("Cleaning page %llu\n", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 
@@ -1330,6 +1340,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 tt_rewrite += GRAIN_PER_PAGE * GRAINED_UNIT;
             } else if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
                __valid_mapping(conv_ftl, oob[pgidx][i], pgidx)) {
+                NVMEV_DEBUG("Got regular PPA %llu in GC\n", pgidx);
                 NVMEV_ASSERT(pg_inv_cnt[pgidx] <= spp->pgsz);
                 
                 len = 1;
@@ -1416,6 +1427,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), 
                     GRAIN_PER_PAGE - offset);
+            //oob[pgidx][offset] = 2;
             nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
             goto new_ppa;
         }
@@ -1615,6 +1627,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
                          GRAIN_PER_PAGE - offset);
         mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), 
                            GRAIN_PER_PAGE - offset);
+        //oob[pgidx][offset] = 2;
         nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
 
         gcd->offset = GRAIN_PER_PAGE;
