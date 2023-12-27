@@ -77,6 +77,96 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	return 0;
 }
 
+static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
+{
+    struct ppa ppa;
+
+    ppa.ppa = 0;
+    ppa.g.ch = (ppa_ / spp->pgs_per_ch) % spp->pgs_per_ch;
+    ppa.g.lun = (ppa_ % spp->pgs_per_ch) / spp->pgs_per_lun;
+    ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
+    ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
+    ppa.g.pg = ppa_ % spp->pgs_per_blk;
+
+    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
+
+	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
+
+	return ppa;
+}
+
+static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
+    struct ssdparams spp = d_member.ssd->sp;
+    struct ppa p = ppa_to_struct(&spp, ppa);
+    struct line* l = get_line(ftl, &p); 
+    int line = l->id;
+    uint64_t nsecs_completed = 0;
+
+    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
+                 lpa, ppa, line, inv_mapping_offs[line]);
+
+    BUG_ON(!credits);
+ 
+    if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
+        /*
+         * Anything bigger complicates implementation. Keep to pgsz for now.
+         */
+
+        NVMEV_ASSERT(INV_PAGE_SZ == spp.pgsz);
+
+        struct ppa n_p = get_new_page(ftl, USER_IO);
+        NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        mark_page_valid(ftl, &n_p);
+        mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
+    
+        //while(n_p.g.pg >= spp.pgs_per_blk - (INV_PAGE_SZ / spp.pgsz)) {
+        //    mark_grain_invalid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        //    n_p = get_new_page(ftl, USER_IO);
+        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        //    mark_page_valid(ftl, &n_p);
+        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+        //}
+
+        //for(int i = 1; i < INV_PAGE_SZ / spp.pgsz; i++) {
+        //    struct ppa n_p_e = get_new_page(ftl, USER_IO);
+        //    mark_page_valid(ftl, &n_p_e);
+        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p_e), 0), GRAIN_PER_PAGE);
+        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        //}
+
+		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
+        //NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+        //        line, inv_mapping_offs[line], w_ppa);
+
+        struct value_set value;
+        value.value = inv_mapping_bufs[line];
+        value.ssd = d_member.ssd;
+        value.length = INV_PAGE_SZ;
+
+        nsecs_completed = 
+        __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
+        nvmev_vdev->space_used += INV_PAGE_SZ;
+
+        inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
+        
+        memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
+        inv_mapping_offs[line] = 0;
+
+        BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
+
+        *credits += GRAIN_PER_PAGE;
+    }
+
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
+    inv_mapping_offs[line] += sizeof(lpa);
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &ppa, sizeof(ppa));
+    inv_mapping_offs[line] += sizeof(ppa);
+
+    return nsecs_completed;
+}
+
 static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
     struct ssdparams spp = d_member.ssd->sp;
     uint64_t nsecs = 0;
@@ -127,7 +217,7 @@ static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 	return 0;
 }
 
-uint64_t __demand_read(request *const req) {
+uint64_t __demand_read(request *const req, bool for_del) {
 	uint64_t rc = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
@@ -243,31 +333,40 @@ data_read:
         //printk("Eventually finished a retried read cnt %u\n", h_params->cnt);
     }
 
+    if(for_del) {
+        NVMEV_ASSERT(!IS_INITIAL_PPA(pte.ppa));
+
+        uint64_t credits = 0;
+        uint64_t offset = G_OFFSET(pte.ppa);
+        uint32_t len = 1;
+
+        len = 1;
+        while(offset + len < GRAIN_PER_PAGE && oob[G_IDX(pte.ppa)][offset + len] == 0) {
+            len++;
+        }
+
+        NVMEV_DEBUG("Deleting a pair of length %u\n", len);
+
+        mark_grain_invalid(ftl, pte.ppa, len);
+        _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+        req->ppa = U64_MAX - 2;
+
+        pte.ppa = U64_MAX;
+        d_cache->update(lpa, pte);
+        d_htable_insert(d_member.hash_table, U64_MAX, lpa);
+
+        if(credits > 0) {
+            consume_write_credit(ftl, credits);
+            check_and_refill_write_credit(ftl);
+        }
+    }
+
 read_ret:
 	return nsecs_latest;
 }
 
 
 static bool wb_is_full(skiplist *wb) { return (wb->size == d_env.wb_flush_size); }
-
-static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
-{
-    struct ppa ppa;
-
-    ppa.ppa = 0;
-    ppa.g.ch = (ppa_ / spp->pgs_per_ch) % spp->pgs_per_ch;
-    ppa.g.lun = (ppa_ % spp->pgs_per_ch) / spp->pgs_per_lun;
-    ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
-    ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
-    ppa.g.pg = ppa_ % spp->pgs_per_blk;
-
-    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
-    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
-
-	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
-
-	return ppa;
-}
 
 uint32_t cnt = 0;
 static bool _do_wb_assign_ppa(skiplist *wb) {
@@ -401,76 +500,6 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
-    struct ssdparams spp = d_member.ssd->sp;
-    struct ppa p = ppa_to_struct(&spp, ppa);
-    struct line* l = get_line(ftl, &p); 
-    int line = l->id;
-    uint64_t nsecs_completed = 0;
-
-    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
-                 lpa, ppa, line, inv_mapping_offs[line]);
-
-    BUG_ON(!credits);
- 
-    if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
-        /*
-         * Anything bigger complicates implementation. Keep to pgsz for now.
-         */
-
-        NVMEV_ASSERT(INV_PAGE_SZ == spp.pgsz);
-
-        struct ppa n_p = get_new_page(ftl, USER_IO);
-        NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
-        mark_page_valid(ftl, &n_p);
-        mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
-        oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
-    
-        //while(n_p.g.pg >= spp.pgs_per_blk - (INV_PAGE_SZ / spp.pgsz)) {
-        //    mark_grain_invalid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
-        //    n_p = get_new_page(ftl, USER_IO);
-        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
-        //    mark_page_valid(ftl, &n_p);
-        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
-        //}
-
-        //for(int i = 1; i < INV_PAGE_SZ / spp.pgsz; i++) {
-        //    struct ppa n_p_e = get_new_page(ftl, USER_IO);
-        //    mark_page_valid(ftl, &n_p_e);
-        //    mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p_e), 0), GRAIN_PER_PAGE);
-        //    NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
-        //}
-
-		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        //NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
-        //        line, inv_mapping_offs[line], w_ppa);
-
-        struct value_set value;
-        value.value = inv_mapping_bufs[line];
-        value.ssd = d_member.ssd;
-        value.length = INV_PAGE_SZ;
-
-        nsecs_completed = 
-        __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
-
-        inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
-        
-        memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
-        inv_mapping_offs[line] = 0;
-
-        BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
-
-        *credits += GRAIN_PER_PAGE;
-    }
-
-    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
-    inv_mapping_offs[line] += sizeof(lpa);
-    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &ppa, sizeof(ppa));
-    inv_mapping_offs[line] += sizeof(ppa);
-
-    return nsecs_completed;
-}
-
 static void _do_wb_mapping_update(skiplist *wb) {
 	int rc = 0;
     uint64_t credits = 0;
@@ -562,7 +591,8 @@ wb_data_check:
 		/* direct update at initial case */
 		if (IS_INITIAL_PPA(pte.ppa)) {
             //printk("%s entered initial_ppa for LPA %u\n", __func__, lpa);
-			goto wb_direct_update;
+			nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
+            goto wb_direct_update;
 		}
         //printk("%s passed initial_ppa for LPA %u\n", __func__, lpa);
 #ifdef STORE_KEY_FP
@@ -606,7 +636,9 @@ wb_update:
 
 			static int over_cnt = 0; over_cnt++;
 			if (over_cnt % 102400 == 0) printk("overwrite: %d\n", over_cnt);
-		}
+		} else {
+            nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
+        }
 wb_direct_update:
 		d_cache->update(lpa, new_pte);
         NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);

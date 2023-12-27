@@ -161,7 +161,7 @@ struct demand_member {
 	int max_try;
 #endif
 
-    const struct ssd *ssd;
+    struct ssd *ssd;
 };
 
 struct demand_stat {
@@ -213,14 +213,14 @@ struct demand_stat {
 
 /* Functions */
 uint32_t demand_argument_set(int argc, char **argv);
-uint32_t demand_create(lower_info*, blockmanager*, algorithm*, const struct ssd*, 
+uint32_t demand_create(lower_info*, blockmanager*, algorithm*, struct ssd*, 
                        uint64_t size);
 void demand_destroy(lower_info*, algorithm*);
 uint32_t demand_read(request *const);
 uint64_t demand_write(request *const);
 uint32_t demand_remove(request *const);
 
-uint64_t __demand_read(request *const);
+uint64_t __demand_read(request *const, bool for_del);
 uint64_t __demand_write(request *const);
 uint32_t __demand_remove(request *const);
 void *demand_end_req(algo_req*);

@@ -327,7 +327,9 @@ static int __proc_file_read(struct seq_file *m, void *data)
 			   total_io);
 	} else if (strcmp(filename, "debug") == 0) {
 		/* Left for later use */
-	}
+	} else if(strcmp(filename, "space") == 0) {
+        seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
+    }
 
 	return 0;
 }
@@ -432,6 +434,7 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
 		proc_create("io_units", 0664, nvmev_vdev->proc_root, &proc_file_fops);
 	nvmev_vdev->proc_stat = proc_create("stat", 0444, nvmev_vdev->proc_root, &proc_file_fops);
 	nvmev_vdev->proc_debug = proc_create("debug", 0444, nvmev_vdev->proc_root, &proc_file_fops);
+    nvmev_vdev->proc_space = proc_create("space", 0664, nvmev_vdev->proc_root, &proc_file_fops);
 }
 
 void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
@@ -441,6 +444,7 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
 	remove_proc_entry("io_units", nvmev_vdev->proc_root);
 	remove_proc_entry("stat", nvmev_vdev->proc_root);
 	remove_proc_entry("debug", nvmev_vdev->proc_root);
+    remove_proc_entry("space", nvmev_vdev->proc_root);
 
 	remove_proc_entry("nvmev", NULL);
 

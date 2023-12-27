@@ -249,6 +249,7 @@ static struct line *get_next_free_line(struct conv_ftl *conv_ftl)
 
 	if (!curline) {
 		NVMEV_ERROR("No free line left in VIRT !!!!\n");
+        BUG_ON(true);
 		return NULL;
 	}
 
@@ -313,16 +314,16 @@ bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 
     struct nand_block *blk = get_blk(conv_ftl->ssd, &p);
     
-    if(wpp->blk == prev_blk && blk->vgc == prev_vgc) {
-        printk("Caller is %pS\n", __builtin_return_address(0));
-        printk("Caller is %pS\n", __builtin_return_address(1));
-        printk("Caller is %pS\n", __builtin_return_address(2));
-        NVMEV_ERROR("vgc %u prev vgc %llu\n", blk->vgc, prev_vgc);
-    }
+    //if(wpp->blk == prev_blk && blk->vgc == prev_vgc) {
+    //    printk("Caller is %pS\n", __builtin_return_address(0));
+    //    printk("Caller is %pS\n", __builtin_return_address(1));
+    //    printk("Caller is %pS\n", __builtin_return_address(2));
+    //    NVMEV_ERROR("vgc %u prev vgc %llu\n", blk->vgc, prev_vgc);
+    //}
 
-    if(wpp->blk == prev_blk) {
-        NVMEV_ASSERT(blk->vgc != prev_vgc);
-    }
+    //if(wpp->blk == prev_blk) {
+    //    NVMEV_ASSERT(blk->vgc != prev_vgc);
+    //}
 
     prev_vgc = blk->vgc;
     prev_blk = wpp->blk;
@@ -618,7 +619,8 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 		ssd_init(ssd, &spp, cpu_nr_dispatcher);
 		conv_init_ftl(&conv_ftls[i], &cpp, ssd);
 	}
-
+    
+    nvmev_vdev->space_used = 0;
     ftl = &conv_ftls[0];
 
 	/* PCIe, Write buffer are shared by all instances*/
@@ -840,8 +842,8 @@ void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len) {
     //NVMEV_ASSERT(grain_bitmap[grain] != 1);
     //grain_bitmap[grain] = 1;
 
-    NVMEV_ASSERT(pg_v_cnt[page] + (len * GRAINED_UNIT) <= spp->pgsz);
-    pg_v_cnt[page] += len * GRAINED_UNIT;
+    //NVMEV_ASSERT(pg_v_cnt[page] + (len * GRAINED_UNIT) <= spp->pgsz);
+    //pg_v_cnt[page] += len * GRAINED_UNIT;
 }
 
 bool page_grains_invalid(uint64_t ppa) {
@@ -934,7 +936,14 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
     NVMEV_ASSERT(len > 0);
     NVMEV_ASSERT(pg_inv_cnt[page] + (len * GRAINED_UNIT) <= spp->pgsz);
     pg_inv_cnt[page] += len * GRAINED_UNIT;
-    pg_v_cnt[page] -= len * GRAINED_UNIT;
+    //pg_v_cnt[page] -= len * GRAINED_UNIT;
+
+    //if(pg_v_cnt[page] > 1000000) {
+    //    printk("Caller is %pS\n", __builtin_return_address(0));
+    //    printk("Caller is %pS\n", __builtin_return_address(1));
+    //    printk("Caller is %pS\n", __builtin_return_address(2));
+    //    BUG_ON(true);
+    //}
 
     if(pg_inv_cnt[page] == spp->pgsz) {
         if(pg_inv_cnt[page] != spp->pgsz) {
@@ -942,7 +951,7 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
                          pg_inv_cnt[page], pg_v_cnt[page], page);
         }
 
-        NVMEV_ASSERT(pg_v_cnt[page] == 0);
+        //NVMEV_ASSERT(pg_v_cnt[page] == 0);
         NVMEV_ASSERT(pg_inv_cnt[page] == spp->pgsz);
         mark_page_invalid(conv_ftl, &ppa);
     }
@@ -1012,7 +1021,13 @@ static void mark_block_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
                     __invalid_mapping_ppa(conv_ftl, page) ? "MAPPING PPA" : "NOT MAPPING PPA");
         }
 
-        NVMEV_ASSERT(pg_v_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i] == 0);
+        //if(pg_v_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i] != 0) {
+        //    NVMEV_ERROR("pg was %llu v_cnt %llu %s\n", ppa2pgidx(conv_ftl, &ppa_copy) + i,
+        //            pg_v_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i],
+        //            __invalid_mapping_ppa(conv_ftl, page) ? "MAPPING PPA" : "NOT MAPPING PPA");
+        //}
+
+        //NVMEV_ASSERT(pg_v_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i] == 0);
         NVMEV_ASSERT(pg_inv_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i] > 0);
         pg_inv_cnt[ppa2pgidx(conv_ftl, &ppa_copy) + i] = 0;
 	}
@@ -1285,6 +1300,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         pgidx = ppa2pgidx(conv_ftl, &ppa_copy);
 		/* there shouldn't be any free page in victim blocks */
 		NVMEV_ASSERT(pg_iter->status != PG_FREE);
+        nvmev_vdev->space_used -= spp->pgsz;
 		if (pg_iter->status == PG_VALID) {
             page_cnt++;
         } else if(pg_iter->status == PG_INVALID) {
@@ -1331,33 +1347,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 mark_grain_invalid(conv_ftl, grain, len);
                 cnt++;
                 tt_rewrite += len * GRAINED_UNIT;
-            } else if(i == 0) {
-                //if(__valid_mapping_ht(oob[pgidx][i], grain)) {
-                //    NVMEV_ERROR("WTF! %llu was valid!\n", oob[pgidx][i]);
-                //    BUG_ON(true);
-                //}
-
-                //int tmplen = 1;
-                //while(i + tmplen < GRAIN_PER_PAGE && oob[pgidx][i + tmplen] == 0) {
-                //    tmplen++;
-                //}
-                //NVMEV_DEBUG("We skipped %llu oob %llu invc %llu vc %llu len %d\n", 
-                //        pgidx, oob[pgidx][i], pg_inv_cnt[pgidx], pg_v_cnt[pgidx], tmplen);
-
-                //if(tmplen == 1) {
-                //    NVMEV_ERROR("OOB:\n");
-                //    for(int i = 0 ; i < GRAIN_PER_PAGE; i++) {
-                //        NVMEV_ERROR("%llu\n", oob[pgidx][i]);
-                //        if(__valid_mapping_ht(oob[pgidx][i], grain)) {
-                //            NVMEV_ERROR("WTF! %llu was valid!\n", oob[pgidx][i]);
-                //        }
-                //    }
-
-                //    //NVMEV_ERROR("Grains:\n");
-                //    //for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-                //    //    NVMEV_ERROR("%d\n", grain_bitmap[grain + i]);
-                //    //}
-                //}
+            } else {
             } 
         }
 
@@ -1426,6 +1416,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), 
                     GRAIN_PER_PAGE - offset);
+            nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
             goto new_ppa;
         }
 
@@ -1455,6 +1446,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
         memcpy(nvmev_vdev->ns[0].mapped + to, 
                nvmev_vdev->ns[0].mapped + from, length * GRAINED_UNIT);
+        nvmev_vdev->space_used += length * GRAINED_UNIT;
 
         BUG_ON(lpa == 2);
 
@@ -1564,7 +1556,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	}
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+	NVMEV_ERROR("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
 		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
             conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
             conv_ftl->lm.free_line_cnt);
@@ -1623,6 +1615,7 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
                          GRAIN_PER_PAGE - offset);
         mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), 
                            GRAIN_PER_PAGE - offset);
+        nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
 
         gcd->offset = GRAIN_PER_PAGE;
         gcd->pgidx = U64_MAX;
@@ -1762,6 +1755,102 @@ uint32_t __get_vlen(uint64_t grain) {
     return ret * GRAINED_UNIT;
 }
 
+bool end_d(struct request *req) 
+{
+    return true;
+    //if(req->ppa == U64_MAX) {
+    //    NVMEV_DEBUG("Delete succeeded for key %s\n", req->cmd->kv_retrieve.key);
+    //    req->ppa = U64_MAX;
+    //    return true;
+    //}
+
+    //NVMEV_DEBUG("Delete failed for key %s\n", req->cmd->kv_retrieve.key);
+    //return false;
+}
+
+char read_buf[4096];
+static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+    struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
+    struct conv_ftl *conv_ftl = &conv_ftls[0];
+
+    /* wbuf and spp are shared by all instances */
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+    struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
+
+    uint64_t nsecs_latest;
+    uint64_t nsecs_xfer_completed;
+
+    struct request d_req;
+    KEYT key;
+
+    memset(&d_req, 0x0, sizeof(d_req));
+
+    d_req.ssd = conv_ftl->ssd;
+    d_req.req = req;
+    d_req.hash_params = NULL;
+
+    key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
+
+    NVMEV_ASSERT(key.key);
+    NVMEV_ASSERT(cmd);
+    NVMEV_ASSERT(cmd->kv_delete.key);
+
+    uint8_t klen = cmd_key_length(*cmd);
+
+    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
+
+    memcpy(key.key, cmd->kv_retrieve.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
+    d_req.key = key;
+
+    NVMEV_DEBUG("Delete for key %s len %u\n", key.key, key.len);
+
+    struct value_set *value;
+    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
+    value->ssd = conv_ftl->ssd;
+
+    /*
+     * We still provide a read buffer here, because a delete will
+     * read pages from disk to confirm its deleting the right
+     * KV pair.
+     */
+
+    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
+    value->value = read_buf;
+    value->ssd = conv_ftl->ssd;
+    value->length = spp->pgsz;
+    d_req.value = value;
+    d_req.end_req = &end_d;
+    d_req.cmd = cmd;
+    nsecs_latest = nsecs_xfer_completed = __demand.remove(&d_req);
+
+    ret->nsecs_target = nsecs_latest;
+
+    if(d_req.ppa == U64_MAX) {
+        NVMEV_DEBUG("NOT_EXIST delete for key %s len %u\n", key.key, key.len);
+        ret->status = KV_ERR_KEY_NOT_EXIST;
+        cmd->kv_delete.rsvd = d_req.ppa;
+    } else {
+        NVMEV_DEBUG("Delete successful for key %s len %u\n", key.key, key.len);
+        ret->nsecs_target = nsecs_latest;
+        ret->status = NVME_SC_SUCCESS;
+
+        /*
+         * Switch back to U64_MAX to avoid a copy to user in
+         * __do_perform_io_kv in io.c.
+         */
+
+        cmd->kv_delete.rsvd = U64_MAX;
+    }
+
+    kfree(value);
+    kfree(key.key);
+    return true;
+}
+
 bool end_r(struct request *req) 
 {
     if(req->ppa == U64_MAX) {
@@ -1789,7 +1878,6 @@ bool end_r(struct request *req)
     return true;
 }
 
-char read_buf[4096];
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
@@ -1857,7 +1945,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     //    ret->nsecs_target = nsecs_xfer_completed;
     //}
  
-    cmd->kv_store.rsvd = d_req.ppa;
+    cmd->kv_retrieve.rsvd = d_req.ppa;
     //printk("Storing ppa %llu\n", d_req.ppa);
 
     if (d_req.ppa == U64_MAX - 1) {
@@ -2083,6 +2171,11 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
             break;
         case nvme_cmd_kv_retrieve:
             ret->nsecs_target = conv_read(ns, req, ret);
+            //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
+            //        __get_wallclock(), ret->nsecs_target);
+            break;
+        case nvme_cmd_kv_delete:
+            ret->nsecs_target = conv_delete(ns, req, ret);
             //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
             //        __get_wallclock(), ret->nsecs_target);
             break;

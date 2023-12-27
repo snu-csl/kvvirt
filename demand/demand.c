@@ -139,8 +139,7 @@ static void demand_env_init(struct demand_env *const _env, const struct ssdparam
 	print_demand_env(_env);
 }
 
-static int demand_member_init(struct demand_member *const _member, const struct ssd *ssd) {
-
+static int demand_member_init(struct demand_member *const _member, struct ssd *ssd) {
 #ifdef HASH_KVSSD
 	key_max.key = (char *)kzalloc(sizeof(char) * MAXKEYSIZE, GFP_KERNEL);
 	key_max.len = MAXKEYSIZE;
@@ -181,7 +180,7 @@ static void demand_stat_init(struct demand_stat *const _stat) {
 }
 
 uint32_t demand_create(lower_info *li, blockmanager *bm, 
-                       algorithm *algo, const struct ssd *ssd,
+                       algorithm *algo, struct ssd *ssd,
                        uint64_t size) {
 
 	/* map modules */
@@ -478,7 +477,7 @@ uint32_t demand_read(request *const req){
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-	rc = __demand_read(req);
+	rc = __demand_read(req, false);
 	if (rc == U64_MAX) {
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
@@ -506,9 +505,20 @@ uint64_t demand_write(request *const req) {
 }
 
 uint32_t demand_remove(request *const req) {
-	int rc;
-	rc = __demand_remove(req);
-	req->end_req(req);
-	return 0;
+    uint32_t rc;
+    mutex_lock(&d_member.op_lock);
+#ifdef HASH_KVSSD
+    if (!req->hash_params) {
+        d_stat.read_req_cnt++;
+        req->hash_params = (void *)make_hash_params(req);
+    }
+#endif
+    rc = __demand_read(req, true);
+    if (rc == U64_MAX) {
+        req->type = FS_NOTFOUND_T;
+        req->end_req(req);
+    }
+    mutex_unlock(&d_member.op_lock);
+    return 0;
 }
 

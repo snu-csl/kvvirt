@@ -76,7 +76,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 
 static void cg_member_init(struct cache_member *const _member) {
 	struct cmt_struct **cmt = 
-    (struct cmt_struct **)kzalloc(cenv->nr_valid_tpages * sizeof(struct cmt_struct *), GFP_KERNEL);
+    (struct cmt_struct **)vmalloc(cenv->nr_valid_tpages * sizeof(struct cmt_struct *));
 	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
 		cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
 
@@ -95,7 +95,7 @@ static void cg_member_init(struct cache_member *const _member) {
     _member->cmt = cmt;
 
     _member->mem_table = 
-        (struct pt_struct **)kzalloc(cenv->nr_valid_tpages * sizeof(struct pt_struct *), GFP_KERNEL);
+        (struct pt_struct **)vmalloc(cenv->nr_valid_tpages * sizeof(struct pt_struct *));
     for (int i = 0; i < cenv->nr_valid_tpages; i++) {
         _member->mem_table[i] = (struct pt_struct *)kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
         for (int j = 0; j < EPP; j++) {

@@ -19,7 +19,7 @@
 #define ENTRY_SIZE sizeof(uint64_t)
 #endif
 
-#define EPP ((PAGESIZE / 2) / ENTRY_SIZE) // Entry Per Page
+#define EPP (PAGESIZE / ENTRY_SIZE) // Entry Per Page
 
 /* Support variable-sized value. Grain entries of the mapping table as GRAINED_UNIT */
 #define GRAINED_UNIT ( PIECE )
