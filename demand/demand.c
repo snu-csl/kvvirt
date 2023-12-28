@@ -21,6 +21,7 @@ struct algorithm __demand = {
 	.read = demand_read,
 	.write = demand_write,
 	.remove  = demand_remove,
+    .append = demand_append,
 	.iter_create = NULL,
 	.iter_next = NULL,
 	.iter_next_with_value = NULL,
@@ -483,7 +484,7 @@ uint32_t demand_read(request *const req){
 		req->end_req(req);
 	}
 	mutex_unlock(&d_member.op_lock);
-	return 0;
+	return rc;
 }
 
 uint64_t demand_write(request *const req) {
@@ -518,6 +519,34 @@ uint32_t demand_remove(request *const req) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
     }
+    mutex_unlock(&d_member.op_lock);
+    return rc;
+}
+
+uint64_t demand_append(request *const req) {
+    uint32_t rc;
+    struct ssdparams *spp = &d_member.ssd->sp;
+    uint32_t to_append = req->target_len;
+
+    mutex_lock(&d_member.op_lock);
+#ifdef HASH_KVSSD
+    if (!req->hash_params) {
+        d_stat.read_req_cnt++;
+        req->hash_params = (void *)make_hash_params(req);
+    }
+#endif
+    rc = __demand_read(req, true);
+
+    NVMEV_ERROR("Attempting to append %u bytes to a value of length %u\n",
+                 to_append, req->value->length);
+
+    NVMEV_ASSERT(req->value->length + to_append <= spp->pgsz);
+    memcpy(req->value->value + req->value->length, req->target_buf, to_append);
+    req->value->length += to_append;
+
+    req->hash_params = (void *)make_hash_params(req);
+
+    rc = __demand_write(req);
     mutex_unlock(&d_member.op_lock);
     return 0;
 }

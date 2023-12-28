@@ -51,6 +51,7 @@ static void print_cache_env(struct cache_env *const _env) {
 	printk(" |---------- Demand Cache Log END\n");
 	printk("\n");
 }
+
 static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
     struct ssdparams spp = d_member.ssd->sp;
 
@@ -66,11 +67,10 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
 	_env->max_cached_tentries = 0; // not used here
 
 #ifdef DVALUE
-	_env->nr_valid_tpages *= GRAIN_PER_PAGE;
-	_env->nr_valid_tentries *= GRAIN_PER_PAGE;
+	_env->nr_valid_tpages *= GRAIN_PER_PAGE / 2;
+	_env->nr_valid_tentries *= GRAIN_PER_PAGE / 2;
 #endif
 
-    printk("%d %ld %d\n", d_env.nr_pages, EPP, _env->nr_valid_tentries);
 	print_cache_env(_env);
 }
 

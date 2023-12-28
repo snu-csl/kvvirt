@@ -63,7 +63,8 @@ void print_oob(uint64_t ppa) {
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
-        //printk("WB hit for key %s!\n", req->key.key);
+        NVMEV_DEBUG("WB hit for key %s! Length %u!\n", 
+                    req->key.key, wb_entry->value->length);
 		d_stat.wb_hit++;
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
@@ -243,6 +244,7 @@ read_retry:
 #ifdef HASH_KVSSD
 	if (h_params->cnt > d_member.max_try) {
 		rc = U64_MAX;
+        req->value->length = 0;
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
 	}
@@ -276,13 +278,14 @@ read_retry:
 	/* 1. check write buffer first */
 	rc = do_wb_check(d_member.write_buffer, req);
 	if (rc) {
+        req->ppa = U64_MAX - 1;
         if(for_del) {
             do_wb_delete(d_member.write_buffer, req);
+        } else {
+            nsecs_completed =
+            ssd_advance_pcie(req->ssd, req->req->nsecs_start, 1024);
+            req->end_req(req);
         }
-        nsecs_completed =
-        ssd_advance_pcie(req->ssd, req->req->nsecs_start, 1024);
-        req->ppa = U64_MAX - 1;
-		req->end_req(req);
 		goto read_ret;
 	}
 
@@ -300,6 +303,7 @@ cache_load:
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
             req->ppa = U64_MAX;
+            req->value->length = 0;
 			rc = U64_MAX;
 			warn_notfound(__FILE__, __LINE__);
 		}
@@ -308,6 +312,7 @@ cache_list_up:
 		rc = d_cache->list_up(lpa, req, NULL, &nsecs_completed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (rc) {
+            req->value->length = 0;
 			goto read_ret;
 		}
 	}
@@ -331,6 +336,7 @@ data_read:
 
     if(rc == U64_MAX) {
         req->ppa = U64_MAX;
+        req->value->length = 0;
         warn_notfound(__FILE__, __LINE__);
         goto read_ret;
     } else if(nsecs_latest == U64_MAX - 1) {

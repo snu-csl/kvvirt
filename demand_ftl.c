@@ -368,7 +368,7 @@ bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 		lm->full_line_cnt++;
 		NVMEV_DEBUG("wpp: move line %d to full_line_list\n", wpp->curline->id);
 	} else {
-		NVMEV_DEBUG("wpp: line %d is moved to victim list\n", wpp->curline->id);
+		NVMEV_ERROR("wpp: line %d is moved to victim list\n", wpp->curline->id);
 		//NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
         NVMEV_ASSERT(wpp->curline->vgc >= 0 && wpp->curline->vgc < spp->pgs_per_line * GRAIN_PER_PAGE);
 		/* there must be some invalid pages in this line */
@@ -918,7 +918,8 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
         /* move line: "full" -> "victim" */
         list_del_init(&line->entry);
         lm->full_line_cnt--;
-        NVMEV_DEBUG("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
+        BUG_ON(true);
+        NVMEV_ERROR("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
         pqueue_insert(lm->victim_line_pq, line);
         lm->victim_line_cnt++;
     }
@@ -2089,6 +2090,96 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	return true;
 }
 
+static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
+	struct conv_ftl *conv_ftl = &conv_ftls[0];
+
+	/* wbuf and spp are shared by all instances */
+	struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+	struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
+    struct nvme_kv_command tmp = *cmd;
+
+	uint64_t nsecs_latest;
+	uint64_t nsecs_xfer_completed;
+
+    struct request d_req;
+    KEYT key;
+
+    memset(&d_req, 0x0, sizeof(d_req));
+
+    d_req.ssd = conv_ftl->ssd;
+    d_req.req = req;
+    d_req.hash_params = NULL;
+
+    uint8_t klen = cmd_key_length(tmp);
+    uint32_t vlen = cmd_value_length(*cmd);
+
+    key.key = NULL;
+    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
+
+    BUG_ON(!key.key);
+    BUG_ON(!cmd->kv_store.key);
+    BUG_ON(!cmd);
+
+    NVMEV_ASSERT(vlen > klen);
+
+    memcpy(key.key, cmd->kv_append.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
+    d_req.key = key;
+
+    NVMEV_DEBUG("Write for key %s klen %u vlen %u\n", key.key, klen, vlen);
+
+    struct value_set *value;
+    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
+    value->value = (char*)kzalloc(spp->pgsz, GFP_KERNEL);
+    value->ssd = conv_ftl->ssd;
+
+    /*
+     * This length will be overwritten in the read, so we don't use it to
+     * store the length of the append.
+     */
+
+    value->length = vlen;
+    
+    /*
+     * We use this field for the length of the data to be appended.
+     */
+
+    d_req.target_len = vlen;
+    d_req.target_buf = kzalloc(spp->pgsz, GFP_KERNEL);
+
+    d_req.value = value;
+    d_req.end_req = &end_w;
+    d_req.sqid = req->sq_id;
+
+    __quick_copy(cmd, d_req.target_buf, vlen);
+    nsecs_latest = nsecs_xfer_completed = __demand.append(&d_req);
+
+	ret->nsecs_target = nsecs_latest;
+
+    /*
+     * write() puts the KV pair in the memory buffer, which is flushed to
+     * disk at a later time.
+     *
+     * We set rsvd to U64_MAX here so that in __do_perform_io_kv we skip
+     * a memory copy to virt's reserved disk memory (since this KV pair isn't
+     * actually on the disk yet).
+     *
+     * Even if this pair causes a flush of the write buffer, that's done 
+     * asynchronously and the copy to virt's reserved disk memory happens
+     * in nvmev_io_worker().
+     */
+    
+    cmd->kv_store.rsvd = U64_MAX;
+	ret->status = NVME_SC_SUCCESS;
+
+	return true;
+}
+
+
 /*
  * A batch buffer be structured as follows :
  * (uint8_t) key length (N) key bytes (uint32_t) value length (N) value <- KV pair 1
@@ -2176,6 +2267,7 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
 
     switch (cmd->common.opcode) {
         case nvme_cmd_kv_batch:
+            break;
             //ret->nsecs_target = conv_batch(ns, req, ret);
         case nvme_cmd_kv_store:
             ret->nsecs_target = conv_write(ns, req, ret);
@@ -2191,6 +2283,9 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
             ret->nsecs_target = conv_delete(ns, req, ret);
             //NVMEV_INFO("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
             //        __get_wallclock(), ret->nsecs_target);
+            break;
+        case nvme_cmd_kv_append:
+            ret->nsecs_target = conv_append(ns, req, ret);
             break;
         case nvme_cmd_write:
         case nvme_cmd_read:

@@ -172,6 +172,7 @@ struct algorithm{
 	uint32_t (*multi_set)(request *const,int num);
 	uint32_t (*multi_get)(request *const,int num);
 	uint32_t (*range_query)(request *const);
+    uint64_t (*append)(request *const);
 #endif
 	lower_info* li;
 	struct blockmanager *bm;

@@ -219,6 +219,7 @@ void demand_destroy(lower_info*, algorithm*);
 uint32_t demand_read(request *const);
 uint64_t demand_write(request *const);
 uint32_t demand_remove(request *const);
+uint64_t demand_append(request *const);
 
 uint64_t __demand_read(request *const, bool for_del);
 uint64_t __demand_write(request *const);
