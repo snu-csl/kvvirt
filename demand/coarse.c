@@ -145,11 +145,12 @@ static void cg_member_kfree(struct cache_member *_member) {
 		q_free(_member->cmt[i]->wait_q);
 		kfree(_member->cmt[i]);
 	}
-	kfree(_member->cmt);
+	vfree(_member->cmt);
 
 	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
 		kfree(_member->mem_table[i]);
 	}
+    vfree(_member->mem_table);
 
 	lru_kfree(_member->lru);
 }

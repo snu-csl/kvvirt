@@ -231,9 +231,24 @@ static void alloc_gc_mem(struct conv_ftl *conv_ftl) {
 
     for(int i = 0; i < spp->inv_ppl; i++) {
         gcd->inv_mappings[i] = 
-        (uint64_t*) kzalloc(1LU << 20, GFP_KERNEL);
+        (uint64_t*) kzalloc(spp->pgsz, GFP_KERNEL);
         NVMEV_ASSERT(gcd->inv_mappings[i]);
     }
+
+    gcd->offset = GRAIN_PER_PAGE;
+    gcd->last = false;
+}
+
+static void free_gc_mem(struct conv_ftl *conv_ftl) {
+    struct gc_data *gcd = &conv_ftl->gcd;
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+    for(int i = 0; i < spp->inv_ppl; i++) {
+        kfree(gcd->inv_mappings[i]);
+    }
+
+    vfree(gcd->inv_mappings);
+    vfree(gcd->idxs);  
 
     gcd->offset = GRAIN_PER_PAGE;
     gcd->last = false;
@@ -582,8 +597,6 @@ void demand_init(uint64_t size, struct ssd* ssd)
         NVMEV_ASSERT(inv_mapping_ppas[i]);
     }
 
-    hash_init(mapping_ht);
-
     printk("grains_per_mapblk %llu tt_grains %llu tt_map %lu tt_data %lu "
            "invalid_per_line %llu inv_ppl %llu\n", 
             grains_per_mapblk, tt_grains, spp->tt_map_blks, spp->tt_data_blks,
@@ -596,6 +609,29 @@ void demand_init(uint64_t size, struct ssd* ssd)
 
     demand_create(&virt_info, &pt_bm, &__demand, ssd, size);
     print_demand_stat(&d_stat);
+}
+
+void demand_free(struct conv_ftl *conv_ftl) {
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+
+    vfree(pg_inv_cnt);
+    vfree(pg_v_cnt);
+
+    for(int i = 0; i < spp->tt_pgs; i++) {
+        kfree(oob[i]); 
+    }
+
+    vfree(oob);
+
+    for(int i = 0; i < spp->tt_lines; i++) {
+        vfree(inv_mapping_bufs[i]);
+        vfree(inv_mapping_ppas[i]); 
+    }
+
+    kfree(inv_mapping_bufs);
+    kfree(inv_mapping_offs);
+    kfree(inv_mapping_ppas);
+    kfree(inv_mapping_cnts);
 }
 
 uint64_t dsize = 0;
@@ -672,13 +708,15 @@ void conv_remove_namespace(struct nvmev_ns *ns)
 		conv_ftls[i].ssd->write_buffer = NULL;
 	}
 
+    free_gc_mem(&conv_ftls[0]);
+    demand_free(&conv_ftls[0]);
+    __demand.destroy(&virt_info, &__demand);
+
 	for (i = 0; i < nr_parts; i++) {
 		conv_remove_ftl(&conv_ftls[i]);
 		ssd_remove(conv_ftls[i].ssd);
 		kfree(conv_ftls[i].ssd);
 	}
-
-    print_demand_stat(&d_stat);
 
 	kfree(conv_ftls);
 	ns->ftls = NULL;
@@ -918,7 +956,6 @@ void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len)
         /* move line: "full" -> "victim" */
         list_del_init(&line->entry);
         lm->full_line_cnt--;
-        BUG_ON(true);
         NVMEV_ERROR("Inserting line %d to PQ vgc %d\n", line->id, line->vgc);
         pqueue_insert(lm->victim_line_pq, line);
         lm->victim_line_cnt++;
@@ -1644,13 +1681,17 @@ static int do_gc(struct conv_ftl *conv_ftl, bool force)
 	return 0;
 }
 
+uint32_t loops = 0;
 static void forground_gc(struct conv_ftl *conv_ftl)
 {
 	while(should_gc_high(conv_ftl)) {
 		NVMEV_DEBUG("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
 		do_gc(conv_ftl, true);
+        loops++;
+        BUG_ON(loops == 10);
 	}
+    loops = 0;
 }
 
 static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struct ppa ppa2)
@@ -2037,7 +2078,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 
     NVMEV_ASSERT(vlen > klen);
 
-    memcpy(key.key, cmd->kv_retrieve.key, klen);
+    memcpy(key.key, cmd->kv_store.key, klen);
     key.key[klen] = '\0';
     key.len = klen;
     d_req.key = key;
@@ -2053,6 +2094,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.end_req = &end_w;
     d_req.sqid = req->sq_id;
 
+    NVMEV_ASSERT(value->value);
     __quick_copy(cmd, value->value, value->length);
 
     uint8_t nklen = *(uint8_t*) value->value;
@@ -2130,7 +2172,7 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
     key.len = klen;
     d_req.key = key;
 
-    NVMEV_DEBUG("Write for key %s klen %u vlen %u\n", key.key, klen, vlen);
+    NVMEV_DEBUG("Append for key %s klen %u vlen %u\n", key.key, klen, vlen);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);

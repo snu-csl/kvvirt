@@ -470,8 +470,9 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
             char tmp[128];
             memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
             tmp[wb_entry->key.len] = '\0';
-            NVMEV_DEBUG("%s writing %s to %llu (%llu)\n", 
-                        __func__, tmp, ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
+            NVMEV_DEBUG("%s writing %s (%u %s) to %llu (%llu)\n", 
+                        __func__, tmp, wb_entry->key.len, wb_entry->key.key,
+                        ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
 
 			inf_free_valueset(wb_entry->value, FS_MALLOC_W);
 			wb_entry->value = NULL;
@@ -664,8 +665,9 @@ wb_update:
             _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
 
 			static int over_cnt = 0; over_cnt++;
-			if (over_cnt % 102400 == 0) printk("overwrite: %d\n", over_cnt);
+			if (over_cnt % 1000 == 0) printk("overwrite: %d\n", over_cnt);
 		} else {
+            NVMEV_ERROR("INSERT: Key %s\n", wb_entry->key.key);
             nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
         }
 wb_direct_update:
