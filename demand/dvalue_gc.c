@@ -193,51 +193,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
     uint64_t prev = U64_MAX;
     for(int i = 0; i < nr_valid_grains; i++) {
         uint64_t lpa = ppas[i].lpa;
-        //uint64_t ppa = ppas[i].new_ppa;
         uint64_t idx = IDX(lpa);
-        //struct pt_struct p;
-
-        //if(lpa == U64_MAX || lpa == U64_MAX - 1) {
-        //    continue;
-        //}
-
-        //p.ppa = ppa;
-
-        //NVMEV_ERROR("*** LPA %llu rewrite to PPA %llu IDX %llu ***\n", lpa, ppa, idx);
-        //if (d_cache->is_hit(lpa)) {
-        //    NVMEV_ERROR("*** LPA %llu rewrite to PPA %llu IDX %llu HIT ***\n", lpa, ppa, idx);
-        //    d_cache->update(lpa, p);
-        //} else {
-        //    NVMEV_ERROR("*** LPA %llu rewrite to PPA %llu IDX %llu MISS ***\n", lpa, ppa, idx);
-
-        //    struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-        //    cmt->state = DIRTY;
-
-        //    if(cmt->t_ppa != U64_MAX) {
-        //        NVMEV_ERROR("%s marking mapping PPA %llu invalid while it was being read during GC.\n",
-        //                    __func__, cmt->t_ppa);
-        //        mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
-        //        //cmt->t_ppa = U64_MAX;
-        //    }
-
-        //    struct request *r = (struct request*) kzalloc(sizeof(*r), GFP_KERNEL);;
-        //    r->value = (value_set*) kzalloc(sizeof(value_set), GFP_KERNEL);
-        //    r->value->value = kzalloc(spp->pgsz, GFP_KERNEL);
-
-        //    NVMEV_ASSERT(r);
-        //    NVMEV_ASSERT(r->value);
-        //    NVMEV_ASSERT(r->value->value);
-
-        //    d_cache->load(lpa, r, NULL, NULL);
-        //    d_cache->list_up(lpa, r, NULL, NULL);
-        //    d_cache->update(lpa, p);
-
-        //    kfree(r->params);
-        //    kfree(r->value->value);
-        //    kfree(r->value);
-        //    kfree(r);
-        //}
-
         if(idx != prev && ppas[i].lpa != U64_MAX) {
             unique_cmts++;
             prev = idx;
@@ -308,6 +264,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             //invalidate_page(bm, cmt->t_ppa, MAP);
             cmt->t_ppa = U64_MAX;
 
+            d_stat.trans_r_tgc++;
             nr_update_tpages++;
         }
     }
@@ -376,6 +333,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
         __demand.li->write(ppa, spp->pgsz, pts[cmts_loaded], ASYNC, NULL);
 
+        d_stat.trans_w_tgc++;
         cmt->state = CLEAN;
         
         kfree(cmt->pt);

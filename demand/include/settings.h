@@ -30,7 +30,12 @@
 #define P (1024L*T)
 #define MILI (1000000)
 
+#ifdef GC_STANDARD
+#define PIECE 512
+#else
 #define PIECE 64
+#endif
+
 #define MINVALUE PIECE
 #define MINKEYLENGTH 16
 #define DEFKEYLENGTH 32

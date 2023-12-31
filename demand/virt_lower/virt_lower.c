@@ -106,6 +106,11 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
     NVMEV_DEBUG("Writing PPA %llu (%llu) size %u pagesize %u in virt_push_datas\n", 
                 PPA, off, size, value->ssd->sp.pgsz);
 
+    if(off >= (64000LU << 20)) {
+        NVMEV_ERROR("PPA %llu\n", PPA);
+        BUG_ON(off >= (64000LU << 20));
+    }
+
     memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
 
     //NVMEV_DEBUG("2 Klen %u K %s vlen %u\n", klen,
@@ -153,6 +158,11 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
     ppa = ppa_to_struct(&value->ssd->sp, PPA);
     swr.ppa = &ppa;
     nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
+
+    if(off >= (64000LU << 20)) {
+        NVMEV_ERROR("PPA %llu\n", PPA);
+        BUG_ON(off >= (64000LU << 20));
+    }
 
     //printk("Advanced nand PPA %u\n", PPA);
     if(!async) {

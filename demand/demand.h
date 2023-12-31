@@ -179,6 +179,7 @@ struct demand_stat {
 	uint64_t data_r_dgc;
 	uint64_t data_w_dgc;
 	uint64_t trans_r_dgc;
+    uint64_t trans_r_dgc_2;
 	uint64_t trans_w_dgc;
 	uint64_t trans_r_tgc;
 	uint64_t trans_w_tgc;
@@ -204,6 +205,11 @@ struct demand_stat {
 
 	/* write buffer */
 	uint64_t wb_hit;
+
+    /* gc reads and writes */
+    uint64_t gc_pair_copy;
+    uint64_t gc_invm_copy;
+    uint64_t gc_cmt_copy;
 
 #ifdef HASH_KVSSD
 	uint64_t w_hash_collision_cnt[MAX_HASH_COLLISION];

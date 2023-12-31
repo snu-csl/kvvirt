@@ -141,17 +141,20 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
                          struct nvmev_result *ret);
 
 
+#ifdef GC_STANDARD
 extern bool *grain_bitmap;
+#else
 extern uint64_t *pg_inv_cnt;
 extern uint64_t *pg_v_cnt;
-extern uint64_t **oob;
-
 #define INV_PAGE_SZ 4096
 #define INV_ENTRY_SZ (sizeof(uint64_t) + sizeof(uint64_t))
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 extern uint64_t **inv_mapping_ppas;
 extern uint64_t *inv_mapping_cnts;
+#endif
+
+extern uint64_t **oob;
 
 extern DECLARE_HASHTABLE(mapping_ht, 20);
 struct ht_mapping {

@@ -258,7 +258,7 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("DataGC cnt: \t%lld\n", _stat->dgc_cnt);
 	printk("DataGC_DR:  \t%lld\n", _stat->data_r_dgc);
 	printk("DataGC_DW:  \t%lld\n", _stat->data_w_dgc);
-	printk("DataGC_TR:  \t%lld\n", _stat->trans_r_dgc);
+	printk("DataGC_TR:  \t%lld (%lld)\n", _stat->trans_r_dgc, _stat->trans_r_dgc_2);
 	printk("DataGC_TW:  \t%lld\n", _stat->trans_w_dgc);
 	printk("\n");
 	printk("TransGC cnt:\t%lld\n", _stat->tgc_cnt);

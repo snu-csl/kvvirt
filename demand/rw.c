@@ -116,6 +116,7 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 	return ppa;
 }
 
+#ifndef GC_STANDARD
 static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
     struct ssdparams spp = d_member.ssd->sp;
     struct ppa p = ppa_to_struct(&spp, ppa);
@@ -174,6 +175,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
 
     return nsecs_completed;
 }
+#endif
 
 static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
     struct ssdparams spp = d_member.ssd->sp;
@@ -367,7 +369,9 @@ data_read:
 
         oob[G_IDX(pte.ppa)][offset] = 2;
         mark_grain_invalid(ftl, pte.ppa, len);
+#ifndef GC_STANDARD
         _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+#endif
         req->ppa = U64_MAX - 2;
 
         pte.ppa = U64_MAX;
@@ -438,7 +442,6 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 
         mark_page_valid(ftl, &ppa_s);
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
-        NVMEV_ASSERT(pg_inv_cnt[ppa] == 0);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
         NVMEV_DEBUG("%s assigning PPA %llu (%u)\n", __func__, ppa, cnt++);
@@ -670,7 +673,9 @@ wb_update:
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
+#ifndef GC_STANDARD
             nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+#endif
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 			static int over_cnt = 0; over_cnt++;
