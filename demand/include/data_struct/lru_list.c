@@ -27,6 +27,15 @@ NODE* lru_push(LRU* lru, void* table_ptr){
 	return now;
 }
 
+void* lru_peek(LRU* lru){
+	if(!lru->head || lru->size == 0){
+		return NULL;
+	}
+	NODE *now = lru->tail;
+	void *re = now->DATA;
+	return re;
+}
+
 void* lru_pop(LRU* lru){
 	if(!lru->head || lru->size == 0){
 		return NULL;
@@ -43,6 +52,23 @@ void* lru_pop(LRU* lru){
 	lru->size--;
 	kfree(now);
 	return re;
+}
+
+void* lru_it(LRU* lru, NODE** it) {
+    void *ret = NULL;
+	if(!lru->head || lru->size == 0){
+		return NULL;
+	}
+    if(!(*it)) {
+        *it = lru->head->next;
+        return lru->head->DATA;
+    } else if((*it) == lru->tail) {
+        return NULL;
+    } else {
+        ret = (*it)->next->DATA;
+        *it = (*it)->next;
+        return ret;
+    }
 }
 
 void lru_update(LRU* lru, NODE* now){

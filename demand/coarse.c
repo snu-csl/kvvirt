@@ -70,7 +70,7 @@ static void cg_env_init(cache_t c_type, struct cache_env *const _env) {
     uint64_t dram = (uint64_t)((capa * 100) / 100000);
     printk("DRAM is %lluMB\n", dram >> 20);
 
-    _env->max_cached_tpages = dram / spp.pgsz;
+    _env->max_cached_tpages = 10; // dram / spp.pgsz;
 	_env->max_cached_tentries = 0; // not used here
 
 #ifdef DVALUE
@@ -191,7 +191,7 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
         wb_entry->mapping_v = _value_mr;
     }
 
-    NVMEV_ERROR("Reading a mapping PPA %llu in %s.\n", cmt->t_ppa, __func__);
+    NVMEV_INFO("Reading a mapping PPA %llu in %s.\n", cmt->t_ppa, __func__);
 
     _value_mr->ssd = d_member.ssd;
 	nsec = __demand.li->read(cmt->t_ppa, spp.pgsz, _value_mr, ASYNC, 
@@ -207,19 +207,30 @@ int cg_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_comp
 	return 1;
 }
 
-void __page_to_pte(value_set *value, struct pt_struct *pt) {
+void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx) {
     struct ssdparams *spp = &d_member.ssd->sp;
+    uint64_t entry_sz = sizeof(uint64_t) * 2;
 
-    for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        uint64_t ppa = *(uint64_t*) (value->value + (i * ENTRY_SIZE));
-        pt[i].ppa = ppa;
+    for(int i = 0; i < spp->pgsz / entry_sz; i++) {
+        uint64_t lpa = *(uint64_t*)  (value->value + (i * entry_sz));
+        uint64_t ppa = *(uint64_t*) (value->value + ((i * entry_sz) + sizeof(uint64_t)));
+
+        if(lpa == 0) {
+            continue;
+        }
+
+        NVMEV_INFO("Checking %llu %llu IDX %llu against IDX %llu\n", lpa, ppa, IDX(lpa), idx);
+
+        if(IDX(lpa) == idx) {
+            NVMEV_INFO("Assigning LPA %llu to PPA %llu in filter.\n", lpa, ppa);
+            pt[OFFSET(lpa)].ppa = ppa;
+        } else {
+            pt[i].ppa = U64_MAX;
+        }
+
 #ifdef STORE_KEY_FP
         BUG_ON(true);
 #endif
-
-        if(ppa != U64_MAX) {
-            //NVMEV_ERROR("IDX %u PPA %llu in %s.\n", i, ppa, __func__);
-        }
     }
 }
 
@@ -250,38 +261,116 @@ void __reset_pt(struct pt_struct *pt) {
     }
 }
 
+uint64_t __cmt_real_size(struct cmt_struct *cmt) {
+    uint64_t ret = 0;
+
+    for(int i = 0; i < EPP; i++) {
+        if(cmt->pt[i].ppa != U64_MAX) {
+            ret += ENTRY_SIZE;
+        }
+    }
+
+    return ret;
+}
+
+struct victim_entry {
+    uint64_t lpa;
+    uint64_t ppa;
+    struct cmt_struct *pt;
+};
+
+void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru, 
+                       struct victim_entry **victims, uint64_t *cnt) { 
+                       //uint64_t *victims, uint64_t *cnt,
+                       //struct cmt_struct ***victim_structs) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+    NODE* it = NULL;
+    void* item = NULL;
+    uint64_t count = 0;
+
+    while((item = lru_it(lru, &it)) != NULL) {
+        struct cmt_struct *pt = (struct cmt_struct*) item;
+
+        if(pt->state == CLEAN) {
+            continue;
+        }
+
+        uint64_t size = __cmt_real_size(pt);
+        uint64_t incr = sizeof(uint64_t);
+        uint64_t remaining = spp->pgsz - (count * incr);
+        uint64_t start_lpa = pt->idx * EPP;
+        uint64_t ppa;
+
+        //NVMEV_INFO("Had victim IDX %d size %llu remaining %llu\n", 
+        //        pt->idx, __cmt_real_size(pt), remaining);
+
+        if(size <= remaining) {
+            (*victims)[count].pt = pt;
+            for(uint64_t i = 0; i < EPP; i++) {
+                ppa = pt->pt[i].ppa;
+                if(ppa != U64_MAX) {
+                    ppa = ppa;
+                    NVMEV_INFO("Copying %llu %llu to victim list off %llu.\n",
+                                start_lpa + i, ppa, count);
+                    (*victims)[count].lpa = start_lpa + i;
+                    (*victims)[count].ppa = ppa;
+                    //memcpy(victims + (count * incr), &lpa, sizeof(lpa));
+                    //memcpy(victims + ((count + 1) * incr), &ppa, sizeof(ppa));
+                    count++;
+                }
+            }
+        }
+    }
+
+    //NVMEV_INFO("Copied %llu pairs.\n", count);
+    *cnt = count;
+}
+
+void __print_lru(LRU* lru) {
+    NODE* it = NULL;
+    void* item = NULL;
+
+    while((item = lru_it(lru, &it)) != NULL) {
+        struct cmt_struct *i = (struct cmt_struct*) item;
+        NVMEV_INFO("Had victim IDX %d size %llu\n", 
+                    i->idx, __cmt_real_size(i));
+    }
+}
+
 int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry, 
                uint64_t *nsecs_completed, uint64_t *credits) {
     int rc = 0;
 	blockmanager *bm = __demand.bm;
     uint64_t nsecs_latest = 0, nsecs = 0;
+    struct ssdparams *spp = &d_member.ssd->sp;
+    struct victim_entry *victims;
+    uint64_t cnt;
 
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 	struct cmt_struct *victim = NULL;
 
-    NVMEV_ERROR("Got CMT IDX %llu.\n", IDX(lpa));
+    NVMEV_INFO("list_up for IDX %llu.\n", IDX(lpa));
 
 	struct inflight_params *i_params;
 
 	if (cg_is_full()) {
         NVMEV_DEBUG("%s lpa %llu translation cache full.\n", __func__, lpa);
-		victim = (struct cmt_struct *)lru_pop(cmbr->lru);
-		cmbr->nr_cached_tpages--;
 
-        NVMEV_ASSERT(victim->idx != IDX(lpa));
+        victim = (struct cmt_struct *)lru_peek(cmbr->lru);
+        if(victim->state == CLEAN) {
+            victim = (struct cmt_struct *)lru_pop(cmbr->lru);
+            cmbr->nr_cached_tpages--;
 
-		if (victim->state == DIRTY) {
-			cstat->dirty_evict++;
+            victim->lru_ptr = NULL;
+            kfree(victim->pt);
+            victim->pt = NULL;
+        } else {
+            victims = (struct victim_entry*) 
+                      kzalloc(EPP * sizeof(struct victim_entry), GFP_KERNEL);
+            __collect_victims(ftl, cmbr->lru, &victims, &cnt);
 
-            if(victim->t_ppa != U64_MAX) {
-                //NVMEV_ERROR("Marking previous PPA %llu for IDX %llu invalid.\n",
-                //        victim->t_ppa, victim->idx);
-                //mark_grain_invalid(ftl, PPA_TO_PGA(victim->t_ppa, 0), GRAIN_PER_PAGE);
-            }
-
-			i_params = get_iparams(req, wb_entry);
-			i_params->jump = GOTO_COMPLETE;
-			//i_params->pte = cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
+            i_params = get_iparams(req, wb_entry);
+            i_params->jump = GOTO_COMPLETE;
 
             struct ppa p = get_new_page(ftl, MAP_IO);
             uint64_t ppa = ppa2pgidx(ftl, &p);
@@ -290,57 +379,60 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
             mark_page_valid(ftl, &p);
             mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
 
-            /*
-             * U64_MAX - 1 for a mapping page, as opposed to U64_MAX which
-             * is a page of invalid KV pair mappings.
-             *
-             * The IDX is used during GC so that we know which CMT entry
-             * to update.
-             */
-
             oob[ppa][0] = U64_MAX - 1;
-            oob[ppa][1] = victim->idx * EPP;
+            oob[ppa][1] = 1010101010101010;
 
-			victim->t_ppa = ppa;
-			victim->state = CLEAN;
-
-            NVMEV_ERROR("Assigned PPA %llu to victim at IDX %u in %s.\n", 
-                        ppa, victim->idx, __func__);
-
-            //printk("%s dirty page %u.\n", __func__, victim->t_ppa);
-
-			//struct pt_struct pte = cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
-
-			value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
+            value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
             _value_mw->ssd = d_member.ssd;
+            _value_mw->value = kzalloc(spp->pgsz, GFP_KERNEL);
 
-            __pte_to_page(_value_mw, victim->pt);
-			nsecs = __demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC, 
+            uint64_t step = sizeof(uint64_t) * 2;
+            uint8_t *ptr = _value_mw->value;
+            for(int i = 0; i < cnt; i++) {
+                uint64_t lpa = victims[i].lpa;
+                uint64_t ppa = victims[i].ppa;
+
+                memcpy(ptr + (i * step), &lpa, sizeof(lpa));
+                memcpy(ptr + (i * step) + sizeof(uint64_t), &ppa, sizeof(ppa));
+            }
+
+            nsecs = __demand.li->write(ppa, PAGESIZE, _value_mw, ASYNC, 
                                        make_algo_req_rw(MAPPINGW, _value_mw, 
                                        req, wb_entry));
-			//set_oob(bm, victim->idx, victim->t_ppa, MAP);
 
-			rc = 1;
+            uint64_t last_idx = U64_MAX;
+            for(int i = 0; i < cnt; i++) {
+                uint64_t idx = victims[i].lpa / EPP;
+                struct cmt_struct *cmt = cmbr->cmt[idx];
+
+                if(idx == last_idx) {
+                    continue;
+                }
+
+                NVMEV_INFO("IDX %llu gets PPA %llu\n", idx, ppa);
+
+                lru_delete(cmbr->lru, cmt->lru_ptr);
+                cstat->dirty_evict++;
+                cmbr->nr_cached_tpages--;
+                cmt->t_ppa = ppa;
+                cmt->state = CLEAN;
+                cmt->lru_ptr = NULL;
+                kfree(cmt->pt);
+                cmt->pt = NULL;
+                last_idx = idx;
+            }
+
+            rc = 1;
             (*credits) += GRAIN_PER_PAGE;
 
-            NVMEV_ERROR("Evicted DIRTY mapping entry IDX %u in %s.\n", 
-                         victim->idx, __func__);
-		} else {
-            NVMEV_ERROR("Evicted CLEAN mapping entry IDX %u in %s.\n", 
-                         victim->idx, __func__);
-			cstat->clean_evict++;
-		}
-
-        victim->lru_ptr = NULL;
-        //__reset_pt(victim->pt);
-        kfree(victim->pt);
-        victim->pt = NULL;
-	}
+            kfree(victims);
+        }
+	} 
 
     nsecs_latest = max(nsecs_latest, nsecs);
 
 	//cmt->pt = cmbr->mem_table[IDX(lpa)];
-    NVMEV_ERROR("Building mapping PPA %llu for LPA %llu\n", cmt->t_ppa, lpa);
+    NVMEV_INFO("Building mapping PPA %llu for LPA %llu\n", cmt->t_ppa, lpa);
 	cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
 	cmbr->nr_cached_tpages++;
 
@@ -361,10 +453,8 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
         }
 
 		if (req) {
-            NVMEV_ERROR("Entered req branch in %s.\n", __func__);
-
             NVMEV_ASSERT(req->mapping_v);
-            __page_to_pte(req->mapping_v, cmt->pt);
+            __page_to_pte(req->mapping_v, cmt->pt, IDX(lpa));
             kfree(req->mapping_v->value);
             kfree(req->mapping_v);
             req->mapping_v = NULL;
@@ -383,8 +473,7 @@ int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 			}
 		} else if (wb_entry) {
             NVMEV_ASSERT(wb_entry->mapping_v);
-
-            __page_to_pte(wb_entry->mapping_v, cmt->pt);
+            __page_to_pte(wb_entry->mapping_v, cmt->pt, IDX(lpa));
             kfree(wb_entry->mapping_v->value);
             kfree(wb_entry->mapping_v);
             wb_entry->mapping_v = NULL;
@@ -430,6 +519,8 @@ int cg_wait_if_flying(lpa_t lpa, request *const req, snode *wb_entry) {
 
 int cg_touch(lpa_t lpa) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
+
+    NVMEV_INFO("Update for IDX %llu\n", IDX(lpa));
 	lru_update(cmbr->lru, cmt->lru_ptr);
 	return 0;
 }
@@ -454,6 +545,7 @@ int cg_update(lpa_t lpa, struct pt_struct pte) {
 		}
 
 		cmt->state = DIRTY;
+        NVMEV_INFO("1 Update for IDX %llu\n", IDX(lpa));
 		lru_update(cmbr->lru, cmt->lru_ptr);
 	} else {
         BUG_ON(true);

@@ -252,7 +252,7 @@ int validate_grain(blockmanager *, pga_t);
 int invalidate_grain(blockmanager *, pga_t);
 #endif
 
-void __page_to_pte(value_set *value, struct pt_struct *pt);
+void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx);
 void __pte_to_page(value_set *value, struct pt_struct *pt);
 
 #endif

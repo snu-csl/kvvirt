@@ -295,7 +295,8 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             }
         }
 
-        __page_to_pte(pts[cmts_loaded], cmt->pt);
+        BUG_ON(true);
+        //__page_to_pte(pts[cmts_loaded], cmt->pt);
 
         uint64_t offset = OFFSET(ppas[i].lpa);
         cmt->pt[offset].ppa = ppas[i].new_ppa;

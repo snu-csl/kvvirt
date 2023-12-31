@@ -686,7 +686,7 @@ wb_update:
         }
 wb_direct_update:
 		d_cache->update(lpa, new_pte);
-        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_INFO("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;
