@@ -417,7 +417,6 @@ bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type)
 
     if(io_type == MAP_IO) {
         wpp->curline->map = true;
-        NVMEV_INFO("Line %d is MAP_IO.\n", wpp->curline->id);
     } else {
         wpp->curline->map = false;
     }
@@ -1736,14 +1735,11 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
     user_pgs_this_gc = gc_pgs_this_gc = 0;
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_INFO("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
 		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
             conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
             conv_ftl->lm.free_line_cnt);
 
-    if(victim_line->map) {
-        NVMEV_INFO("Was a mapping line.\n");
-    }
 
 	conv_ftl->wfc.credits_to_refill = victim_line->igc;
     nsecs_completed = __get_inv_mappings(conv_ftl, victim_line->id);
@@ -1824,7 +1820,6 @@ static uint64_t forground_gc(struct conv_ftl *conv_ftl)
 {
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
-    NVMEV_INFO("Entered %s\n", __func__);
 	while(should_gc_high(conv_ftl)) {
 		NVMEV_DEBUG("should_gc_high passed");
 		/* perform GC here until !should_gc(conv_ftl) */
@@ -1832,7 +1827,6 @@ static uint64_t forground_gc(struct conv_ftl *conv_ftl)
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 	}
 
-    NVMEV_INFO("Left %s\n", __func__);
     return nsecs_latest;
 }
 

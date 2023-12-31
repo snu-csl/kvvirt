@@ -384,6 +384,13 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         cmts_loaded++;
     }
 
+    for(int i = 0; i < unique_cmts; i++) {
+        kfree(pts[i]->value);
+        kfree(pts[i]);
+    }
+    kfree(pts); 
+
+
 	kfree(skip_update);
 	return 0;
 }
