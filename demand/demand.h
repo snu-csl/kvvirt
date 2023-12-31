@@ -21,11 +21,17 @@
 #include <linux/highmem.h>
 #include <linux/vmalloc.h>
 
+extern uint64_t user_pgs_this_gc;
+extern uint64_t gc_pgs_this_gc;
+extern uint64_t map_pgs_this_gc;
+extern uint64_t pgs_this_flush;
+
 struct lpa_len_ppa {
     uint64_t lpa; /* the lpa we find in the reverse map. */
     uint32_t len; /* the length of the key-value pair. */
     uint64_t prev_ppa; /* to copy from during GC */
     uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
+    bool skip_read; /* skip the read for this page when updating mappings. */
 };
 
 void clear_oob(uint64_t pgidx);
@@ -38,9 +44,10 @@ void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
 void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
 inline void consume_write_credit(struct conv_ftl *conv_ftl, uint32_t len);
-inline void check_and_refill_write_credit(struct conv_ftl *conv_ftl);
+inline uint64_t check_and_refill_write_credit(struct conv_ftl *conv_ftl);
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
-int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains);
+int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
+                             uint64_t *read_cmts, uint64_t read_cmt_cnt);
 inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa);
 
 extern struct demand_stat d_stat;
@@ -54,7 +61,6 @@ struct pt_struct {
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
 #endif
-    bool *grains;
 };
 
 // Cached mapping table
@@ -70,7 +76,7 @@ struct cmt_struct {
 	queue *retry_q;
 	queue *wait_q;
 
-	bool *is_cached;
+    bool *is_cached;
 	uint32_t cached_cnt;
 	uint32_t dirty_cnt;
 };
@@ -239,5 +245,8 @@ int contains_valid_grain(blockmanager *, ppa_t);
 int validate_grain(blockmanager *, pga_t);
 int invalidate_grain(blockmanager *, pga_t);
 #endif
+
+void __page_to_pte(value_set *value, struct pt_struct *pt);
+void __pte_to_page(value_set *value, struct pt_struct *pt);
 
 #endif

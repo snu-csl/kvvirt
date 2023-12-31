@@ -221,8 +221,8 @@ struct ssdparams {
      */
 
     unsigned long dram_size; /* DRAM size for caching KV/KV mapping entries. */
-    unsigned long tt_map_blks;
-    unsigned long tt_data_blks;
+    unsigned long tt_map_pgs;
+    unsigned long tt_data_pgs;
 
     unsigned long inv_ppl;
 };

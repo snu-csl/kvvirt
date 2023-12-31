@@ -8,6 +8,8 @@
 #include "cache.h"
 #include "./interface/interface.h"
 
+#include <linux/sched/clock.h>
+
 extern algorithm __demand;
 
 extern struct demand_env d_env;
@@ -133,18 +135,18 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
 
         NVMEV_ASSERT(INV_PAGE_SZ == spp.pgsz);
 
-        struct ppa n_p = get_new_page(ftl, USER_IO);
+        struct ppa n_p = get_new_page(ftl, MAP_IO);
         uint64_t pgidx = ppa2pgidx(ftl, &n_p);
 
         NVMEV_ASSERT(pg_inv_cnt[pgidx] == 0);
-        NVMEV_ASSERT(advance_write_pointer(ftl, USER_IO));
+        NVMEV_ASSERT(advance_write_pointer(ftl, MAP_IO));
         mark_page_valid(ftl, &n_p);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
         oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        //NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
-        //        line, inv_mapping_offs[line], w_ppa);
+        NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+                line, inv_mapping_offs[line], w_ppa);
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];
@@ -162,7 +164,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
 
         BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
 
-        *credits += GRAIN_PER_PAGE;
+        (*credits) += GRAIN_PER_PAGE;
     }
 
     memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
@@ -213,6 +215,7 @@ static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
     struct ssdparams spp = d_member.ssd->sp;
 	value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp.pgsz);
 	struct algo_req *a_req = make_algo_req_rw(DATAR, _value_dr_check, NULL, wb_entry);
+    uint64_t nsecs_completed;
 
     a_req->ppa = ppa;
 #ifdef DVALUE
@@ -220,13 +223,14 @@ static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 	ppa = G_IDX(ppa);
 #endif
     _value_dr_check->ssd = d_member.ssd;
-	__demand.li->read(ppa, spp.pgsz, _value_dr_check, ASYNC, a_req);
-	return 0;
+	nsecs_completed = __demand.li->read(ppa, spp.pgsz, _value_dr_check, ASYNC, a_req);
+	return nsecs_completed;
 }
 
 uint64_t __demand_read(request *const req, bool for_del) {
 	uint64_t rc = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t credits = 0;
 
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
 
@@ -306,15 +310,15 @@ cache_load:
             req->value->length = 0;
 			rc = U64_MAX;
 			warn_notfound(__FILE__, __LINE__);
+            goto read_ret;
 		}
-		goto read_ret;
 cache_list_up:
-		rc = d_cache->list_up(lpa, req, NULL, &nsecs_completed);
+		rc = d_cache->list_up(lpa, req, NULL, &nsecs_completed, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-		if (rc) {
-            req->value->length = 0;
-			goto read_ret;
-		}
+		//if (rc) {
+        //    req->value->length = 0;
+		//	goto read_ret;
+		//}
 	}
 
 cache_check_complete:
@@ -351,7 +355,6 @@ data_read:
     if(for_del) {
         NVMEV_ASSERT(!IS_INITIAL_PPA(pte.ppa));
 
-        uint64_t credits = 0;
         uint64_t offset = G_OFFSET(pte.ppa);
         uint32_t len = 1;
 
@@ -372,11 +375,11 @@ data_read:
         d_htable_insert(d_member.hash_table, U64_MAX, lpa);
 
         nvmev_vdev->space_used -= len * GRAINED_UNIT;
+    }
 
-        if(credits > 0) {
-            consume_write_credit(ftl, credits);
-            check_and_refill_write_credit(ftl);
-        }
+    if(credits > 0) {
+        consume_write_credit(ftl, credits);
+        check_and_refill_write_credit(ftl);
     }
 
 read_ret:
@@ -526,9 +529,10 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static void _do_wb_mapping_update(skiplist *wb) {
+static uint64_t _do_wb_mapping_update(skiplist *wb) {
 	int rc = 0;
     uint64_t credits = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0;
 	blockmanager *bm = __demand.bm;
 
 	snode *wb_entry;
@@ -564,7 +568,6 @@ wb_retry:
 #ifdef STORE_KEY_FP
 		new_pte.key_fp = h_params->key_fp;
 #endif
-
 		/* inflight wb_entries */
 		if (IS_INFLIGHT(wb_entry->params)) {
 			struct inflight_params *i_params = (struct inflight_params *)wb_entry->params;
@@ -596,13 +599,17 @@ wb_cache_load:
 			if (rc) continue; /* pending */
 
             //printk("%s passed wait_if_flying for LPA %u\n", __func__, lpa);
-
+            
 			rc = d_cache->load(lpa, NULL, wb_entry, NULL);
 			if (rc) continue; /* mapping read */
 
             //printk("%s passed load for LPA %u\n", __func__, lpa);
 wb_cache_list_up:
-			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL);
+            /*
+             * TODO time here.
+             */
+
+			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL, &credits);
 			if (rc) continue; /* mapping write */
 
             //printk("%s passed list_up for LPA %u\n", __func__, lpa);
@@ -641,7 +648,8 @@ wb_data_check:
         //printk("%s passed hash table check for LPA %u\n", __func__, lpa);
 
 		/* data check is necessary before update */
-		read_for_data_check(pte.ppa, wb_entry);
+		nsecs_completed = read_for_data_check(pte.ppa, wb_entry);
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
         //printk("%s passed data check for LPA %u\n", __func__, lpa);
 		continue;
 #endif
@@ -662,10 +670,11 @@ wb_update:
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
-            _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+            nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 			static int over_cnt = 0; over_cnt++;
-			if (over_cnt % 1000 == 0) printk("overwrite: %d\n", over_cnt);
+			if (over_cnt % 100000 == 0) printk("overwrite: %d\n", over_cnt);
 		} else {
             NVMEV_ERROR("INSERT: Key %s\n", wb_entry->key.key);
             nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
@@ -714,28 +723,31 @@ wb_direct_update:
      */
 
     consume_write_credit(ftl, credits);
-    check_and_refill_write_credit(ftl);
+    nsecs_completed = check_and_refill_write_credit(ftl);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 	kfree(iter);
 
-    //NVMEV_ERROR("Exited mapping update.\n");
+    NVMEV_DEBUG("BREAKDOWN: %lluns load %lluns list_up %lluns update %lluns refill %llu loops.\n",
+            load, list_up, update, refill, loop);
+
+    return nsecs_latest;
 }
 
 uint64_t _do_wb_flush(skiplist *wb) {
 	struct flush_list *fl = d_member.flush_list;
     struct ssdparams spp = d_member.ssd->sp;
-    uint64_t nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
 	for (int i = 0; i < fl->size; i++) {
 		ppa_t ppa = fl->list[i].ppa;
 		value_set *value = fl->list[i].value;
         value->ssd = d_member.ssd;
 
-        NVMEV_DEBUG("PPA %llu value len %d\n", ppa, value->length);
-
-		nsecs_latest = 
+		nsecs_completed = 
         __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
                            make_algo_req_rw(DATAW, value, NULL, NULL));
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
     }
 
 	fl->size = 0;
@@ -752,6 +764,7 @@ uint64_t _do_wb_flush(skiplist *wb) {
 	return nsecs_latest;
 }
 
+uint64_t pgs_this_flush = 0;
 static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
     //NVMEV_DEBUG("%s K1 %s KLEN %u K2 %s\n", __func__,
@@ -772,34 +785,45 @@ uint64_t __demand_write(request *const req) {
     uint64_t nsecs_start = req->req->nsecs_start;
     uint64_t length = req->value->length;
 	skiplist *wb = d_member.write_buffer;
+    struct ssdparams *spp = &d_member.ssd->sp;
 
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
-		//printk("write buffer flush!\n");
 		/* assign ppa first */
-		if(!_do_wb_assign_ppa(wb)) {
-            wb = d_member.write_buffer =  skiplist_init();
-            NVMEV_ERROR("Failing!\n");
-            goto failed;
-        }
+        
+        uint64_t start = ktime_get_ns();
+        nsecs_completed = _do_wb_assign_ppa(wb);
+        nsecs_latest = nsecs_completed;
+        uint64_t end = ktime_get_ns();
+        NVMEV_ERROR("_do_wb_assign_ppa took %lluns\n", end - start);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
-		_do_wb_mapping_update(wb);
-        //printk("passed mapping_update\n");
+        start = ktime_get_ns();
+		nsecs_completed = _do_wb_mapping_update(wb);
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
+        end = ktime_get_ns();
+        NVMEV_ERROR("_do_wb_mapping_update took %lluns\n", end - start);
 		
 		/* flush the buffer */
+        start = ktime_get_ns();
 		nsecs_latest = _do_wb_flush(wb);
-        //printk("passed flush\n");
+        nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = d_member.write_buffer =  skiplist_init();
+        end = ktime_get_ns();
+        NVMEV_ERROR("_do_wb_flush took %lluns\n", end - start);
         NVMEV_DEBUG("Assigned new WB.\n");
-	}
+
+        //NVMEV_INFO("%llu pages this flush. %lu pgs_per_line.", 
+        //            pgs_this_flush, spp->pgs_per_line);
+    }
+
+    pgs_this_flush = 0;
 
     ////printk("Advancing WB %llu start %llu length.\n", nsecs_start, length);
 
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
    
-failed:
     nsecs_completed =
     ssd_advance_write_buffer(req->ssd, nsecs_start, length);
 
@@ -924,8 +948,9 @@ void *demand_end_req(algo_req *a_req) {
 #endif
 		break;
 	case MAPPINGR:
+        NVMEV_ERROR("In MAPPINGR.\n");
 		d_stat.trans_r++;
-		inf_free_valueset(d_params->value, FS_MALLOC_R);
+		//inf_free_valueset(d_params->value, FS_MALLOC_R);
 		if (sync_mutex) {
 			if (IS_READ(req)) d_stat.t_read_on_read++;
 			else d_stat.t_read_on_write++;
@@ -936,11 +961,13 @@ void *demand_end_req(algo_req *a_req) {
 		} else if (IS_READ(req)) {
 			d_stat.t_read_on_read++;
 			req->type_ftl++;
-			insert_retry_read(req);
+            return NULL;
+			//insert_retry_read(req);
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_read_on_write++;
 			q_enqueue((void *)wb_entry, d_member.wb_retry_q);
+            return NULL;
 		}
 		break;
 	case MAPPINGW:
@@ -949,8 +976,9 @@ void *demand_end_req(algo_req *a_req) {
 		if (IS_READ(req)) {
 			d_stat.t_write_on_read++;
 			req->type_ftl+=100;
+            return NULL;
             //printk("Re-queuing read-type req in MAPPINGW.\n");
-			insert_retry_read(req);
+			//insert_retry_read(req);
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_write_on_write++;
@@ -970,11 +998,11 @@ void *demand_end_req(algo_req *a_req) {
 	case GCMR_DGC:
 		d_stat.trans_r_dgc++;
 		d_member.nr_tpages_read_done++;
-		inf_free_valueset(d_params->value, FS_MALLOC_R);
+		//inf_free_valueset(d_params->value, FS_MALLOC_R);
 		break;
 	case GCMW_DGC:
 		d_stat.trans_w_dgc++;
-		inf_free_valueset(d_params->value, FS_MALLOC_W);
+		//inf_free_valueset(d_params->value, FS_MALLOC_W);
 		break;
 	case GCMR:
 		d_stat.trans_r_tgc++;

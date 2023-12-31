@@ -67,7 +67,7 @@
 #define PART_RATIO 0.5
 
 #define WRITE_BACK
-#define MAX_WRITE_BUF 8
+#define MAX_WRITE_BUF 256
 
 #define STRICT_CACHING
 

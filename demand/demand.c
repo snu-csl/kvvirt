@@ -97,6 +97,7 @@ static void print_demand_env(const struct demand_env *_env) {
 	printk(" | WriteBuffer flush size: %lld\n", _env->wb_flush_size);
 	printk(" |\n");
 	printk(" | ! Assume no Shadow buffer\n");
+    printk(" | We can write %u 1024B pairs.\n", _env->nr_dgrains / (1024 / GRAIN_PER_PAGE));
 	printk(" |---------- algorithm_log END\n");
 
 	printk("\n");
@@ -107,10 +108,10 @@ static void demand_env_init(struct demand_env *const _env, const struct ssdparam
 	_env->nr_pages = spp->tt_pgs;
 	_env->nr_blocks = spp->tt_blks;
 
-	_env->nr_tblks = spp->tt_map_blks;
-	_env->nr_tpages = spp->tt_map_blks * spp->pgs_per_blk;
-	_env->nr_dblks = spp->tt_data_blks;
-	_env->nr_dpages = spp->tt_data_blks * spp->pgs_per_blk;
+	_env->nr_tblks = spp->tt_map_pgs / spp->pgs_per_blk;
+	_env->nr_tpages = spp->tt_map_pgs;
+	_env->nr_dblks = spp->tt_data_pgs / spp->pgs_per_blk;
+	_env->nr_dpages = spp->tt_data_pgs;
 
 /*	_env->caching_ratio = CACHING_RATIO;
 	_env->nr_tpages_optimal_caching = _env->nr_pages * 4 / PAGESIZE;
@@ -214,12 +215,12 @@ uint32_t demand_create(lower_info *li, blockmanager *bm,
 static int count_filled_entry(void) {
 	int ret = 0;
 	for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
-		struct pt_struct *pt = d_cache->member.mem_table[i];
-		for (int j = 0; j < EPP; j++) {
-			if (pt[j].ppa != U64_MAX) {
-				ret++;
-			}
-		}
+		//struct pt_struct *pt = d_cache->member.mem_table[i];
+		//for (int j = 0; j < EPP; j++) {
+		//	if (pt[j].ppa != U64_MAX) {
+		//		ret++;
+		//	}
+		//}
 	}
 	return ret;
 }
@@ -313,7 +314,7 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("================");
 
 	printk("[Overall Hash-table Load Factor]");
-	int filled_entry_cnt = count_filled_entry();
+	int filled_entry_cnt = 0;//count_filled_entry();
 	int total_entry_cnt = d_cache->env.nr_valid_tentries;
 	printk("Total entry:  %d\n", total_entry_cnt);
 	printk("Filled entry: %d\n", filled_entry_cnt);

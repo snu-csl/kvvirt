@@ -27,18 +27,11 @@ struct cache_env {
 
 struct cache_member {
 	struct cmt_struct **cmt;
-	struct pt_struct **mem_table;
+	//struct pt_struct **mem_table;
 	LRU *lru;
 
 	int nr_cached_tpages;
 	int nr_cached_tentries;
-
-    /*
-     * Grains and lengths in mapping pages.
-     */
-
-    bool *grains;
-    uint16_t *vlens;
 };
 
 struct cache_stat {
@@ -58,7 +51,7 @@ struct demand_cache {
 	int (*destroy) (void);
 
 	int (*load) (lpa_t lpa, request *const req, snode *wb_entry, uint64_t *);
-	int (*list_up) (lpa_t lpa, request *const req, snode *wb_entry, uint64_t*);
+	int (*list_up) (lpa_t lpa, request *const req, snode *wb_entry, uint64_t*, uint64_t*);
 	int (*wait_if_flying) (lpa_t lpa, request *const req, snode *wb_entry);
 
 	int (*touch) (lpa_t lpa);

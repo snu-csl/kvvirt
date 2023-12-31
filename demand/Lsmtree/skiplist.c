@@ -562,7 +562,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
 	if(key==x->key)
 #endif
 	{
-        NVMEV_DEBUG("Skiplist overwrite for key %s\n", key.key);
+        //NVMEV_DEBUG("Skiplist overwrite for key %s\n", key.key);
         //	algo_req * old_req=x->req;
         //	lsm_params *old_params=(lsm_params*)old_req->params;
         //	old_params->lsm_type=OLDDATA;
@@ -589,7 +589,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         return x;
     }
     else{
-        NVMEV_DEBUG("Skiplist insert for key %s\n", key.key);
+        //NVMEV_DEBUG("Skiplist insert for key %s\n", key.key);
         int level=getLevel();
         if(level>list->level){
             for(int i=list->level+1; i<=level; i++){
@@ -794,7 +794,6 @@ void skiplist_clear(skiplist *list){
 
 		if(now->value){
             kfree(now->value);
-            printk("skiplist_clear checkme.\n");
 			//inf_free_valueset(now->value,FS_MALLOC_W);//not only length<PAGESIZE also length==PAGESIZE, just free req from inf
 		}
 		kfree(now->key.key);

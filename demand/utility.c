@@ -54,7 +54,6 @@ void free_algo_req(struct algo_req *a_req) {
 	kfree(a_req);
 }
 
-
 #ifdef HASH_KVSSD
 void copy_key_from_key(KEYT *dst, KEYT *src) {
 	dst->len = src->len;

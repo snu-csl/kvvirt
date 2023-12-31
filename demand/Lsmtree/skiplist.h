@@ -61,6 +61,7 @@ typedef struct snode{ //skiplist's node
      */
 
     uint64_t sqid;
+    value_set *mapping_v;
 }snode;
 
 //#ifdef Lsmtree

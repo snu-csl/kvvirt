@@ -62,6 +62,7 @@ struct line {
 	struct list_head entry;
 	/* position in the priority queue for victim lines */
 	size_t pos;
+    bool map;
 };
 
 /* wp: record next write addr */

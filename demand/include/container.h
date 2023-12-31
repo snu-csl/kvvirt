@@ -86,6 +86,7 @@ struct request {
     struct ssd *ssd;
     uint64_t sqid;
     struct nvme_kv_command *cmd;
+    value_set *mapping_v;
 };
 
 struct algo_req {

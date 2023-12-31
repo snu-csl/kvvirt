@@ -67,6 +67,7 @@ static void _do_wait_until_read_all(int nr_valid_pages) {
 }
 
 static int _do_bulk_write_valid_pages(blockmanager *bm, struct gc_table_struct **bulk_table, int nr_valid_pages, page_t type) {
+    BUG_ON(true);
 	for (int i = 0; i < nr_valid_pages; i++) {
 		ppa_t new_ppa = bm->get_page_num(bm, (type == DATA) ? d_reserve : t_reserve);
 		value_set *new_vs = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
@@ -129,24 +130,25 @@ static int _do_bulk_mapping_update(blockmanager *bm, struct gc_table_struct **bu
 
 	/* write */
 	for (int i = 0; i < nr_valid_pages; i++) {
-		struct cmt_struct *cmt = d_cache->member.cmt[IDX(bulk_table[i]->lpa_list[0])];
-		struct pt_struct *pt = d_cache->member.mem_table[cmt->idx];
+        BUG_ON(true);
+		//struct cmt_struct *cmt = d_cache->member.cmt[IDX(bulk_table[i]->lpa_list[0])];
+		////struct pt_struct *pt = d_cache->member.mem_table[cmt->idx];
 
-		pt[OFFSET(bulk_table[i]->lpa_list[0])].ppa = bulk_table[i]->ppa;
-		while (i+1 < nr_valid_pages && IDX(bulk_table[i+1]->lpa_list[0]) == cmt->idx) {
-			pt[OFFSET(bulk_table[i+1]->lpa_list[0])].ppa = bulk_table[i+1]->ppa;
-			i++;
-		}
+		//pt[OFFSET(bulk_table[i]->lpa_list[0])].ppa = bulk_table[i]->ppa;
+		//while (i+1 < nr_valid_pages && IDX(bulk_table[i+1]->lpa_list[0]) == cmt->idx) {
+		//	pt[OFFSET(bulk_table[i+1]->lpa_list[0])].ppa = bulk_table[i+1]->ppa;
+		//	i++;
+		//}
 
-		cmt->t_ppa = get_tpage(bm);
-		value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
-        _value_mw->ssd = d_member.ssd;
-		__demand.li->write(cmt->t_ppa, PAGESIZE, _value_mw, ASYNC, make_algo_req_default(GCMW_DGC, _value_mw));
+		//cmt->t_ppa = get_tpage(bm);
+		//value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
+        //_value_mw->ssd = d_member.ssd;
+		//__demand.li->write(cmt->t_ppa, PAGESIZE, _value_mw, ASYNC, make_algo_req_default(GCMW_DGC, _value_mw));
 
-		bm->populate_bit(bm, cmt->t_ppa);
-		bm->set_oob(bm, (char *)&cmt->idx, sizeof(cmt->idx), cmt->t_ppa);
+		//bm->populate_bit(bm, cmt->t_ppa);
+		//bm->set_oob(bm, (char *)&cmt->idx, sizeof(cmt->idx), cmt->t_ppa);
 
-		cmt->state = CLEAN;
+		//cmt->state = CLEAN;
 	}
 	return 0;
 }

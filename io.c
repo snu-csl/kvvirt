@@ -143,8 +143,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		if (!read) {
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else {
-            //printk("Copying from %lu (%s)\n", offset, 
-            //        (char*) nvmev_vdev->ns[nsid].mapped + offset);
+            NVMEV_DEBUG("Copying from %lu (key is %s)\n", offset, 
+                         (char*) (nvmev_vdev->ns[nsid].mapped + offset + sizeof(uint8_t)));
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
 		}
 

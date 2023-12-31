@@ -21,7 +21,8 @@ struct demand_cache *select_cache(cache_t type) {
 		ret = &cg_cache;
 		break;
 	case FINE_GRAINED:
-		ret = &fg_cache;
+        BUG_ON(true);
+		//ret = &fg_cache;
 		break;
 #if 0
 	case PARTED:
