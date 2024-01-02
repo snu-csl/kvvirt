@@ -32,6 +32,9 @@ struct lpa_len_ppa {
     uint64_t prev_ppa; /* to copy from during GC */
     uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
     bool skip_read; /* skip the read for this page when updating mappings. */
+#ifndef GC_STANDARD
+    uint64_t cmt_ppa; /* which CMT ppa does this item belong to? */
+#endif
 };
 
 void clear_oob(uint64_t pgidx);
@@ -57,6 +60,7 @@ extern bool FAIL_MODE;
 /* Structures */
 // Page table entry
 struct pt_struct {
+    lpa_t lpa;
 	ppa_t ppa; // Index = lpa
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
@@ -69,6 +73,7 @@ struct cmt_struct {
 	struct pt_struct *pt;
 	NODE *lru_ptr;
 	ppa_t t_ppa;
+    ppa_t grain;
 
 	cmt_state_t state;
 	bool is_flying;

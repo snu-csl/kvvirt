@@ -52,6 +52,15 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
+    if(ppa_ > spp->tt_pgs) {
+        printk("Tried %llu\n", ppa_);
+        printk("Caller is %pS\n", __builtin_return_address(0));
+        printk("Caller is %pS\n", __builtin_return_address(1));
+        printk("Caller is %pS\n", __builtin_return_address(2));
+        printk("Caller is %pS\n", __builtin_return_address(3));
+        printk("Caller is %pS\n", __builtin_return_address(4));
+    }
+
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
 
 	return ppa;

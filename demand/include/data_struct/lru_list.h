@@ -23,6 +23,6 @@ void* lru_pop(LRU*);
 void* lru_peek(LRU*);
 void lru_update(LRU*, NODE*);
 void lru_delete(LRU*, NODE*);
-void* lru_it(LRU*, NODE**);
+void* lru_it(LRU*, NODE**, bool*);
 
 #endif

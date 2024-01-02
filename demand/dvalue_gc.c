@@ -182,6 +182,7 @@ bool __read_cmt(uint64_t lpa, uint64_t *read_cmts, uint64_t cnt) {
     return false;
 }
 
+#ifdef GC_STANDARD
 int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
                              uint64_t *read_cmts, uint64_t read_cmt_cnt) {
     struct ssdparams *spp = &d_member.ssd->sp;
@@ -353,6 +354,309 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 	kfree(skip_update);
 	return 0;
 }
+#else
+static int cmt_ppa_cmp(const void *a, const void *b)
+{
+    const struct lpa_len_ppa *da = a, *db = b;
+
+    if (db->cmt_ppa < da->cmt_ppa) return -1;
+    if (db->cmt_ppa > da->cmt_ppa) return 1;
+    return 0;
+}
+
+bool __already_read(uint64_t ppa, uint64_t *read_ppas, uint64_t cnt) {
+    for(int i = 0; i < cnt; i++) {
+        if(read_ppas[i] == ppa) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint64_t __ppa_to_idx(uint64_t* read_ppas, uint64_t cnt, uint64_t ppa) {
+    for(int i = 0; i < cnt; i++) {
+        if(read_ppas[i] == ppa) {
+            return i;
+        }
+    }
+    NVMEV_ASSERT(false);
+}
+
+void __update_pt(char* page, uint64_t lpa, uint64_t ppa) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+    uint64_t entry_sz = sizeof(uint64_t) * 2;
+
+    for(int i = 0; spp->pgsz / entry_sz; i++) {
+        uint64_t found_lpa = *(uint64_t*) (page + (i * entry_sz));
+        if(found_lpa == lpa) {
+            memcpy(page + (i * entry_sz) + sizeof(uint64_t), &ppa, sizeof(ppa));
+            return;
+        }
+    }
+
+    NVMEV_ASSERT(false);
+}
+
+/*
+ * The update process is as follows:
+ *
+ * We first sort the new LPA -> PPA by the PPA of the mapping table
+ * entry they originally belonged to. 
+ *
+ * Next, we read each mapping table entry into memory, and record
+ * the PPA of each entry into an array. The index of the array is the same
+ * as the index of another array that contains the actual mapping table pages.
+ *
+ * Then, we iterate the list of new LPA -> PPA mappings, and find the
+ * old version of the mapping table pages in memory by checking cmt_ppa
+ * of each lpa_len_ppa and iterating the PPA array mentioned above.
+ *
+ * When we find the old version of the mapping page in memory, we
+ * iterate each item in the page and update the matching LPA -> PPA
+ * entries.
+ */
+
+uint64_t idx_to_update[EPP];
+int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
+                             uint64_t *read_cmts, uint64_t read_cmt_cnt) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
+    bool skip_all = true;
+    uint64_t *read_ppas;
+    uint64_t read_ppas_cnt;
+
+    sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
+
+    uint64_t unique_cmts = 0;
+    uint64_t prev = U64_MAX;
+    for(int i = 0; i < nr_valid_grains; i++) {
+        uint64_t lpa = ppas[i].lpa;
+        uint64_t idx = IDX(lpa);
+        if(idx != prev && ppas[i].lpa != U64_MAX) {
+            unique_cmts++;
+            prev = idx;
+        }
+    }
+
+    NVMEV_ERROR("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
+                 unique_cmts, nr_valid_grains, read_cmt_cnt);
+
+    if(unique_cmts == 0) {
+        kfree(skip_update);
+        return 0;
+    }
+
+    value_set **pts = (value_set**) kzalloc(sizeof(value_set*) * unique_cmts, GFP_KERNEL);
+    for(int i = 0; i < unique_cmts; i++) {
+        pts[i] = (value_set*) kzalloc(sizeof(value_set), GFP_KERNEL);
+        pts[i]->value = kzalloc(spp->pgsz, GFP_KERNEL);
+        pts[i]->ssd = d_member.ssd;
+    }
+
+    read_ppas = (uint64_t*) kzalloc(spp->pgs_per_line * sizeof(uint64_t), GFP_KERNEL);
+    read_ppas_cnt = 0;
+
+    uint64_t cmts_loaded = 0;
+	/* read mapping table which needs update */
+    volatile int nr_update_tpages = 0;
+	for (int i = 0; i < nr_valid_grains; i++) {
+        ppa_t lpa = ppas[i].lpa;
+
+        if(lpa == U64_MAX || lpa == U64_MAX - 1) {
+            skip_update[i] = true;
+            continue;
+        }
+
+        skip_all = false;
+        NVMEV_INFO("%s updating mapping of LPA %llu IDX %llu to PPA %llu\n", 
+                    __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
+
+		if (d_cache->is_hit(lpa)) {
+            NVMEV_INFO("%s It was cached.\n", __func__);
+			struct pt_struct pte = d_cache->get_pte(lpa);
+			pte.ppa = ppas[i].new_ppa;
+			d_cache->update(lpa, pte);
+			skip_update[i] = true;
+		} else {
+            NVMEV_INFO("%s It wasn't cached.\n", __func__);
+            struct cmt_struct *cmt = d_cache->get_cmt(lpa);
+            if (cmt->t_ppa == U64_MAX) {
+                NVMEV_INFO("%s But the CMT had already been read here.\n", __func__);
+                continue;
+            } else if(__already_read(cmt->t_ppa, read_ppas, read_ppas_cnt)) {
+                /*
+                 * This CMT was already read before. This happens when the mapping
+                 * data of different CMT IDXs reside in the same page.
+                 */
+                NVMEV_INFO("%s 2 But the CMT had already been read here.\n", __func__);
+                continue;
+            }
+
+            /*
+             * We record the PPA here, but use the same counter as
+             * the loaded mapping pages for the index into the array so
+             * that the read_ppas and pts data lines up.
+             */
+
+            NVMEV_INFO("Recording CMT PPA %llu at index %llu\n", cmt->t_ppa, cmts_loaded);
+            read_ppas[cmts_loaded] = cmt->t_ppa;
+
+            if(__read_cmt(ppas[i].lpa, read_cmts, read_cmt_cnt)) {
+                NVMEV_INFO("%s skipping read PPA %llu as it was read earlier.\n",
+                            __func__, cmt->t_ppa);
+
+                uint64_t off = cmt->t_ppa * spp->pgsz;
+                memcpy(pts[cmts_loaded++]->value, nvmev_vdev->ns[0].mapped + off, spp->pgsz);
+            } else {
+                value_set *_value_mr = pts[cmts_loaded++];
+                _value_mr->ssd = d_member.ssd;
+                __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, NULL);
+
+                NVMEV_INFO("%s marking mapping PPA %llu invalid while it was being read during GC.\n",
+                        __func__, cmt->t_ppa);
+                mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
+            }
+            //invalidate_page(bm, cmt->t_ppa, MAP);
+            cmt->t_ppa = U64_MAX;
+
+            d_stat.trans_r_tgc++;
+            nr_update_tpages++;
+        }
+    }
+
+    uint64_t last_cmt_ppa = U64_MAX;
+    uint64_t off = 0;
+    uint64_t idx_to_update_cnt;
+    uint64_t pt_idx;
+    char *page;
+
+    read_ppas_cnt = cmts_loaded;
+    cmts_loaded = 0;
+
+    /* write */
+	for (int i = 0; i < nr_valid_grains; i++) {
+		if (skip_update[i]) {
+            NVMEV_INFO("Skipping update for LPA %llu PPA %llu\n", 
+                        ppas[i].lpa, ppas[i].prev_ppa);
+			continue;
+		}
+
+        last_cmt_ppa = ppas[i].cmt_ppa;
+        idx_to_update_cnt = 0;
+
+        NVMEV_INFO("Modifying CMT PPA %llu\n", last_cmt_ppa);
+
+        while(1) {
+            uint64_t idx = IDX(ppas[i].lpa);
+            uint64_t lpa = ppas[i].lpa;
+            uint64_t new_ppa = ppas[i].new_ppa;
+            struct cmt_struct *cmt = d_cache->member.cmt[idx];
+
+            NVMEV_INFO("New mapping LPA %llu PPA %llu IDX %llu\n", lpa, new_ppa, idx);
+
+            pt_idx = __ppa_to_idx(read_ppas, read_ppas_cnt, cmt->t_ppa);
+            page = pts[pt_idx]->value;
+            __update_pt(page, lpa, new_ppa);
+            idx_to_update[idx_to_update_cnt++] = idx;
+
+            i++;
+            if(skip_update[i] || i == nr_valid_grains || 
+               ppas[i].cmt_ppa != last_cmt_ppa) {
+                break;
+            }
+        }
+
+        struct ppa p = get_new_page(ftl, MAP_IO);
+        uint64_t ppa = ppa2pgidx(ftl, &p);
+
+        advance_write_pointer(ftl, MAP_IO);
+        mark_page_valid(ftl, &p);
+        mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+
+        for(int i = 0; i < idx_to_update_cnt; i++) {
+            struct cmt_struct *cmt = d_cache->member.cmt[idx_to_update[i]];
+
+            NVMEV_INFO("Updating CMT PPA of IDX %llu to %llu\n", idx_to_update[i], ppa);
+
+            cmt->t_ppa = ppa;
+            cmt->state = CLEAN;
+            BUG_ON(cmt->pt);
+        }
+
+        __demand.li->write(ppa, spp->pgsz, pts[pt_idx], ASYNC, NULL);
+
+        oob[ppa][0] = U64_MAX - 1;
+        oob[ppa][1] = 2020202020202020;
+
+        d_stat.trans_w_tgc++;
+        cmts_loaded++;
+
+        //kfree(cmt->pt);
+        //cmt->t_ppa = ppa;
+        //cmt->pt = NULL;
+
+        //cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
+        //NVMEV_ASSERT(cmt->pt);
+
+        //        for(int i = 0; i < EPP; i++) {
+        //            cmt->pt[i].ppa = U64_MAX;
+        //#ifdef STORE_KEY_FP
+        //            BUG_ON(true);
+//#endif
+//        }
+
+//        BUG_ON(true);
+        //__page_to_pte(pts[cmts_loaded], cmt->pt);
+
+//        uint64_t offset = OFFSET(ppas[i].lpa);
+//        cmt->pt[offset].ppa = ppas[i].new_ppa;
+//
+//        NVMEV_DEBUG("%s 1 setting LPA %llu to PPA %llu\n",
+//                __func__, ppas[i].lpa, ppas[i].new_ppa);
+//
+//        while(i + 1 < nr_valid_grains && IDX(ppas[i + 1].lpa) == idx) {
+//            offset = OFFSET(ppas[i + 1].lpa);
+//            cmt->pt[offset].ppa = ppas[i + 1].new_ppa;
+//
+//            NVMEV_DEBUG("%s 2 setting LPA %llu to PPA %llu\n",
+//                         __func__, ppas[i + 1].lpa, ppas[i + 1].new_ppa);
+//
+//#ifdef STORE_KEY_FP
+//            BUG_ON(true);
+//#endif
+//            i++;
+//        }
+//
+//        //__pte_to_page(pts[cmts_loaded], cmt->pt);
+// 
+//        oob[ppa][0] = U64_MAX - 1;
+//        oob[ppa][1] = lpa;
+//
+//        NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu\n",
+//                    __func__, idx, ppa);
+//
+//        __demand.li->write(ppa, spp->pgsz, pts[cmts_loaded], ASYNC, NULL);
+//
+//        d_stat.trans_w_tgc++;
+//        cmt->state = CLEAN;
+//        
+//        kfree(cmt->pt);
+//        cmt->t_ppa = ppa;
+//        cmt->pt = NULL;
+//        cmts_loaded++;
+    }
+
+    for(int i = 0; i < unique_cmts; i++) {
+        kfree(pts[i]->value);
+        kfree(pts[i]);
+    }
+    kfree(pts); 
+
+
+	kfree(skip_update);
+	return 0;
+}
+#endif
 
 static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t type) {
 	sort(gcb_node_arr, nr_valid_grains, sizeof(struct gc_bucket_node *), lpa_compare, NULL);

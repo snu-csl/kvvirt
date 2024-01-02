@@ -8,6 +8,7 @@
 #include "cache.h"
 #include "./interface/interface.h"
 
+#include <linux/random.h>
 #include <linux/sched/clock.h>
 
 extern algorithm __demand;
@@ -538,6 +539,17 @@ static uint64_t _do_wb_mapping_update(skiplist *wb) {
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 	blockmanager *bm = __demand.bm;
 
+    bool sample = false;
+    uint64_t touch = 0, wait = 0, load = 0, list_up = 0, get = 0, update = 0;
+    uint64_t start, end;
+
+    uint32_t rand;
+    get_random_bytes(&rand, sizeof(rand));
+    if(rand % 100 > 75) {
+        start = local_clock();
+        sample = true;
+    }
+
 	snode *wb_entry;
 	struct hash_params *h_params;
 
@@ -560,8 +572,6 @@ static uint64_t _do_wb_mapping_update(skiplist *wb) {
 			wb_entry = (snode *)q_dequeue(d_member.wb_master_q);
 		}
 		if (!wb_entry) continue;
-
-        NVMEV_DEBUG("%s updating %s len %u\n", __func__, wb_entry->key.key, wb_entry->len);
 wb_retry:
 		h_params = (struct hash_params *)wb_entry->hash_params;
 
@@ -594,16 +604,27 @@ wb_retry:
 
 		if (d_cache->is_hit(lpa)) {
             NVMEV_DEBUG("%s hit for LPA %llu\n", __func__, lpa);
-			d_cache->touch(lpa);
+            if(sample) {
+                start = local_clock();
+                d_cache->touch(lpa);
+                end = local_clock();
+                touch += end - start;
+            }
 		} else {
             //printk("%s miss for LPA %u\n", __func__, lpa);
 wb_cache_load:
+            start = local_clock();
 			rc = d_cache->wait_if_flying(lpa, NULL, wb_entry);
+            end = local_clock();
+            wait += end - start;
 			if (rc) continue; /* pending */
 
             //printk("%s passed wait_if_flying for LPA %u\n", __func__, lpa);
             
+            start = local_clock();
 			rc = d_cache->load(lpa, NULL, wb_entry, NULL);
+            end = local_clock();
+            load += end - start;
 			if (rc) continue; /* mapping read */
 
             //printk("%s passed load for LPA %u\n", __func__, lpa);
@@ -612,7 +633,10 @@ wb_cache_list_up:
              * TODO time here.
              */
 
+            start = local_clock();
 			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL, &credits);
+            end = local_clock();
+            list_up += end - start;
 			if (rc) continue; /* mapping write */
 
             //printk("%s passed list_up for LPA %u\n", __func__, lpa);
@@ -620,7 +644,10 @@ wb_cache_list_up:
 
 wb_data_check:
 		/* get page_table entry which contains {ppa, key_fp} */
-		pte = d_cache->get_pte(lpa);
+		start = local_clock();
+        pte = d_cache->get_pte(lpa);
+        end = local_clock();
+        get += end - start;
         //printk("%s passed get_pte for LPA %u\n", __func__, lpa);
 
 #ifdef HASH_KVSSD
@@ -685,8 +712,11 @@ wb_update:
             nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
         }
 wb_direct_update:
+        start = local_clock();
 		d_cache->update(lpa, new_pte);
-        NVMEV_INFO("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        end = local_clock();
+        update += end - start;
+        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;
@@ -709,7 +739,12 @@ wb_direct_update:
 
 	if (unlikely(d_member.wb_master_q->size + d_member.wb_retry_q->size > 0)) {
 		//printk("[ERROR] wb_entry still remains in queues, at %s:%d\n", __FILE__, __LINE__);
-		printk("Should have aborted!!!! %s:%d\n", __FILE__, __LINE__);;
+		printk("Should have aborted!!!! %s:%d MQ size RQ size %u %u\n", 
+                __FILE__, __LINE__, d_member.wb_master_q->size, d_member.wb_retry_q->size);
+        wb_entry = (snode *)q_dequeue(d_member.wb_master_q);
+        printk("Last one was LPA %llu PPA %llu key %s\n", wb_entry->lpa, wb_entry->ppa,
+                wb_entry->key.key);
+        BUG_ON(true);
 	}
 
 	iter = skiplist_get_iterator(wb);
@@ -733,8 +768,10 @@ wb_direct_update:
 
 	kfree(iter);
 
-    NVMEV_DEBUG("BREAKDOWN: %lluns load %lluns list_up %lluns update %lluns refill %llu loops.\n",
-            load, list_up, update, refill, loop);
+    if(sample) {
+        //NVMEV_INFO("BREAKDOWN: touch %lluns wait %lluns load %lluns list_up %llu get %llu update %llu.\n",
+        //        touch, wait, load, list_up, get, update);
+    }
 
     return nsecs_latest;
 }
@@ -800,14 +837,14 @@ uint64_t __demand_write(request *const req) {
         nsecs_completed = _do_wb_assign_ppa(wb);
         nsecs_latest = nsecs_completed;
         uint64_t end = ktime_get_ns();
-        NVMEV_ERROR("_do_wb_assign_ppa took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_assign_ppa took %lluns\n", end - start);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
         start = ktime_get_ns();
 		nsecs_completed = _do_wb_mapping_update(wb);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         end = ktime_get_ns();
-        NVMEV_ERROR("_do_wb_mapping_update took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_mapping_update took %lluns\n", end - start);
 		
 		/* flush the buffer */
         start = ktime_get_ns();
@@ -815,7 +852,7 @@ uint64_t __demand_write(request *const req) {
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = d_member.write_buffer =  skiplist_init();
         end = ktime_get_ns();
-        NVMEV_ERROR("_do_wb_flush took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_flush took %lluns\n", end - start);
         NVMEV_DEBUG("Assigned new WB.\n");
 
         //NVMEV_INFO("%llu pages this flush. %lu pgs_per_line.", 
@@ -987,8 +1024,6 @@ void *demand_end_req(algo_req *a_req) {
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_write_on_write++;
-            
-            //printk("Re-queuing write-type req in MAPPINGW.\n");
 			q_enqueue((void *)wb_entry, d_member.wb_retry_q);
 		}
 		break;

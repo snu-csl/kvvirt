@@ -532,8 +532,8 @@ static void conv_remove_ftl(struct conv_ftl *conv_ftl)
 static void conv_init_params(struct convparams *cpp)
 {
 	cpp->op_area_pcent = OP_AREA_PERCENT;
-	cpp->gc_thres_lines = 5; /* (host write, gc, map)*/
-	cpp->gc_thres_lines_high = 5; /* (host write, gc, map)*/
+	cpp->gc_thres_lines = 3; /* (host write, gc, map)*/
+	cpp->gc_thres_lines_high = 3; /* (host write, gc, map)*/
 	cpp->enable_gc_delay = 1;
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
@@ -1273,14 +1273,6 @@ void __clear_gc_data(struct conv_ftl* conv_ftl) {
     }
 }
 
-void __update_cmt_ppa(struct conv_ftl *conv_ftl, uint64_t new_ppa, 
-                      uint64_t lpa) {
-    struct cmt_struct *c = d_cache->get_cmt(lpa);
-    c->t_ppa = new_ppa;
-    oob[new_ppa][1] = lpa;
-    NVMEV_ERROR("%s updated CMT PPA of IDX %llu to %llu.\n", __func__, IDX(lpa), new_ppa);
-}
-
 //void __load_cmt_entry(struct conv_ftl *conv_ftl, uint64_t idx) {
 //    uint64_t lpa = idx * EPP;
 //    struct ssdparams *spp = &conv_ftl->ssd->sp;
@@ -1351,6 +1343,15 @@ uint64_t gc_pgs_this_gc = 0;
 uint64_t map_pgs_this_gc = 0;
 
 #ifdef GC_STANDARD
+
+void __update_cmt_ppa(struct conv_ftl *conv_ftl, uint64_t new_ppa,
+                      uint64_t lpa) {
+    struct cmt_struct *c = d_cache->get_cmt(lpa);
+    c->t_ppa = new_ppa;
+    oob[new_ppa][1] = lpa;
+    NVMEV_ERROR("%s updated CMT PPA of IDX %llu to %llu.\n", __func__, IDX(lpa), new_ppa);
+}
+
 /* here ppa identifies the block we want to clean */
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
@@ -1627,8 +1628,19 @@ new_ppa:
 
     return;
 }
-
 #else
+void __update_cmt_ppa(struct conv_ftl *conv_ftl, char* page, uint64_t new_ppa) {
+    struct ssdparams *spp = &conv_ftl->ssd->sp;
+    uint64_t entry_sz = sizeof(uint64_t) * 2;
+    uint64_t last_idx = U64_MAX;
+
+    for(int i = 0; i < spp->pgsz / entry_sz; i++) {
+        uint64_t lpa = *(uint64_t*) (page + (i * entry_sz));
+        uint64_t idx = IDX(lpa);
+        struct cmt_struct *pt = d_cache->get_cmt(lpa);
+        pt->t_ppa = new_ppa;
+    }
+}
 
 /* here ppa identifies the block we want to clean */
 void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
@@ -1727,7 +1739,8 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 }
 
                 lpa_lens[lpa_len_idx++] =
-                (struct lpa_len_ppa) {U64_MAX - 1, GRAIN_PER_PAGE, grain, U64_MAX - 1, false};
+                (struct lpa_len_ppa) {U64_MAX - 1, GRAIN_PER_PAGE, grain, 
+                                      U64_MAX - 1, false, c->t_ppa};
 
                 mark_grain_invalid(conv_ftl, grain, GRAIN_PER_PAGE);
                 cnt++;
@@ -1876,16 +1889,11 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
         mark_grain_valid(conv_ftl, grain, length);
 
-        /*
-         * ??
-         * Can't we just use OOB?
-         */
-
         if(__invalid_mapping_ppa(conv_ftl, G_IDX(old_grain))) {
             __update_mapping_ppa(conv_ftl, G_IDX(old_grain), pgidx);
         } else if(oob[G_IDX(old_grain)][0] == U64_MAX - 1) {
             uint64_t lpa = oob[G_IDX(old_grain)][1];
-            __update_cmt_ppa(conv_ftl, pgidx, lpa);
+            __update_cmt_ppa(conv_ftl, (char*) nvmev_vdev->ns[0].mapped + from, pgidx);
         }
 
         offset += length;
@@ -1972,6 +1980,7 @@ static void mark_line_free(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
 static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
 {
+    BUG_ON(true);
 	struct line *victim_line = NULL;
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	struct ppa ppa;
@@ -1989,7 +1998,7 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
     user_pgs_this_gc = gc_pgs_this_gc = 0;
 
 	ppa.g.blk = victim_line->id;
-	NVMEV_DEBUG("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
+	NVMEV_INFO("GC-ing line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", ppa.g.blk,
 		    victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
             conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
             conv_ftl->lm.free_line_cnt);
@@ -2366,11 +2375,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     d_req.key = key;
 
     NVMEV_DEBUG("Read for key %s len %u\n", key.key, key.len);
-
-    if(key.key[0] == 'L') {
-        NVMEV_DEBUG("Log key. Bid %llu log num %u\n", 
-                *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
-    }
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);

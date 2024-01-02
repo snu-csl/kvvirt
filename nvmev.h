@@ -13,7 +13,7 @@
 #undef CONFIG_NVMEV_FAST_X86_IRQ_HANDLING
 
 #undef CONFIG_NVMEV_VERBOSE
-#define CONFIG_NVMEV_DEBUG
+#undef CONFIG_NVMEV_DEBUG
 #undef CONFIG_NVMEV_DEBUG_VERBOSE
 
 /*************************/
@@ -25,7 +25,7 @@
 #define NVMEV_SUBSYSTEM_VENDOR_ID NVMEV_VENDOR_ID
 
 #define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
-#define NVMEV_ERROR(string, args...) printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
+#define NVMEV_ERROR(string, args...) (void) string // printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
 #ifdef CONFIG_NVMEV_DEBUG
