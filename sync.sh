@@ -1,3 +1,3 @@
-rsync -r -e ssh . carl@192.168.122.8:/home/carl/nvmevirt
-ssh carl@192.168.122.8 "make -C /home/carl/nvmevirt clean && make -j -C /home/carl/nvmevirt"
-scp carl@192.168.122.8:/home/carl/nvmevirt/nvmev.ko /home/cduffy/kerneldebug/
+rsync -r -e ssh . virt@192.168.123.41:/home/virt/nvmevirt
+ssh virt@192.168.123.41 "make -C /home/virt/nvmevirt clean && make -j -C /home/virt/nvmevirt"
+scp virt@192.168.123.41:/home/virt/nvmevirt/nvmev.ko /home/move/kerneldebug/

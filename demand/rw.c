@@ -147,8 +147,8 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
         oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_ERROR("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
-                line, inv_mapping_offs[line], w_ppa);
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+                     line, inv_mapping_offs[line], w_ppa);
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];
