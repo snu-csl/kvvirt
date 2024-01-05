@@ -8,6 +8,8 @@
 #include "./include/data_struct/lru_list.h"
 #include "demand.h"
 
+#define CACHE_GRAIN 64
+
 /* Structures */
 struct cache_env {
 	cache_t c_type;

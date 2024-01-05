@@ -102,7 +102,7 @@ again:
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
                     (d_cache->env.nr_valid_tentries-1) + 1;
     if(h_params->lpa == 2 || h_params->lpa == 0) {
-        NVMEV_DEBUG("Got LPA %llu for key %s\n", h_params->lpa, key.key);
+        NVMEV_INFO("Got LPA %llu for key %s\n", h_params->lpa, key.key);
         h_params->cnt++;
         goto again;
     }

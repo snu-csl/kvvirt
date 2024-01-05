@@ -11,8 +11,6 @@
 #include <linux/random.h>
 #include <linux/sched/clock.h>
 
-#define CACHE_GRAIN 16
-
 extern struct algorithm __demand;
 
 extern struct demand_env d_env;
@@ -91,16 +89,6 @@ static void cg_member_init(struct cache_member *const _member) {
 	for (int i = 0; i < cenv->nr_valid_tpages; i++) {
 		cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
 
-        //struct ppa p = get_new_page(ftl, USER_IO);
-        //uint64_t ppa = ppa2pgidx(ftl, &p);
-
-        //advance_write_pointer(ftl, USER_IO);
-        //mark_page_valid(ftl, &p);
-        //mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
-
-        //oob[ppa][0] = U64_MAX - 1;
-        //oob[ppa][1] = i * EPP;
-
 		cmt[i]->t_ppa = U64_MAX;
 		cmt[i]->idx = i;
 		cmt[i]->pt = NULL;
@@ -108,6 +96,7 @@ static void cg_member_init(struct cache_member *const _member) {
 		cmt[i]->state = CLEAN;
 		cmt[i]->is_flying = false;
         cmt[i]->cached_cnt = 0;
+        cmt[i]->len_on_disk = 0;
 
 		q_init(&cmt[i]->retry_q, d_env.wb_flush_size);
 		q_init(&cmt[i]->wait_q, d_env.wb_flush_size);
@@ -187,7 +176,7 @@ bool _update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
 
     pt->pt[pt->cached_cnt].lpa = lpa;
     pt->pt[pt->cached_cnt].ppa = ppa;
-    NVMEV_DEBUG("%s IDX %u LPA %llu PPA %llu pos %u\n", 
+    NVMEV_INFO("%s IDX %u LPA %llu PPA %llu pos %u\n", 
                 __func__, pt->idx, lpa, ppa, pt->cached_cnt); 
     pt->cached_cnt++;
 
@@ -305,7 +294,7 @@ struct pt_struct __get_pte(struct cmt_struct *pt, uint64_t lpa) {
     return ret;
 }
 
-void __page_to_ptes(value_set *value, uint64_t idx) {
+void __page_to_ptes(value_set *value, uint64_t idx_, bool up_cache) {
     struct ssdparams *spp = &d_member.ssd->sp;
     uint64_t entry_sz = sizeof(uint64_t) * 2;
     uint64_t total = 0;
@@ -321,6 +310,18 @@ void __page_to_ptes(value_set *value, uint64_t idx) {
             continue;
         }
 
+        if(idx != idx_) {
+            NVMEV_INFO("Skipping because IDX %llu != IDX %llu\n", idx, idx_);
+            continue;
+        }
+
+        if(pt->state == DIRTY) {
+            NVMEV_INFO("PT was dirty for IDX %u\n", pt->idx);
+            continue;
+        }
+
+        NVMEV_INFO("Adding LPA %llu PPA %llu IDX %llu offset %d\n", lpa, ppa, idx, i);
+
         if(pt->pt == NULL) {
             uint64_t start = local_clock();
             __alloc_pt(idx);
@@ -329,15 +330,21 @@ void __page_to_ptes(value_set *value, uint64_t idx) {
             if(pt->lru_ptr == NULL)  {
                 pt->lru_ptr = lru_push(cmbr->lru, (void *) pt);
             }
-            cmbr->nr_cached_tentries += CACHE_GRAIN;
+
+            if(up_cache) {
+                /*
+                 * Don't update this during GC, as the mappings
+                 * we put in this PT temporarily will be
+                 * freed after GC is done.
+                 */
+                cmbr->nr_cached_tentries += CACHE_GRAIN;
+            }
         } else {
             BUG_ON(pt->lru_ptr == NULL);
         }
         
         //BUG_ON(__pt_contains(pt, lpa, ppa));
-        //pt->cached_cnt++;
         _update_pt(pt, lpa, ppa);
-        pt->state = CLEAN;
 
         //pt->pt[offset].ppa = ppa;
 
@@ -352,22 +359,6 @@ void __page_to_ptes(value_set *value, uint64_t idx) {
     }
 
     NVMEV_DEBUG("allocs took %llu ns\n", total);
-}
-
-void __pte_to_page(value_set *value, struct pt_struct *pt) {
-    struct ssdparams *spp = &d_member.ssd->sp;
-
-    for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        uint64_t ppa = pt[i].ppa;
-#ifdef STORE_KEY_FP
-        BUG_ON(true);
-#endif
-
-        memcpy(value->value + (i * ENTRY_SIZE), &ppa, sizeof(ppa));
-        if(ppa != U64_MAX) {
-            //NVMEV_ERROR("IDX %u PPA %llu in %s.\n", i, ppa, __func__);
-        }
-    }
 }
 
 void __reset_pt(struct pt_struct *pt) {
@@ -491,7 +482,7 @@ void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru,
                 //BUG_ON(ppa == U64_MAX);
                 //if(ppa != U64_MAX) {
                 ppa = ppa;
-                NVMEV_DEBUG("Copying %llu %llu to victim list from idx %u.\n",
+                NVMEV_INFO("Copying %llu %llu to victim list from idx %u.\n",
                         start_lpa + i, ppa, pt->idx);
                 victims[count + i].lpa = lpa;
                 victims[count + i].ppa = ppa;
@@ -505,6 +496,7 @@ void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru,
 
             pt->cached_cnt = 0;
             pt->state = CLEAN;
+            NVMEV_INFO("Marking PT IDX %u clean in victims.\n", pt->idx);
             pt->lru_ptr = NULL;
             kfree((char*) pt->pt);
             pt->pt = NULL;
@@ -538,20 +530,7 @@ end:
     *cnt = count;
 }
 
-inline bool __dont_have_enough(void) {
-    struct ssdparams *spp = &d_member.ssd->sp;
-    return (cmbr->nr_cached_tentries + (((spp->pgsz * 1) / (sizeof(uint64_t) * 2)) + CACHE_GRAIN)) >
-           cenv->max_cached_tentries;
-}
-
-inline bool __have_enough(void) {
-    struct ssdparams *spp = &d_member.ssd->sp;
-    return (cmbr->nr_cached_tentries + (((spp->pgsz * 1) / (sizeof(uint64_t) * 2)) + CACHE_GRAIN)) <
-           cenv->max_cached_tentries;
-}
-
 bool cg_no_room(void) {
-    return __dont_have_enough();
     if(cmbr->nr_cached_tentries == 0) {
         return false;
     } else {
@@ -561,6 +540,18 @@ bool cg_no_room(void) {
                     cenv->max_cached_tentries);
         return ((cmbr->nr_cached_tentries + ((4096 * 1) / 16) + CACHE_GRAIN) > cenv->max_cached_tentries);
     }
+}
+
+inline bool __dont_have_enough(void) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+    return (cmbr->nr_cached_tentries + (((spp->pgsz * CACHE_GRAIN) / (sizeof(uint64_t) * 2)) + 1)) >
+           cenv->max_cached_tentries;
+}
+
+inline bool __have_enough(void) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+    return (cmbr->nr_cached_tentries + (((spp->pgsz * CACHE_GRAIN) / (sizeof(uint64_t) * 2)) + 1)) <
+           cenv->max_cached_tentries;
 }
 
 int cg_list_up(lpa_t lpa, request *const req, snode *wb_entry, 
@@ -658,13 +649,17 @@ again:
 
             struct ppa p = get_new_page(ftl, MAP_IO);
             uint64_t ppa = ppa2pgidx(ftl, &p);
+            uint64_t grains = (cnt * sizeof(uint64_t) * 2) / GRAIN_PER_PAGE;
 
             advance_write_pointer(ftl, MAP_IO);
             mark_page_valid(ftl, &p);
-            mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+            mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), grains);
 
-            oob[ppa][0] = U64_MAX - 1;
-            oob[ppa][1] = 1010101010101010;
+            if(grains != GRAIN_PER_PAGE) {
+                uint64_t offset = grains;
+                mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), GRAIN_PER_PAGE - offset);
+                mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), GRAIN_PER_PAGE - offset);
+            }
 
             value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
             _value_mw->ssd = d_member.ssd;
@@ -677,12 +672,15 @@ again:
             uint8_t *ptr = _value_mw->value;
             for(int i = 0; i < cnt; i++) {
                 uint64_t lpa = victims[i].lpa;
-                uint64_t ppa = victims[i].ppa;
+                uint64_t m_ppa = victims[i].ppa;
 
-                NVMEV_DEBUG("In memcpy for %llu %llu\n", lpa, ppa);
-
+                if(lpa != U64_MAX) {
+                    NVMEV_INFO("In memcpy for LPA %llu PPA %llu IDX %llu going to PPA %llu\n", 
+                            lpa, m_ppa, IDX(lpa), ppa);
+                }
+ 
                 memcpy(ptr + (i * step), &lpa, sizeof(lpa));
-                memcpy(ptr + (i * step) + sizeof(uint64_t), &ppa, sizeof(ppa));
+                memcpy(ptr + (i * step) + sizeof(uint64_t), &m_ppa, sizeof(m_ppa));
             }
 
             NVMEV_DEBUG("Passed memcpy.\n");
@@ -705,14 +703,15 @@ again:
 
             NVMEV_DEBUG("Passed write.\n");
 
+            uint8_t oob_idx = 0;
             uint64_t last_idx = U64_MAX;
             for(int i = 0; i < cnt; i++) {
                 if(victims[i].lpa == U64_MAX) {
                     continue;
                 }
 
-                NVMEV_DEBUG("IDX %llu LPA %llu gets PPA %llu\n", 
-                            victims[i].lpa / EPP, victims[i].lpa, ppa);
+                //NVMEV_INFO("IDX %llu LPA %llu gets PPA %llu\n", 
+                //            victims[i].lpa / EPP, victims[i].lpa, ppa);
 
                 uint64_t idx = victims[i].lpa / EPP;
                 struct cmt_struct *cmt = cmbr->cmt[idx];
@@ -722,9 +721,23 @@ again:
                     continue;
                 }
 
-                cmt->grain = (i * (CACHE_GRAIN * sizeof(uint64_t) * 2)) / GRAINED_UNIT;
+                cmt->grain = oob_idx;
+                oob[ppa][oob_idx++] = victims[i].lpa;
+                NVMEV_INFO("IDX %llu (CC %u) gets grain %u PPA %llu LPA %llu\n", 
+                            idx, cmt->cached_cnt, oob_idx - 1, ppa, victims[i].lpa);
+
+                uint64_t g_per_cg = (CACHE_GRAIN * sizeof(uint64_t) * 2) / GRAINED_UNIT;
+                for(int i = 1; i < ((cmt->cached_cnt / CACHE_GRAIN) + 1) * g_per_cg; i++) {
+                    oob[ppa][oob_idx++] = U64_MAX - 1;
+                }
+
+                cmt->len_on_disk = ((cmt->cached_cnt / CACHE_GRAIN) + 1) * g_per_cg;
                 cmt->t_ppa = ppa;
                 last_idx = idx;
+            }
+
+            if(oob_idx < GRAIN_PER_PAGE) {
+                oob[ppa][oob_idx] = U64_MAX;
             }
 
             kfree(victims);
@@ -763,8 +776,6 @@ again:
     if(cmt->t_ppa != U64_MAX && cmt->pt != NULL) {
         NVMEV_ASSERT(!cmt->is_flying);
     }
-
-    //cmt->cached_cnt++;
 
     if(cmt->t_ppa != U64_MAX && cmt->pt == NULL) {
         if(wb_entry && wb_entry->mapping_v) {
@@ -817,7 +828,7 @@ again:
 
 		if (req) {
             NVMEV_ASSERT(req->mapping_v);
-            __page_to_ptes(req->mapping_v, IDX(lpa));
+            __page_to_ptes(req->mapping_v, IDX(lpa), true);
 
             //if(__pt_contains(cmt, lpa, U64_MAX)) {
             //    cmbr->nr_cached_tentries--;
@@ -842,7 +853,8 @@ again:
 			}
 		} else if (wb_entry) {
             NVMEV_ASSERT(wb_entry->mapping_v);
-            __page_to_ptes(wb_entry->mapping_v, IDX(lpa));
+            NVMEV_INFO("pagetoptes triggered for IDX %llu PPA %llu\n", IDX(lpa), cmt->t_ppa);
+            __page_to_ptes(wb_entry->mapping_v, IDX(lpa), true);
 
             //if(__pt_contains(cmt, lpa, U64_MAX)) {
             //    cmbr->nr_cached_tentries--;
@@ -915,15 +927,6 @@ int cg_touch(lpa_t lpa) {
 	return 0;
 }
 
-void __mark_all_dirty(uint64_t cmt_ppa) {
-    for(int i = 0; i < cenv->nr_valid_tpages; i++) {
-        if(cmbr->cmt[i]->t_ppa == cmt_ppa) {
-            //NVMEV_DEBUG("IDX %u is being marked dirty in collateral.\n", i);
-            cmbr->cmt[i]->state = DIRTY;
-        }
-    }
-}
-
 static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 {
     struct ppa ppa;
@@ -959,30 +962,22 @@ int cg_update(lpa_t lpa, struct pt_struct pte) {
              * Only safe if assuming battery-backed DRAM.
              */
 
-            uint64_t page = cmt->t_ppa;
-            struct ppa ppa = ppa_to_struct(spp, page);
-
             /* update corresponding page status */
-            struct nand_page *pg = get_pg(ftl->ssd, &ppa);
-            if(pg->status == PG_VALID) {
-                //NVMEV_INFO("Marking mapping PPA %llu grain %llu invalid as it was dirtied in memory.\n",
-                //        cmt->t_ppa, cmt->grain);
-                /*
-                 * TODO
-                 * We might be OK to just mark the grains of the mapping page invalid
-                 * instead of the entire page, and thus avoid the collateral dirtying.
-                 */
+            NVMEV_INFO("Marking mapping PPA %llu grain %llu IDX %llu "
+                    "invalid as it was dirtied in memory.\n",
+                    cmt->t_ppa, cmt->grain, IDX(lpa));
 
-                mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain / GRAINED_UNIT), 
-                                   ((CACHE_GRAIN * sizeof(uint64_t) * 2)) / GRAINED_UNIT);
-                //__mark_all_dirty(cmt->t_ppa);
-            }
-		}
+            uint64_t g_per_cg = (CACHE_GRAIN * sizeof(uint64_t) * 2) / GRAINED_UNIT;
+
+            mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain), 
+                               cmt->len_on_disk);
+        }
 
 		cmt->state = DIRTY;
         //NVMEV_DEBUG("1 Update for IDX %llu\n", IDX(lpa));
 		lru_update(cmbr->lru, cmt->lru_ptr);
 	} else {
+        NVMEV_INFO("2 Hit this case for IDX %llu!!\n", IDX(lpa));
         BUG_ON(true);
 		/* FIXME: to handle later update after evict */
 		//cmbr->mem_table[IDX(lpa)][OFFSET(lpa)] = pte;
@@ -1026,7 +1021,9 @@ bool cg_is_full(void) {
 
 struct pt_struct cg_get_pte(lpa_t lpa) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
-    NVMEV_DEBUG("Getting PTE for IDX %llu\n", IDX(lpa));
+    struct ssdparams *spp = &d_member.ssd->sp;
+
+    NVMEV_INFO("Getting PTE for IDX %llu\n", IDX(lpa));
 	if (cmt->pt) {
         return __get_pte(cmt, lpa);
         //printk("%s returning %u for lpa %u\n", __func__, cmt->pt[OFFSET(lpa)].ppa, lpa);
@@ -1038,26 +1035,30 @@ struct pt_struct cg_get_pte(lpa_t lpa) {
              */
 
             __alloc_pt(IDX(lpa));
-//            cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-//            for(int i = 0; i < EPP; i++) {
-//                cmt->pt[i].ppa = U64_MAX;
-//#ifdef STORE_KEY_FP
-//                BUG_ON(true);
-//#endif
-//            }
-            
+           
             cmbr->nr_cached_tentries += CACHE_GRAIN;
             return __get_pte(cmt, lpa);
             //return cmt->pt[OFFSET(lpa)];
         } else {
             BUG_ON(true);
+            NVMEV_INFO("Hit this case for IDX %llu reading %llu!!\n", 
+                        IDX(lpa), cmt->t_ppa);
+
+            value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
+            v->ssd = d_member.ssd;
+            __demand.li->read(cmt->t_ppa, PAGESIZE, v, ASYNC, NULL);
+            __page_to_ptes(v, IDX(lpa), true);
+
+            NVMEV_ASSERT(cmt->pt);
+            return __get_pte(cmt, lpa);
+            //BUG_ON(true);
         }
-		/* FIXME: to handle later update after evict */
-		//return cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
-	}
-/*	if (unlikely(cmt->pt == NULL)) {
-		//printk("Should have aborted!!!! %s:%d
-, __FILE__, __LINE__);;
+        /* FIXME: to handle later update after evict */
+        //return cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
+    }
+    /*	if (unlikely(cmt->pt == NULL)) {
+    //printk("Should have aborted!!!! %s:%d
+    , __FILE__, __LINE__);;
 	}
 	return cmt->pt[OFFSET(lpa)]; */
 }

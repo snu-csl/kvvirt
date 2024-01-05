@@ -24,6 +24,7 @@
 extern uint64_t user_pgs_this_gc;
 extern uint64_t gc_pgs_this_gc;
 extern uint64_t map_pgs_this_gc;
+extern uint64_t map_gc_pgs_this_gc;
 extern uint64_t pgs_this_flush;
 
 struct lpa_len_ppa {
@@ -74,6 +75,7 @@ struct cmt_struct {
 	NODE *lru_ptr;
 	ppa_t t_ppa;
     ppa_t grain;
+    uint8_t len_on_disk;
 
 	cmt_state_t state;
 	bool is_flying;
@@ -257,7 +259,6 @@ int validate_grain(blockmanager *, pga_t);
 int invalidate_grain(blockmanager *, pga_t);
 #endif
 
-void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx);
-void __pte_to_page(value_set *value, struct pt_struct *pt);
+void __page_to_ptes(value_set *value, uint64_t idx, bool);
 
 #endif

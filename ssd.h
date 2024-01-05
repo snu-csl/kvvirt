@@ -36,6 +36,7 @@ enum {
 	USER_IO = 0,
 	GC_IO = 1,
     MAP_IO= 2,
+    GC_MAP_IO = 3,
 };
 
 enum {

@@ -365,7 +365,7 @@ data_read:
             len++;
         }
 
-        NVMEV_DEBUG("Deleting a pair of length %u (%u) grain %llu page %llu\n", 
+        NVMEV_DEBUG("Deleting a pair of length %u (%u) grain %llu PPA %llu\n", 
                     len, len * GRAINED_UNIT, pte.ppa, G_IDX(pte.ppa));
 
         oob[G_IDX(pte.ppa)][offset] = 2;
@@ -495,7 +495,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		}
 
         if(remain > 0) {
-            //NVMEV_ERROR("Had %u bytes leftover page %llu offset %u.\n", remain, ppa, offset);
+            //NVMEV_ERROR("Had %u bytes leftover PPA %llu offset %u.\n", remain, ppa, offset);
             //NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
             mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
@@ -685,7 +685,7 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_DEBUG("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_INFO("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             __hash_remove(lpa);
@@ -696,7 +696,7 @@ wb_update:
                 len++;
             }
 
-            NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite old len %u.\n", 
+            NVMEV_INFO("%s LPA %llu old PPA %llu overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
@@ -716,7 +716,7 @@ wb_direct_update:
 		d_cache->update(lpa, new_pte);
         end = local_clock();
         update += end - start;
-        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_INFO("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;

@@ -114,6 +114,7 @@ struct gc_data {
     uint64_t pgidx;
     uint32_t offset;
     bool last;
+    bool map;
 };
 
 struct conv_ftl {
@@ -125,6 +126,7 @@ struct conv_ftl {
 	struct write_pointer wp;
     struct write_pointer map_wp;
 	struct write_pointer gc_wp;
+    struct write_pointer map_gc_wp;
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
     struct gc_data gcd;
