@@ -685,7 +685,7 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_INFO("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             __hash_remove(lpa);
@@ -696,7 +696,7 @@ wb_update:
                 len++;
             }
 
-            NVMEV_INFO("%s LPA %llu old PPA %llu overwrite old len %u.\n", 
+            NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
@@ -716,7 +716,7 @@ wb_direct_update:
 		d_cache->update(lpa, new_pte);
         end = local_clock();
         update += end - start;
-        NVMEV_INFO("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;

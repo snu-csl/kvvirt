@@ -390,7 +390,7 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
 #endif
 
         if(lpa != U64_MAX) {
-            NVMEV_INFO("LPA %llu PPA %llu IDX %u to %u in the memcpy ret %llu.\n",
+            NVMEV_DEBUG("LPA %llu PPA %llu IDX %u to %u in the memcpy ret %llu.\n",
                     lpa, ppa, cmt->idx, i, ret);
         }
 
@@ -407,7 +407,7 @@ void __update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
     struct ssdparams *spp = &d_member.ssd->sp;
     uint64_t entry_sz = sizeof(uint64_t) * 2;
 
-    NVMEV_INFO("Trying to update IDX %u LPA %llu PPA %llu\n",
+    NVMEV_DEBUG("Trying to update IDX %u LPA %llu PPA %llu\n",
                 pt->idx, lpa, ppa);
 
     for(int i = 0; i < pt->cached_cnt; i++) {
@@ -449,7 +449,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
     read_ppa_cnt = 0;
 
-    NVMEV_INFO("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
+    NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
@@ -478,7 +478,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             continue;
         }
 
-        NVMEV_INFO("%s updating mapping of LPA %llu IDX %llu to PPA %llu\n", 
+        NVMEV_DEBUG("%s updating mapping of LPA %llu IDX %llu to PPA %llu\n", 
                 __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
 		if (d_cache->is_hit(lpa)) {
@@ -489,12 +489,12 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 			skip_update[i] = true;
 		} else {
             struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-            NVMEV_INFO("%s It wasn't cached PPA is %llu.\n", __func__, cmt->t_ppa);
+            NVMEV_DEBUG("%s It wasn't cached PPA is %llu.\n", __func__, cmt->t_ppa);
             prev = __already_read(cmt->t_ppa);
             if (cmt->t_ppa == U64_MAX) {
                 continue;
             } else if(prev != U64_MAX) {
-                NVMEV_INFO("%s But the CMT had already been read here at %llu.\n", 
+                NVMEV_DEBUG("%s But the CMT had already been read here at %llu.\n", 
                             __func__, prev);
                 value_set *already_read = read_ppas_v[prev];
                 __page_to_ptes(already_read, cmt->idx, false);
@@ -513,9 +513,9 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             read_ppas_v[read_ppa_cnt] = _value_mr;
             read_ppas[read_ppa_cnt++] = cmt->t_ppa;
 
-            NVMEV_INFO("Adding CMT PPA %llu to index %llu\n", cmt->t_ppa, read_ppa_cnt);
+            NVMEV_DEBUG("Adding CMT PPA %llu to index %llu\n", cmt->t_ppa, read_ppa_cnt);
 
-            NVMEV_INFO("%s marking mapping PPA %llu grain %llu invalid during GC read.\n",
+            NVMEV_DEBUG("%s marking mapping PPA %llu grain %llu invalid during GC read.\n",
                     __func__, cmt->t_ppa, cmt->grain);
             mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain), 
                                cmt->len_on_disk);
@@ -541,7 +541,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         uint64_t lpa = ppas[i].lpa;
         uint64_t ppa = ppas[i].new_ppa;
 
-        NVMEV_INFO("Updating CMT IDX %llu LPA %llu PPA %llu\n",
+        NVMEV_DEBUG("Updating CMT IDX %llu LPA %llu PPA %llu\n",
                     idx, lpa, ppa);
 
         struct cmt_struct *cmt = d_cache->member.cmt[idx];
@@ -609,8 +609,8 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), g_per_cg);
         cmt->grain = offset;
 
-        NVMEV_INFO("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
-        NVMEV_INFO("Setting PPA %llu offset %llu to LPA %lu in GC idx %lld (%d).\n",
+        NVMEV_DEBUG("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
+        NVMEV_DEBUG("Setting PPA %llu offset %llu to LPA %lu in GC idx %lld (%d).\n",
                 ppa, offset, IDX2LPA(cmt->idx), written, nr_valid_grains);
 
         __pte_to_page(w, cmt, (GRAIN_PER_PAGE - offset) * GRAINED_UNIT, ppa);
@@ -631,13 +631,13 @@ new_ppa:
                 oob[ppa][offset] = U64_MAX;
             }
 
-            NVMEV_INFO("2 Re-wrote a mapping PPA to %llu in GC. First few:\n", ppa);
+            NVMEV_DEBUG("2 Re-wrote a mapping PPA to %llu in GC. First few:\n", ppa);
 
             uint64_t entry_sz = sizeof(uint64_t) * 2;
             for(int i = 0; i < 10; i++) {
                 uint64_t tlpa = *(uint64_t*) (w->value + (i * entry_sz));
                 uint64_t tppa = *(uint64_t*) (w->value + ((i * entry_sz) + sizeof(uint64_t)));
-                NVMEV_INFO("2 LPA %llu PPA %llu\n", tlpa, tppa);
+                NVMEV_DEBUG("2 LPA %llu PPA %llu\n", tlpa, tppa);
             }
 
             memset(w->value, 0x0, spp->pgsz);
@@ -656,18 +656,18 @@ new_ppa:
         BUG_ON(cmt->t_ppa == U64_MAX);
 
         oob[ppa][offset] = U64_MAX;
-        NVMEV_INFO("1 PPA %llu closed at grain %llu\n", ppa, offset);
+        NVMEV_DEBUG("1 PPA %llu closed at grain %llu\n", ppa, offset);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
                 GRAIN_PER_PAGE - offset);
         mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
                 GRAIN_PER_PAGE - offset);
-        NVMEV_INFO("3 Re-wrote a mapping PPA to %llu in GC.\n", ppa);
+        NVMEV_DEBUG("3 Re-wrote a mapping PPA to %llu in GC.\n", ppa);
 
         uint64_t entry_sz = sizeof(uint64_t) * 2;
         for(int i = 0; i < 256; i++) {
             uint64_t tlpa = *(uint64_t*) (w->value + (i * entry_sz));
             uint64_t tppa = *(uint64_t*) (w->value + ((i * entry_sz) + sizeof(uint64_t)));
-            NVMEV_INFO("2 LPA %llu PPA %llu\n", tlpa, tppa);
+            NVMEV_DEBUG("2 LPA %llu PPA %llu\n", tlpa, tppa);
         }
         memset(w->value, 0x0, spp->pgsz);
     }
@@ -678,7 +678,7 @@ new_ppa:
 //            continue;
 //        }
 //
-//        NVMEV_INFO("LPA at %d %llu\n", i, ppas[i].lpa);
+//        NVMEV_DEBUG("LPA at %d %llu\n", i, ppas[i].lpa);
 //
 //        idx = IDX(ppas[i].lpa);
 //        if(idx == last_idx) {
@@ -696,17 +696,17 @@ new_ppa:
 //
 //            if(cnt != GRAIN_PER_PAGE) {
 //                oob[ppa][cnt] = U64_MAX;
-//                NVMEV_INFO("1 PPA %llu closed at grain %llu\n", ppa, cnt);
+//                NVMEV_DEBUG("1 PPA %llu closed at grain %llu\n", ppa, cnt);
 //                mark_grain_valid(ftl, PPA_TO_PGA(ppa, cnt), 
 //                        GRAIN_PER_PAGE - cnt);
 //                mark_grain_invalid(ftl, PPA_TO_PGA(ppa, cnt), 
 //                        GRAIN_PER_PAGE - cnt);
 //            }
 //
-//            NVMEV_INFO("Re-wrote a mapping PPA to %llu in GC.\n", ppa);
+//            NVMEV_DEBUG("Re-wrote a mapping PPA to %llu in GC.\n", ppa);
 //
 //            //if(i == nr_valid_grains - 1) {
-//            //    NVMEV_INFO("Heading out. i == %d (%d)\n", i, nr_valid_grains);
+//            //    NVMEV_DEBUG("Heading out. i == %d (%d)\n", i, nr_valid_grains);
 //            //    goto out;
 //            //}
 //
@@ -734,8 +734,8 @@ new_ppa:
 //        mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), g_per_cg);
 //        cmt->grain = offset;
 //
-//        NVMEV_INFO("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
-//        NVMEV_INFO("Setting PPA %llu offset %llu to LPA %lu in GC idx %d.\n",
+//        NVMEV_DEBUG("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
+//        NVMEV_DEBUG("Setting PPA %llu offset %llu to LPA %lu in GC idx %d.\n",
 //                ppa, offset, IDX2LPA(cmt->idx), i);
 //
 //        written = __pte_to_page(w, cmt, spp->pgsz - (cnt * GRAIN_PER_PAGE), ppa);
@@ -754,14 +754,14 @@ new_ppa:
 //
 //        if(cnt != GRAIN_PER_PAGE) {
 //            oob[ppa][cnt] = U64_MAX;
-//            NVMEV_INFO("1 PPA %llu closed at grain %llu\n", ppa, cnt);
+//            NVMEV_DEBUG("1 PPA %llu closed at grain %llu\n", ppa, cnt);
 //            mark_grain_valid(ftl, PPA_TO_PGA(ppa, cnt), 
 //                    GRAIN_PER_PAGE - cnt);
 //            mark_grain_invalid(ftl, PPA_TO_PGA(ppa, cnt), 
 //                    GRAIN_PER_PAGE - cnt);
 //        }
 //
-//        NVMEV_INFO("2 Re-wrote a mapping PPA to %llu in GC.\n", ppa);
+//        NVMEV_DEBUG("2 Re-wrote a mapping PPA to %llu in GC.\n", ppa);
 //    }
 
 //        if(!cmt->pt) {

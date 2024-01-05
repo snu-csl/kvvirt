@@ -176,7 +176,7 @@ bool _update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
 
     pt->pt[pt->cached_cnt].lpa = lpa;
     pt->pt[pt->cached_cnt].ppa = ppa;
-    NVMEV_INFO("%s IDX %u LPA %llu PPA %llu pos %u\n", 
+    NVMEV_DEBUG("%s IDX %u LPA %llu PPA %llu pos %u\n", 
                 __func__, pt->idx, lpa, ppa, pt->cached_cnt); 
     pt->cached_cnt++;
 
@@ -201,7 +201,7 @@ bool _update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
 
         cmbr->nr_cached_tentries += CACHE_GRAIN;
 
-        NVMEV_INFO("Resizing IDX %u\n", pt->idx);
+        NVMEV_DEBUG("Resizing IDX %u\n", pt->idx);
         NVMEV_ASSERT(buf);
     }
 
@@ -311,16 +311,16 @@ void __page_to_ptes(value_set *value, uint64_t idx_, bool up_cache) {
         }
 
         if(idx != idx_) {
-            NVMEV_INFO("Skipping because IDX %llu != IDX %llu\n", idx, idx_);
+            NVMEV_DEBUG("Skipping because IDX %llu != IDX %llu\n", idx, idx_);
             continue;
         }
 
         if(pt->state == DIRTY) {
-            NVMEV_INFO("PT was dirty for IDX %u\n", pt->idx);
+            NVMEV_DEBUG("PT was dirty for IDX %u\n", pt->idx);
             continue;
         }
 
-        NVMEV_INFO("Adding LPA %llu PPA %llu IDX %llu offset %d\n", lpa, ppa, idx, i);
+        NVMEV_DEBUG("Adding LPA %llu PPA %llu IDX %llu offset %d\n", lpa, ppa, idx, i);
 
         if(pt->pt == NULL) {
             uint64_t start = local_clock();
@@ -482,7 +482,7 @@ void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru,
                 //BUG_ON(ppa == U64_MAX);
                 //if(ppa != U64_MAX) {
                 ppa = ppa;
-                NVMEV_INFO("Copying %llu %llu to victim list from idx %u.\n",
+                NVMEV_DEBUG("Copying %llu %llu to victim list from idx %u.\n",
                         start_lpa + i, ppa, pt->idx);
                 victims[count + i].lpa = lpa;
                 victims[count + i].ppa = ppa;
@@ -496,7 +496,7 @@ void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru,
 
             pt->cached_cnt = 0;
             pt->state = CLEAN;
-            NVMEV_INFO("Marking PT IDX %u clean in victims.\n", pt->idx);
+            NVMEV_DEBUG("Marking PT IDX %u clean in victims.\n", pt->idx);
             pt->lru_ptr = NULL;
             kfree((char*) pt->pt);
             pt->pt = NULL;
@@ -675,7 +675,7 @@ again:
                 uint64_t m_ppa = victims[i].ppa;
 
                 if(lpa != U64_MAX) {
-                    NVMEV_INFO("In memcpy for LPA %llu PPA %llu IDX %llu going to PPA %llu\n", 
+                    NVMEV_DEBUG("In memcpy for LPA %llu PPA %llu IDX %llu going to PPA %llu\n", 
                             lpa, m_ppa, IDX(lpa), ppa);
                 }
  
@@ -710,7 +710,7 @@ again:
                     continue;
                 }
 
-                //NVMEV_INFO("IDX %llu LPA %llu gets PPA %llu\n", 
+                //NVMEV_DEBUG("IDX %llu LPA %llu gets PPA %llu\n", 
                 //            victims[i].lpa / EPP, victims[i].lpa, ppa);
 
                 uint64_t idx = victims[i].lpa / EPP;
@@ -723,7 +723,7 @@ again:
 
                 cmt->grain = oob_idx;
                 oob[ppa][oob_idx++] = victims[i].lpa;
-                NVMEV_INFO("IDX %llu (CC %u) gets grain %u PPA %llu LPA %llu\n", 
+                NVMEV_DEBUG("IDX %llu (CC %u) gets grain %u PPA %llu LPA %llu\n", 
                             idx, cmt->cached_cnt, oob_idx - 1, ppa, victims[i].lpa);
 
                 uint64_t g_per_cg = (CACHE_GRAIN * sizeof(uint64_t) * 2) / GRAINED_UNIT;
@@ -853,7 +853,7 @@ again:
 			}
 		} else if (wb_entry) {
             NVMEV_ASSERT(wb_entry->mapping_v);
-            NVMEV_INFO("pagetoptes triggered for IDX %llu PPA %llu\n", IDX(lpa), cmt->t_ppa);
+            NVMEV_DEBUG("pagetoptes triggered for IDX %llu PPA %llu\n", IDX(lpa), cmt->t_ppa);
             __page_to_ptes(wb_entry->mapping_v, IDX(lpa), true);
 
             //if(__pt_contains(cmt, lpa, U64_MAX)) {
@@ -963,7 +963,7 @@ int cg_update(lpa_t lpa, struct pt_struct pte) {
              */
 
             /* update corresponding page status */
-            NVMEV_INFO("Marking mapping PPA %llu grain %llu IDX %llu "
+            NVMEV_DEBUG("Marking mapping PPA %llu grain %llu IDX %llu "
                     "invalid as it was dirtied in memory.\n",
                     cmt->t_ppa, cmt->grain, IDX(lpa));
 
@@ -977,7 +977,7 @@ int cg_update(lpa_t lpa, struct pt_struct pte) {
         //NVMEV_DEBUG("1 Update for IDX %llu\n", IDX(lpa));
 		lru_update(cmbr->lru, cmt->lru_ptr);
 	} else {
-        NVMEV_INFO("2 Hit this case for IDX %llu!!\n", IDX(lpa));
+        NVMEV_DEBUG("2 Hit this case for IDX %llu!!\n", IDX(lpa));
         BUG_ON(true);
 		/* FIXME: to handle later update after evict */
 		//cmbr->mem_table[IDX(lpa)][OFFSET(lpa)] = pte;
@@ -1023,7 +1023,7 @@ struct pt_struct cg_get_pte(lpa_t lpa) {
 	struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     struct ssdparams *spp = &d_member.ssd->sp;
 
-    NVMEV_INFO("Getting PTE for IDX %llu\n", IDX(lpa));
+    NVMEV_DEBUG("Getting PTE for IDX %llu\n", IDX(lpa));
 	if (cmt->pt) {
         return __get_pte(cmt, lpa);
         //printk("%s returning %u for lpa %u\n", __func__, cmt->pt[OFFSET(lpa)].ppa, lpa);
@@ -1041,7 +1041,7 @@ struct pt_struct cg_get_pte(lpa_t lpa) {
             //return cmt->pt[OFFSET(lpa)];
         } else {
             BUG_ON(true);
-            NVMEV_INFO("Hit this case for IDX %llu reading %llu!!\n", 
+            NVMEV_DEBUG("Hit this case for IDX %llu reading %llu!!\n", 
                         IDX(lpa), cmt->t_ppa);
 
             value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
