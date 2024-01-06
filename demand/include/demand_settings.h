@@ -19,7 +19,16 @@
 #define ENTRY_SIZE sizeof(uint64_t)
 #endif
 
+#ifdef GC_STANDARD
+#define EPP (PAGESIZE / ENTRY_SIZE) // Entry Per Page
+#else
+
+/*
+ * The new GC scheme contains LPAs and PPAs in the mapping page.
+ */
+
 #define EPP (PAGESIZE / (ENTRY_SIZE * 2)) // Entry Per Page
+#endif
 
 /* Support variable-sized value. Grain entries of the mapping table as GRAINED_UNIT */
 #define GRAINED_UNIT ( PIECE )

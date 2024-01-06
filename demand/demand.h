@@ -61,7 +61,9 @@ extern bool FAIL_MODE;
 /* Structures */
 // Page table entry
 struct pt_struct {
+#ifdef GC_STANDARD
     lpa_t lpa;
+#endif
 	ppa_t ppa; // Index = lpa
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
@@ -259,6 +261,10 @@ int validate_grain(blockmanager *, pga_t);
 int invalidate_grain(blockmanager *, pga_t);
 #endif
 
-void __page_to_ptes(value_set *value, uint64_t idx, bool);
+#ifdef GC_STANDARD
+void __page_to_pte(value_set*, struct pt_struct*, uint64_t);
+#else
+void __page_to_ptes(value_set*, uint64_t, bool);
+#endif
 
 #endif

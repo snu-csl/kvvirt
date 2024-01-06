@@ -51,8 +51,8 @@ void lru_kfree(LRU* lru){
 }
 
 NODE* lru_push(LRU* lru, void* table_ptr){
-    queue_write(example, table_ptr);
-    return (NODE*) 0xDEADBEEF;
+    //queue_write(example, table_ptr);
+    //return (NODE*) 0xDEADBEEF;
 
 	NODE *now = (NODE*)kzalloc(sizeof(NODE), GFP_KERNEL);
 	now->DATA = table_ptr;
@@ -80,7 +80,7 @@ void* lru_peek(LRU* lru){
 }
 
 void* lru_pop(LRU* lru){
-    return queue_read(example);
+    //return queue_read(example);
 	if(!lru->head || lru->size == 0){
 		return NULL;
 	}
@@ -100,7 +100,7 @@ void* lru_pop(LRU* lru){
 }
 
 void lru_update(LRU* lru, NODE* now){
-    return;
+    //return;
 	if(now == NULL){
 		return ;
 	}

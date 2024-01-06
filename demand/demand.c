@@ -196,6 +196,12 @@ uint32_t demand_create(lower_info *li, blockmanager *bm,
 	/* init stat */
 	demand_stat_init(&d_stat);
 
+#ifdef GC_STANDARD
+    d_env.cache_id = OLD_COARSE_GRAINED;
+#else
+    d_env.cache_id = COARSE_GRAINED;
+#endif
+
 	d_cache = select_cache((cache_t)d_env.cache_id);
 
 	///* create() for range query */

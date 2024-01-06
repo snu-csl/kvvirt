@@ -184,10 +184,37 @@ bool __read_cmt(uint64_t lpa, uint64_t *read_cmts, uint64_t cnt) {
 }
 
 #ifdef GC_STANDARD
+uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt) {
+    struct ssdparams *spp = &d_member.ssd->sp;
+    struct pt_struct *pt = cmt->pt;
+    uint64_t ret = 0;
+    uint64_t step = sizeof(uint64_t);
+    uint64_t first_lpa = cmt->idx * EPP;
+
+    for(int i = 0; i < spp->pgsz / step; i++) {
+        uint64_t ppa = pt[i].ppa;
+#ifdef STORE_KEY_FP
+        BUG_ON(true);
+#endif
+
+        if(ppa != U64_MAX) {
+            NVMEV_DEBUG("LPA %llu PPA %llu IDX %u to %u in the memcpy ret %llu.\n",
+                    first_lpa + i, ppa, cmt->idx, i, ret);
+        }
+
+        memcpy(value->value + (i * step), &ppa, sizeof(ppa));
+        ret += step;
+    }
+
+    NVMEV_ASSERT(ret <= spp->pgsz);
+    return ret;
+}
+
 int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
                              uint64_t *read_cmts, uint64_t read_cmt_cnt) {
     struct ssdparams *spp = &d_member.ssd->sp;
 	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
+    bool skip_all = true;
 
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
@@ -201,9 +228,6 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             prev = idx;
         }
     }
-
-    //kfree(skip_update);
-    //return 0;
 
     NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
@@ -248,6 +272,8 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                 continue;
             }
 
+            skip_all = false;
+
             if(__read_cmt(ppas[i].lpa, read_cmts, read_cmt_cnt)) {
                 NVMEV_DEBUG("%s skipping read PPA %llu as it was read earlier.\n",
                             __func__, cmt->t_ppa);
@@ -263,12 +289,16 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                         __func__, cmt->t_ppa);
                 mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
             }
-            //invalidate_page(bm, cmt->t_ppa, MAP);
             cmt->t_ppa = U64_MAX;
 
             d_stat.trans_r_tgc++;
             nr_update_tpages++;
         }
+    }
+
+    if(skip_all) {
+        kfree(skip_update);
+        return 0;
     }
 
     cmts_loaded = 0;
@@ -297,8 +327,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             }
         }
 
-        BUG_ON(true);
-        //__page_to_pte(pts[cmts_loaded], cmt->pt);
+        __page_to_pte(pts[cmts_loaded], cmt->pt, cmt->idx);
 
         uint64_t offset = OFFSET(ppas[i].lpa);
         cmt->pt[offset].ppa = ppas[i].new_ppa;
@@ -319,17 +348,16 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             i++;
         }
 
-        __pte_to_page(pts[cmts_loaded], cmt->pt);
+        __pte_to_page(pts[cmts_loaded], cmt);
  
-        struct ppa p = get_new_page(ftl, GC_GC_MAP_IO);
+        struct ppa p = get_new_page(ftl, GC_MAP_IO);
         uint64_t ppa = ppa2pgidx(ftl, &p);
 
         advance_write_pointer(ftl, GC_MAP_IO);
         mark_page_valid(ftl, &p);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
 
-        oob[ppa][0] = U64_MAX - 1;
-        oob[ppa][1] = lpa;
+        oob[ppa][0] = lpa;
 
         NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu\n",
                     __func__, idx, ppa);
@@ -356,21 +384,8 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 	return 0;
 }
 #else
-
-value_set* read_ppas_v[EPP];
-uint64_t read_ppas[EPP];
-uint64_t read_ppa_cnt;
-uint64_t __already_read(uint64_t ppa) {
-    for(int i = 0; i < read_ppa_cnt; i++) {
-        if(read_ppas[i] == ppa) {
-            return i;
-        }
-    }
-    return U64_MAX;
-}
-
 uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt, 
-                       uint64_t remaining, uint64_t ppa) {
+                       uint64_t remaining) {
     struct ssdparams *spp = &d_member.ssd->sp;
     struct pt_struct *pt = cmt->pt;
     uint64_t ret = 0;
@@ -401,6 +416,18 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
 
     NVMEV_ASSERT(ret <= spp->pgsz);
     return ret;
+}
+
+value_set* read_ppas_v[EPP];
+uint64_t read_ppas[EPP];
+uint64_t read_ppa_cnt;
+uint64_t __already_read(uint64_t ppa) {
+    for(int i = 0; i < read_ppa_cnt; i++) {
+        if(read_ppas[i] == ppa) {
+            return i;
+        }
+    }
+    return U64_MAX;
 }
 
 void __update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
@@ -630,7 +657,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         NVMEV_DEBUG("Setting PPA %llu offset %llu to LPA %lu in GC idx %lld (%d).\n",
                 ppa, offset, IDX2LPA(cmt->idx), written, nr_valid_grains);
 
-        __pte_to_page(w, cmt, (GRAIN_PER_PAGE - offset) * GRAINED_UNIT, ppa);
+        __pte_to_page(w, cmt, (GRAIN_PER_PAGE - offset) * GRAINED_UNIT);
 
         cmt->cached_cnt = 0;
         cmt->t_ppa = ppa;

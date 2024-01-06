@@ -62,7 +62,8 @@ typedef enum {
 typedef enum {
 	COARSE_GRAINED,
 	FINE_GRAINED,
-	PARTED
+	PARTED,
+    OLD_COARSE_GRAINED
 } cache_t;
 
 #endif

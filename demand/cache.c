@@ -6,6 +6,7 @@
 
 /* Declare cache structure first */
 extern struct demand_cache cg_cache;
+extern struct demand_cache cgo_cache;
 extern struct demand_cache fg_cache;
 //extern struct demand_cache pt_cache;
 
@@ -19,6 +20,10 @@ struct demand_cache *select_cache(cache_t type) {
 	switch (type) {
 	case COARSE_GRAINED:
 		ret = &cg_cache;
+		break;
+	case OLD_COARSE_GRAINED:
+        printk("OLD_COARSE\n");
+		ret = &cgo_cache;
 		break;
 	case FINE_GRAINED:
         BUG_ON(true);
