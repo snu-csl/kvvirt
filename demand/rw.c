@@ -120,9 +120,10 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 #ifndef GC_STANDARD
 static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
     struct ssdparams spp = d_member.ssd->sp;
+    struct gc_data *gcd = &ftl->gcd;
     struct ppa p = ppa_to_struct(&spp, ppa);
     struct line* l = get_line(ftl, &p); 
-    int line = l->id;
+    uint64_t line = (uint64_t) l->id;
     uint64_t nsecs_completed = 0;
 
     NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
@@ -144,11 +145,13 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
         NVMEV_ASSERT(advance_write_pointer(ftl, MAP_IO));
         mark_page_valid(ftl, &n_p);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
-        oob[ppa2pgidx(ftl, &n_p)][0] = U64_MAX;
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
         NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
                      line, inv_mapping_offs[line], w_ppa);
+
+        oob[w_ppa][0] = U64_MAX;
+        oob[w_ppa][1] = (line << 32) | w_ppa;
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];
@@ -159,12 +162,12 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
         __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
         nvmev_vdev->space_used += INV_PAGE_SZ;
 
-        inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
+        NVMEV_DEBUG("Added %llu (%llu %llu) to XA.\n", (line << 32) | w_ppa, line, w_ppa);
+        xa_store(&gcd->inv_mapping_xa, (line << 32) | w_ppa, xa_mk_value(w_ppa), GFP_KERNEL);
+        //inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
         
         memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
         inv_mapping_offs[line] = 0;
-
-        BUG_ON(inv_mapping_cnts[line] > spp.inv_ppl);
 
         (*credits) += GRAIN_PER_PAGE;
     }

@@ -187,8 +187,6 @@ static struct write_pointer *__get_wp(struct conv_ftl *ftl, uint32_t io_type)
 {
 	if (io_type == USER_IO) {
 		return &ftl->wp;
-    } else if (io_type == MAP_IO) {
-        return &ftl->map_wp;
 	} else if (io_type == GC_IO) {
 		return &ftl->gc_wp;
 	}

@@ -6,6 +6,7 @@
 #include <linux/hashtable.h> 
 #include <linux/types.h>
 #include <linux/spinlock.h>
+#include <linux/xarray.h>
 
 #include "pqueue/pqueue.h"
 #include "ssd_config.h"
@@ -95,9 +96,6 @@ struct write_flow_control {
 };
 
 struct gc_data {
-    uint64_t** inv_mappings; 
-    uint64_t* idxs;
-    
     /*
      * When we copy grains of data during GC, parts of
      * the page which we allocated for the copies
@@ -115,6 +113,8 @@ struct gc_data {
     uint32_t offset;
     bool last;
     bool map;
+    struct xarray inv_mapping_xa;
+    struct xarray gc_xa;
 };
 
 struct conv_ftl {
@@ -152,8 +152,6 @@ extern uint64_t *pg_v_cnt;
 #define INV_ENTRY_SZ (sizeof(uint64_t) + sizeof(uint64_t))
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
-extern uint64_t **inv_mapping_ppas;
-extern uint64_t *inv_mapping_cnts;
 #endif
 
 extern uint64_t **oob;

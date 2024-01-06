@@ -642,8 +642,6 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         cmt->state = CLEAN;
         oob[ppa][offset] = IDX2LPA(cmt->idx);
 
-        BUG_ON(oob[ppa][offset] > 100000000);
-        
         uint64_t cur = CACHE_GRAIN * ((cmt->cached_cnt / CACHE_GRAIN) + 1);
         for(int j = 1; j < (cur * step) / GRAINED_UNIT; j++) {
             oob[ppa][offset + j] = U64_MAX - 1; 

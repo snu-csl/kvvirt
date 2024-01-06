@@ -32,7 +32,6 @@ struct lpa_len_ppa {
     uint32_t len; /* the length of the key-value pair. */
     uint64_t prev_ppa; /* to copy from during GC */
     uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
-    bool skip_read; /* skip the read for this page when updating mappings. */
 #ifndef GC_STANDARD
     uint64_t cmt_ppa; /* which CMT ppa does this item belong to? */
 #endif
@@ -61,9 +60,7 @@ extern bool FAIL_MODE;
 /* Structures */
 // Page table entry
 struct pt_struct {
-#ifdef GC_STANDARD
     lpa_t lpa;
-#endif
 	ppa_t ppa; // Index = lpa
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
