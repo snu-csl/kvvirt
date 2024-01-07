@@ -49,7 +49,7 @@ static unsigned int cmd_value_length(struct nvme_kv_command cmd)
 	}
 }
 
-static inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa)
+inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa)
 {
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 	return (ppa->g.pg % spp->pgs_per_oneshotpg) == (spp->pgs_per_oneshotpg - 1);
@@ -508,8 +508,8 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 
 	init_write_flow_control(conv_ftl);
 
-	NVMEV_DEBUG("Init FTL instance with %d channels (%ld pages)\n", conv_ftl->ssd->sp.nchs,
-		   conv_ftl->ssd->sp.tt_pgs);
+	NVMEV_INFO("Init FTL instance with %d channels (%ld pages)\n", conv_ftl->ssd->sp.nchs,
+		        conv_ftl->ssd->sp.tt_pgs);
 
 	return;
 }
@@ -637,6 +637,8 @@ void demand_free(struct conv_ftl *conv_ftl) {
     vfree(oob);
 }
 
+static bool conv_write(struct nvmev_ns*, struct nvmev_request*, 
+                       struct nvmev_result*, bool);
 uint64_t dsize = 0;
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
                          uint32_t cpu_nr_dispatcher)
@@ -689,10 +691,33 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
     ns->proc_io_cmd = kv_proc_nvme_io_cmd;
 	ns->identify_io_cmd = kv_identify_nvme_io_cmd;
 
-	NVMEV_DEBUG("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
-		   size, ns->size, cpp.pba_pcent);
+	NVMEV_INFO("FTL physical space: %lld, logical space: %lld (physical/logical * 100 = %d)\n",
+		        size, ns->size, cpp.pba_pcent);
 
 	return;
+}
+
+void demand_warmup(struct nvmev_ns* ns) {
+    uint8_t klen = 16;
+    uint16_t vlen = 1024;
+    struct nvmev_request req;
+    struct nvme_kv_command cmd;
+    struct nvmev_result res;
+
+    cmd.common.opcode = nvme_cmd_kv_store;
+    cmd.kv_store.key_len = klen - 1;
+    cmd.kv_store.value_len = vlen >> 2;
+    req.cmd = (struct nvme_command*) &cmd;
+
+    for(int i = 0; i < 1000000; i++) {
+        char* value = kzalloc(vlen, GFP_KERNEL);
+        cmd.kv_store.dptr.prp1 = (uint64_t) value;
+        sprintf(cmd.kv_store.key, "%0*d", klen, i);
+        memcpy(value, &klen, sizeof(klen));
+        memcpy(value + sizeof(klen), cmd.kv_store.key, klen);
+        //NVMEV_INFO("Internal population for key %s\n", cmd.kv_store.key);
+        conv_write(ns, &req, &res, true);
+    }
 }
 
 void conv_remove_namespace(struct nvmev_ns *ns)
@@ -1570,6 +1595,23 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 grain_bitmap[PPA_TO_PGA(pgidx, i)] = 0;
             }
 
+            if (cpp->enable_gc_delay) {
+                struct nand_cmd gcw = {
+                    .type = GC_IO,
+                    .cmd = NAND_NOP,
+                    .stime = 0,
+                    .interleave_pci_dma = false,
+                    .ppa = &new_ppa,
+                };
+
+                if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+                    gcw.cmd = NAND_WRITE;
+                    gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+                }
+
+                ssd_advance_nand(conv_ftl->ssd, &gcw);
+            }
+
             nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
             goto new_ppa;
         }
@@ -1667,22 +1709,22 @@ new_ppa:
     gcd->gc_ppa = new_ppa;
     gcd->pgidx = pgidx;
 
-    if (cpp->enable_gc_delay) {
-        struct nand_cmd gcw = {
-            .type = GC_IO,
-            .cmd = NAND_NOP,
-            .stime = 0,
-            .interleave_pci_dma = false,
-            .ppa = &new_ppa,
-        };
+    //if (cpp->enable_gc_delay) {
+    //    struct nand_cmd gcw = {
+    //        .type = GC_IO,
+    //        .cmd = NAND_NOP,
+    //        .stime = 0,
+    //        .interleave_pci_dma = false,
+    //        .ppa = &new_ppa,
+    //    };
 
-        if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
-            gcw.cmd = NAND_WRITE;
-            gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
-        }
+    //    if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+    //        gcw.cmd = NAND_WRITE;
+    //        gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+    //    }
 
-        ssd_advance_nand(conv_ftl->ssd, &gcw);
-    }
+    //    ssd_advance_nand(conv_ftl->ssd, &gcw);
+    //}
 
     if(!mapping_line) {
         do_bulk_mapping_update_v(lpa_lens, cnt, read_cmts, read_cmts_idx);
@@ -1964,6 +2006,23 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 oob[pgidx][i] = U64_MAX;
             }
 
+            if (cpp->enable_gc_delay) {
+                struct nand_cmd gcw = {
+                    .type = GC_IO,
+                    .cmd = NAND_NOP,
+                    .stime = 0,
+                    .interleave_pci_dma = false,
+                    .ppa = &new_ppa,
+                };
+
+                if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+                    gcw.cmd = NAND_WRITE;
+                    gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+                }
+
+                ssd_advance_nand(conv_ftl->ssd, &gcw);
+            }
+
             nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
             goto new_ppa;
         }
@@ -2062,26 +2121,26 @@ new_ppa:
     gcd->gc_ppa = new_ppa;
     gcd->pgidx = pgidx;
 
-    if (cpp->enable_gc_delay) {
-        struct nand_cmd gcw = {
-            .type = GC_IO,
-            .cmd = NAND_NOP,
-            .stime = 0,
-            .interleave_pci_dma = false,
-            .ppa = &new_ppa,
-        };
+    //if (cpp->enable_gc_delay) {
+    //    struct nand_cmd gcw = {
+    //        .type = GC_IO,
+    //        .cmd = NAND_NOP,
+    //        .stime = 0,
+    //        .interleave_pci_dma = false,
+    //        .ppa = &new_ppa,
+    //    };
 
-        if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
-            gcw.cmd = NAND_WRITE;
-            gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
-        }
+    //    if (last_pg_in_wordline(conv_ftl, &new_ppa)) {
+    //        gcw.cmd = NAND_WRITE;
+    //        gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+    //    }
 
-        /*
-         * TODO are we skipping some writes because this isn't triggering?
-         */
+    //    /*
+    //     * TODO are we skipping some writes because this isn't triggering?
+    //     */
 
-        ssd_advance_nand(conv_ftl->ssd, &gcw);
-    }
+    //    ssd_advance_nand(conv_ftl->ssd, &gcw);
+    //}
 
     if(!mapping_line) {
         do_bulk_mapping_update_v(lpa_lens, cnt, read_cmts, read_cmts_idx);
@@ -2115,6 +2174,7 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
 {
 	struct line *victim_line = NULL;
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
+    struct convparams *cpp = &conv_ftl->cp;
 	struct ppa ppa;
     struct gc_data *gcd = &conv_ftl->gcd;
 	int flashpg;
@@ -2196,6 +2256,7 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
         uint64_t pgidx = gcd->pgidx;
         uint32_t offset = gcd->offset;
         uint64_t grain = PPA_TO_PGA(pgidx, offset);
+        struct ppa ppa = ppa_to_struct(spp, pgidx);
 
         NVMEV_DEBUG("Marking %d grains invalid after GC copies pgidx %llu.\n", 
                     GRAIN_PER_PAGE - offset, pgidx);
@@ -2211,6 +2272,23 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
                          GRAIN_PER_PAGE - offset);
         mark_grain_invalid(conv_ftl, PPA_TO_PGA(pgidx, offset), 
                            GRAIN_PER_PAGE - offset);
+
+        if (cpp->enable_gc_delay) {
+            struct nand_cmd gcw = {
+                .type = GC_IO,
+                .cmd = NAND_NOP,
+                .stime = 0,
+                .interleave_pci_dma = false,
+                .ppa = &ppa,
+            };
+
+            if (last_pg_in_wordline(conv_ftl, &ppa)) {
+                gcw.cmd = NAND_WRITE;
+                gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+            }
+
+            ssd_advance_nand(conv_ftl->ssd, &gcw);
+        }
 
         nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
 
@@ -2588,7 +2666,8 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
  * __do_perform_io later.
  */
 
-static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, 
+                       struct nvmev_result *ret, bool internal)
 {
 	struct conv_ftl *conv_ftls = (struct conv_ftl *)ns->ftls;
 	struct conv_ftl *conv_ftl = &conv_ftls[0];
@@ -2597,7 +2676,6 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 	struct ssdparams *spp = &conv_ftl->ssd->sp;
 
 	struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
-    struct nvme_kv_command tmp = *cmd;
 
 	uint64_t nsecs_latest;
 	uint64_t nsecs_xfer_completed;
@@ -2611,7 +2689,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.req = req;
     d_req.hash_params = NULL;
 
-    uint8_t klen = cmd_key_length(tmp);
+    uint8_t klen = cmd_key_length(*cmd);
     uint32_t vlen = cmd_value_length(*cmd);
 
     key.key = NULL;
@@ -2640,12 +2718,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     d_req.sqid = req->sq_id;
 
     NVMEV_ASSERT(value->value);
-    __quick_copy(cmd, value->value, value->length);
 
-    uint8_t nklen = *(uint8_t*) value->value;
-    if(key.key[0] == 'L') {
-        NVMEV_DEBUG("Log key. Bid %llu log num %u\n", 
-                *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+    if(!internal) {
+        __quick_copy(cmd, value->value, value->length);
+    } else {
+        memcpy(value->value, (void*) cmd->kv_store.dptr.prp1, value->length);
     }
 
     nsecs_latest = nsecs_xfer_completed = __demand.write(&d_req);
@@ -2811,6 +2888,7 @@ static bool conv_batch(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     uint8_t klen = 0;
     uint32_t offset = 0, vlen = 0;
     uint32_t remaining = cmd_value_length(*cmd);
+    KEYT key;
 
     char* value = (char*) kzalloc(remaining, GFP_KERNEL);
     __quick_copy(cmd, value, remaining);
@@ -2818,7 +2896,9 @@ static bool conv_batch(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     while(remaining > 0) {
         klen = *(uint8_t*) value + offset;
         offset += sizeof(klen);
-
+        
+        key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);     
+        memcpy(key.key, value + offset, klen);
     }
 
     return true;
@@ -2857,7 +2937,7 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
             break;
             //ret->nsecs_target = conv_batch(ns, req, ret);
         case nvme_cmd_kv_store:
-            ret->nsecs_target = conv_write(ns, req, ret);
+            ret->nsecs_target = conv_write(ns, req, ret, false);
             //NVMEV_DEBUG("%d, %llu, %llu\n", cmd_value_length(*((struct nvme_kv_command *)cmd)),
             //        __get_wallclock(), ret->nsecs_target);
             break;
@@ -2897,7 +2977,7 @@ bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struc
 
 	switch (cmd->common.opcode) {
 	case nvme_cmd_write:
-		if (!conv_write(ns, req, ret))
+		if (!conv_write(ns, req, ret, false))
 			return false;
 		break;
 	case nvme_cmd_read:

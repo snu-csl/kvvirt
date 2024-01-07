@@ -329,6 +329,8 @@ static int __proc_file_read(struct seq_file *m, void *data)
 		/* Left for later use */
 	} else if(strcmp(filename, "space") == 0) {
         seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
+    } else if(strcmp(filename, "dstat") == 0) {
+        seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
     }
 
 	return 0;

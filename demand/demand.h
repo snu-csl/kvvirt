@@ -52,6 +52,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
 int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
                              uint64_t *read_cmts, uint64_t read_cmt_cnt);
 inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa);
+inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa);
 
 extern struct demand_stat d_stat;
 

@@ -134,14 +134,12 @@ struct conv_ftl {
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
 			 uint32_t cpu_nr_dispatcher);
-
 void conv_remove_namespace(struct nvmev_ns *ns);
-
 bool conv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 			   struct nvmev_result *ret);
 bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, 
                          struct nvmev_result *ret);
-
+void demand_warmup(struct nvmev_ns *ns);
 
 #ifdef GC_STANDARD
 extern bool *grain_bitmap;

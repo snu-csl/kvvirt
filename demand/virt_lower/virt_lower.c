@@ -1,5 +1,6 @@
 #define _LARGEFILE64_SOURCE
 
+#include "../demand.h"
 #include "../../nvmev.h"
 #include "../include/settings.h"
 #include "virt_lower.h"
@@ -96,19 +97,13 @@ void print_kvs(uint64_t off) {
 uint64_t virt_push_data(uint64_t PPA, uint32_t size, 
                         value_set* value, bool async,
                         algo_req *const req){
-    uint64_t nsecs_completed, nsecs_latest;
-    struct ppa ppa;
-    struct nand_cmd swr = {
-        .type = USER_IO,
-        .cmd = NAND_WRITE,
-        .interleave_pci_dma = false,
-        .xfer_size = size,
-        .stime = 0,
-    };
-
     BUG_ON(async);
     BUG_ON(!value->ssd);
     BUG_ON(!value);
+
+    struct ssdparams *spp = (struct ssdparams*) &value->ssd->sp;
+    uint64_t nsecs_completed, nsecs_latest;
+    struct ppa ppa;
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
@@ -126,9 +121,24 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
     //            (char*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t)),
     //            *(uint32_t*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t) + klen));
 
-    ppa = ppa_to_struct(&value->ssd->sp, PPA);
-    swr.ppa = &ppa;
-    nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
+    if (last_pg_in_wordline(ftl, &ppa)) {
+        struct nand_cmd swr = {
+            .type = USER_IO,
+            .cmd = NAND_WRITE,
+            .interleave_pci_dma = false,
+            .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
+            .stime = 0,
+        };
+
+        ppa = ppa_to_struct(&value->ssd->sp, PPA);
+        swr.ppa = &ppa;
+
+        nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
+        nsecs_latest = max(nsecs_completed, nsecs_latest);
+
+        //schedule_internal_operation(nvmev_vdev->sqes[1], nsecs_completed, wbuf,
+        //        spp->pgs_per_oneshotpg * spp->pgsz);
+    }
 
     //schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
     //                               value->value, PPA, size, 
