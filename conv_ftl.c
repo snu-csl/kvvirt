@@ -349,7 +349,6 @@ static void conv_init_ftl(struct conv_ftl *conv_ftl, struct convparams *cpp, str
 
 	/* initialize write pointer, this is how we allocate new pages for writes */
 	prepare_write_pointer(conv_ftl, USER_IO);
-    prepare_write_pointer(conv_ftl, MAP_IO);
 	prepare_write_pointer(conv_ftl, GC_IO);
 
 	init_write_flow_control(conv_ftl);
