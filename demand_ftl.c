@@ -1399,6 +1399,12 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             continue;
         }
 
+        if(!mapping_line) {
+            d_stat.data_r_dgc++;
+        } else {
+            d_stat.trans_r_tgc++;
+        }
+
         NVMEV_DEBUG("Cleaning PPA %llu\n", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
@@ -1411,7 +1417,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                  */
                 continue;
             }
-            
+
             if(grain_bitmap[grain] == 1) {
                 if(mapping_line) {
                     NVMEV_DEBUG("Got CMT PPA %llu in GC\n", pgidx);
@@ -1453,12 +1459,11 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                     }
 
                     lpa_lens[lpa_len_idx++] =
-                        (struct lpa_len_ppa) {idx, GRAIN_PER_PAGE, grain, U64_MAX - 1, false};
+                        (struct lpa_len_ppa) {idx, GRAIN_PER_PAGE, grain, U64_MAX - 1};
 
                     mark_grain_invalid(conv_ftl, grain, GRAIN_PER_PAGE);
                     cnt++;
                     tt_rewrite += GRAIN_PER_PAGE * GRAINED_UNIT;
-                    d_stat.trans_r_dgc++;
 
                     i += GRAIN_PER_PAGE;
                 } else if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0) {
@@ -1470,13 +1475,14 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                     }
 
                     lpa_lens[lpa_len_idx++] =
-                        (struct lpa_len_ppa) {oob[pgidx][i], len, grain, U64_MAX, false};
+                        (struct lpa_len_ppa) {oob[pgidx][i], len, grain, U64_MAX};
 
                     mark_grain_invalid(conv_ftl, grain, len);
                     cnt++;
                     tt_rewrite += len * GRAINED_UNIT;
-                    d_stat.data_r_dgc++;
+
                 }
+
             } 
         }
 
@@ -1525,6 +1531,12 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
         mark_page_valid(conv_ftl, &new_ppa);
         advance_write_pointer(conv_ftl, mapping_line ? GC_MAP_IO : GC_IO);
+
+        if(!mapping_line) {
+            d_stat.data_w_dgc++;
+        } else {
+            d_stat.trans_w_tgc++;
+        }
     }
 
     NVMEV_ASSERT(remain > 0 && grains_rewritten < cnt);
@@ -1572,7 +1584,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             NVMEV_ASSERT(length == GRAIN_PER_PAGE);
         }
 
-        NVMEV_INFO("LPA/IDX %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
+        NVMEV_DEBUG("LPA/IDX %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
                     lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
 
         to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
@@ -1628,6 +1640,12 @@ new_ppa:
             NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
             mark_page_valid(conv_ftl, &new_ppa);
             advance_write_pointer(conv_ftl, mapping_line ? GC_MAP_IO : GC_IO);
+
+            if(!mapping_line) {
+                d_stat.data_w_dgc++;
+            } else {
+                d_stat.trans_w_tgc++;
+            }
             //NVMEV_ERROR("2 Picked up PPA %llu %u remaining grains\n", 
             //        pgidx, GRAIN_PER_PAGE - offset);
         }
@@ -1671,7 +1689,6 @@ new_ppa:
     }
 
     read_cmts_idx = 0;
-    //kfree(read_cmts);
     kfree(lpa_lens);
 
     return;
@@ -1719,6 +1736,12 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
             NVMEV_ASSERT(pg_iter->status == PG_INVALID);
             ppa_copy.g.pg++;
             continue;
+        }
+
+        if(!mapping_line) {
+            d_stat.data_r_dgc++;
+        } else {
+            d_stat.trans_r_tgc++;
         }
 
         NVMEV_DEBUG("Cleaning PPA %llu\n", pgidx);
@@ -1823,7 +1846,6 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
 
                 //mark_grain_invalid(conv_ftl, grain, 
                 //                  (spp->pgsz - pg_inv_cnt[pgidx]) / GRAINED_UNIT);
-                d_stat.trans_r_dgc++;
                 i += GRAIN_PER_PAGE;
             } else if(oob[pgidx][i] != U64_MAX && oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
                __valid_mapping(conv_ftl, oob[pgidx][i], pgidx)) {
@@ -1846,7 +1868,6 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 mark_grain_invalid(conv_ftl, grain, len);
                 cnt++;
                 tt_rewrite += len * GRAINED_UNIT;
-                d_stat.data_r_dgc++;
             } else {
             } 
         }
@@ -1902,6 +1923,12 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
         NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
         mark_page_valid(conv_ftl, &new_ppa);
         advance_write_pointer(conv_ftl, mapping_line ? GC_MAP_IO : GC_IO);
+
+        if(!mapping_line) {
+            d_stat.data_w_dgc++;
+        } else {
+            d_stat.trans_w_tgc++;
+        }
 
         NVMEV_DEBUG("Got PPA %llu here remain %llu gr %llu (%u)\n", 
         pgidx, remain, grains_rewritten, cnt);
@@ -2010,6 +2037,12 @@ new_ppa:
             NVMEV_ASSERT(oob_empty(ppa2pgidx(conv_ftl, &new_ppa)));
             mark_page_valid(conv_ftl, &new_ppa);
             advance_write_pointer(conv_ftl, mapping_line ? GC_MAP_IO : GC_IO);
+
+            if(!mapping_line) {
+                d_stat.data_w_dgc++;
+            } else {
+                d_stat.trans_w_tgc++;
+            }
         }
     }
 
@@ -2105,7 +2138,12 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
             conv_ftl->lm.victim_line_cnt, conv_ftl->lm.full_line_cnt, 
             conv_ftl->lm.free_line_cnt);
 
-    d_stat.dgc_cnt++;
+    if(gcd->map) {
+        d_stat.tgc_cnt++;
+    } else {
+        d_stat.dgc_cnt++;
+    }
+
 	conv_ftl->wfc.credits_to_refill = victim_line->igc;
 #ifndef GC_STANDARD
     if(!gcd->map) {
@@ -2180,7 +2218,7 @@ static uint64_t do_gc(struct conv_ftl *conv_ftl, bool force)
         gcd->pgidx = U64_MAX;
     }
 
-	/* update line status */
+    /* update line status */
 	mark_line_free(conv_ftl, &ppa);
     __clear_gc_data(conv_ftl);
 

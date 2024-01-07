@@ -448,6 +448,7 @@ void __collect_victims(struct conv_ftl *conv_ftl, LRU* lru,
         if(pt->state == CLEAN) {
             NVMEV_DEBUG("1 Cached cnt of IDX %u %llu\n", pt->idx, cached);
             clean_count += cached;
+            cstat->clean_evict++;
             cmbr->nr_cached_tentries -= cached;
             pt->cached_cnt = 0;
             pt->lru_ptr = NULL;
@@ -698,7 +699,13 @@ again:
                 nsecs = __demand.li->write(ppa, PAGESIZE, _value_mw, ASYNC, NULL);
                 kfree(_value_mw->value);
                 kfree(_value_mw);
-                NVMEV_DEBUG("Loop 2\n");
+                d_stat.trans_w++;
+
+                if(req) {
+                    d_stat.t_write_on_read++;
+                } else {
+                    d_stat.t_write_on_write++;
+                }
             }
 
             NVMEV_DEBUG("Passed write.\n");
@@ -777,36 +784,39 @@ again:
         NVMEV_ASSERT(!cmt->is_flying);
     }
 
-    if(cmt->t_ppa != U64_MAX && cmt->pt == NULL) {
-        if(wb_entry && wb_entry->mapping_v) {
-            inf_free_valueset(wb_entry->mapping_v, FS_MALLOC_W);
-        } else if(req && req->mapping_v) {
-            inf_free_valueset(req->mapping_v, FS_MALLOC_W);
-        }
+    //if(cmt->t_ppa != U64_MAX && cmt->pt == NULL) {
+    //    if(wb_entry && wb_entry->mapping_v) {
+    //        inf_free_valueset(wb_entry->mapping_v, FS_MALLOC_W);
+    //    } else if(req && req->mapping_v) {
+    //        inf_free_valueset(req->mapping_v, FS_MALLOC_W);
+    //    }
 
-        if(cmt->pt == NULL) {
-            NVMEV_DEBUG("Building mapping PPA %llu for LPA %llu IDX %llu\n", 
-                    cmt->t_ppa, lpa, IDX(lpa));
-            /*
-             * This CMT was written above.
-             */
+    //    if(cmt->pt == NULL) {
+    //        NVMEV_DEBUG("Building mapping PPA %llu for LPA %llu IDX %llu\n", 
+    //                cmt->t_ppa, lpa, IDX(lpa));
+    //        /*
+    //         * This CMT was written above.
+    //         */
 
-            value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
-            v->ssd = d_member.ssd;
-            nsecs = __demand.li->read(cmt->t_ppa, PAGESIZE, v, ASYNC, NULL);
-            cmt->is_flying = true;
+    //        value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
+    //        v->ssd = d_member.ssd;
+    //        nsecs = __demand.li->read(cmt->t_ppa, PAGESIZE, v, ASYNC, NULL);
+    //        cmt->is_flying = true;
+    //        d_stat.trans_r++;
 
-            if(req) {
-                req->mapping_v = v;
-            } else {
-                wb_entry->mapping_v = v;
-            }
+    //        if(req) {
+    //            req->mapping_v = v;
+    //            d_stat.t_read_on_read++;
+    //        } else {
+    //            wb_entry->mapping_v = v;
+    //            d_stat.t_read_on_write++;
+    //        }
 
-            if(sample) {
-                write = local_clock();
-            }
-        }
-    } 
+    //        if(sample) {
+    //            write = local_clock();
+    //        }
+    //    }
+    //} 
     
     //else {
     //    NVMEV_ASSERT(!cmt->is_flying);
@@ -1048,6 +1058,7 @@ struct pt_struct cg_get_pte(lpa_t lpa) {
             v->ssd = d_member.ssd;
             __demand.li->read(cmt->t_ppa, PAGESIZE, v, ASYNC, NULL);
             __page_to_ptes(v, IDX(lpa), true);
+            d_stat.trans_r++;
 
             NVMEV_ASSERT(cmt->pt);
             return __get_pte(cmt, lpa);

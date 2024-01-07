@@ -291,7 +291,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             }
             cmt->t_ppa = U64_MAX;
 
-            d_stat.trans_r_tgc++;
+            d_stat.trans_r_dgc++;
             nr_update_tpages++;
         }
     }
@@ -364,7 +364,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
         __demand.li->write(ppa, spp->pgsz, pts[cmts_loaded], ASYNC, NULL);
 
-        d_stat.trans_w_tgc++;
+        d_stat.trans_w_dgc++;
         cmt->state = CLEAN;
         
         kfree(cmt->pt);
@@ -556,7 +556,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             cur = CACHE_GRAIN * ((cmt->cached_cnt / CACHE_GRAIN) + 1);
             to_write += (cur * step) / GRAINED_UNIT;
 
-            d_stat.trans_r_tgc++;
+            d_stat.trans_r_dgc++;
             nr_update_tpages++;
         }
     }
@@ -599,6 +599,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
     advance_write_pointer(ftl, GC_MAP_IO);
     mark_page_valid(ftl, &p);
+    d_stat.trans_w_dgc++;
 
     value_set *w = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
     w->ssd = d_member.ssd;
@@ -689,6 +690,7 @@ new_ppa:
             NVMEV_ASSERT(oob_empty(ppa2pgidx(ftl, &p)));
             mark_page_valid(ftl, &p);
             advance_write_pointer(ftl, GC_MAP_IO);
+            d_stat.trans_w_dgc++;
         }
     }
 

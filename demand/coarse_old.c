@@ -315,24 +315,6 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 
     nsecs_latest = max(nsecs_latest, nsecs);
 
-    //if(cmt->pt == NULL && cmt->t_ppa != U64_MAX) {
-    //    /*
-    //     * This CMT was written above.
-    //     */
-
-    //    value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
-    //    v->ssd = d_member.ssd;
-    //    nsecs = __demand.li->read(cmt->t_ppa, PAGESIZE, v, ASYNC, NULL);
-    //    cmt->is_flying = true;
-
-    //    if(req) {
-    //        req->mapping_v = v;
-    //    } else {
-    //        wb_entry->mapping_v = v;
-    //    }
-    //}
-
-    //cmt->pt = cmbr->mem_table[IDX(lpa)];
     NVMEV_DEBUG("Building mapping PPA %llu for LPA %llu\n", cmt->t_ppa, lpa);
     cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
     cmbr->nr_cached_tpages++;

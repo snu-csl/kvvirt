@@ -220,14 +220,49 @@ uint32_t demand_create(lower_info *li, blockmanager *bm,
 
 static int count_filled_entry(void) {
 	int ret = 0;
-	for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
-		//struct pt_struct *pt = d_cache->member.mem_table[i];
-		//for (int j = 0; j < EPP; j++) {
-		//	if (pt[j].ppa != U64_MAX) {
-		//		ret++;
-		//	}
-		//}
-	}
+    value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+
+    for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
+        struct cmt_struct *cmt = d_cache->member.cmt[i];
+#ifdef GC_STANDARD
+        if(cmt->t_ppa != U64_MAX) {
+            if(cmt->pt == NULL) {
+                cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
+                for(int i = 0; i < EPP; i++) {
+                    cmt->pt[i].ppa = U64_MAX;
+#ifdef STORE_KEY_FP
+                    BUG_ON(true);
+#endif
+                }
+
+                BUG_ON(!v->value);
+                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
+                        PAGESIZE);
+                __page_to_pte(v, cmt->pt, cmt->idx);
+            }
+
+            for (int j = 0; j < EPP; j++) {
+                if (cmt->pt[j].ppa != U64_MAX) {
+                    ret++;
+                }
+            }
+        }
+#else
+        if(cmt->t_ppa != U64_MAX) {
+            if(cmt->pt == NULL) {
+                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
+                        PAGESIZE);
+                __page_to_ptes(v, cmt->idx, false);
+            }
+
+            for (int j = 0; j < EPP; j++) {
+                if (cmt->pt[j].ppa != U64_MAX) {
+                    ret++;
+                }
+            }
+        }
+#endif
+    }
 	return ret;
 }
 
@@ -320,7 +355,7 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("================");
 
 	printk("[Overall Hash-table Load Factor]");
-	int filled_entry_cnt = 0;//count_filled_entry();
+	int filled_entry_cnt = count_filled_entry();
 	int total_entry_cnt = d_cache->env.nr_valid_tentries;
 	printk("Total entry:  %d\n", total_entry_cnt);
 	printk("Filled entry: %d\n", filled_entry_cnt);
