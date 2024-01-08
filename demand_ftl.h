@@ -153,7 +153,7 @@ extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 #endif
 
-extern lpa_t **oob;
+extern uint64_t **oob;
 
 extern DECLARE_HASHTABLE(mapping_ht, 20);
 struct ht_mapping {

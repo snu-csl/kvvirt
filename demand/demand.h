@@ -74,7 +74,7 @@ struct cmt_struct {
 	struct pt_struct *pt;
 	NODE *lru_ptr;
 	ppa_t t_ppa;
-    ppa_t grain;
+    uint64_t grain;
     uint8_t len_on_disk;
 
 	cmt_state_t state;

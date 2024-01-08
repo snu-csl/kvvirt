@@ -586,8 +586,8 @@ void demand_init(uint64_t size, struct ssd* ssd)
         NVMEV_ASSERT(inv_mapping_bufs[i]);
     }
 
-    printk("tt_grains %u tt_map %lu tt_data %lu "
-            "invalid_per_line %u inv_ppl %u\n", 
+    printk("tt_grains %llu tt_map %lu tt_data %lu "
+            "invalid_per_line %llu inv_ppl %llu\n", 
             tt_grains, spp->tt_map_pgs, spp->tt_data_pgs,
             inv_per_line, inv_ppl);
 #endif
@@ -596,11 +596,11 @@ void demand_init(uint64_t size, struct ssd* ssd)
      * OOB stores LPA to grain information.
      */
 
-    oob = (lpa_t**)vmalloc((spp->tt_pgs * sizeof(lpa_t*)));
+    oob = (uint64_t**)vmalloc((spp->tt_pgs * sizeof(uint64_t*)));
 
     for(int i = 0; i < spp->tt_pgs; i++) {
         oob[i] = 
-        (lpa_t*)kzalloc(GRAIN_PER_PAGE * sizeof(lpa_t), GFP_KERNEL);
+        (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
         for(int j = 0; j < GRAIN_PER_PAGE; j++) {
             oob[i][j] = 2;
         }
@@ -1223,11 +1223,10 @@ uint64_t __get_inv_mappings(struct conv_ftl *conv_ftl, uint64_t line) {
                                          sizeof(lpa_t));
 
             NVMEV_DEBUG("%s 1 Inserting inv LPA -> PPA mapping %u %u "
-                        "(%u %u %d %u %u)\n", 
-                        __func__, lpa, ppa, lpa, ppa, j, 
-                        gcd->idxs[idx_in_line], idx_in_line);
-            xa_store(&gcd->gc_xa, (ppa << 32) | lpa, 
-                     xa_mk_value((ppa << 32) | lpa),  GFP_KERNEL);
+                        "(%llu)\n", 
+                        __func__, lpa, ppa, ((uint64_t) ppa << 32) | lpa);
+            xa_store(&gcd->gc_xa, ((uint64_t) ppa << 32) | lpa, 
+                     xa_mk_value(((uint64_t) ppa << 32) | lpa),  GFP_KERNEL);
         }
 
         NVMEV_DEBUG("Erasing %lu from XA.\n", index);
@@ -1244,10 +1243,11 @@ uint64_t __get_inv_mappings(struct conv_ftl *conv_ftl, uint64_t line) {
         ppa_t ppa = *(ppa_t*) (inv_mapping_bufs[line] + (j * INV_ENTRY_SZ) + 
                                      sizeof(lpa_t));
 
-        NVMEV_DEBUG("%s 2 Inserting inv LPA -> PPA mapping %u %u (%d)\n", 
-                __func__, lpa, ppa, j);
-        xa_store(&gcd->gc_xa, (ppa << 32) | lpa, 
-                 xa_mk_value((ppa << 32) | lpa), GFP_KERNEL);
+        NVMEV_DEBUG("%s 2 Inserting inv LPA -> PPA mapping %u %u "
+                "(%llu)\n", 
+                __func__, lpa, ppa, ((uint64_t) ppa << 32) | lpa);
+        xa_store(&gcd->gc_xa, ((uint64_t) ppa << 32) | lpa, 
+                 xa_mk_value(((uint64_t) ppa << 32) | lpa), GFP_KERNEL);
     }
 
     inv_mapping_offs[line] = 0;
@@ -1798,7 +1798,7 @@ void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa)
                 NVMEV_ASSERT(mapping_line);
 
                 if(!__invalid_mapping_ppa(conv_ftl, G_IDX(grain), key)) {
-                    NVMEV_INFO("Mapping PPA %u key %lu has since been rewritten. Skipping.\n",
+                    NVMEV_INFO("Mapping PPA %llu key %lu has since been rewritten. Skipping.\n",
 
                             pgidx, key);
 

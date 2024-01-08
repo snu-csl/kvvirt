@@ -147,11 +147,11 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %u to PPA %u\n", 
-                     line, inv_mapping_offs[line], w_ppa);
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
+                    line, inv_mapping_offs[line], w_ppa);
 
         oob[w_ppa][0] = UINT_MAX;
-        oob[w_ppa][1] = (line << 32) | w_ppa;
+        oob[w_ppa][1] = (line << 32) | (w_ppa);
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];

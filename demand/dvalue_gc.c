@@ -394,6 +394,9 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
     for(int i = start; i < (start + cur); i++) {
         lpa_t lpa = pt[i - start].lpa;
         ppa_t ppa = pt[i - start].ppa;
+#ifdef STORE_KEY_FP
+        fp_t fp = pt[i - start].key_fp;
+#endif
 
         if(lpa != UINT_MAX) {
             NVMEV_DEBUG("LPA %u PPA %u IDX %u to %u in the memcpy ret %u.\n",
@@ -402,6 +405,10 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
 
         memcpy(value->value + (i * step), &lpa, sizeof(lpa));
         memcpy(value->value + (i * step) + sizeof(lpa), &ppa, sizeof(ppa));
+#ifdef STORE_KEY_FP
+        memcpy(value->value + (i * step) + sizeof(lpa) + sizeof(ppa), 
+               &fp, sizeof(fp));
+#endif
         ret += step;
     }
 
@@ -528,7 +535,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             read_ppas_v[read_ppa_cnt] = _value_mr;
             read_ppas[read_ppa_cnt++] = cmt->t_ppa;
 
-            NVMEV_DEBUG("Adding CMT PPA %u to index %u\n", cmt->t_ppa, read_ppa_cnt);
+            NVMEV_INFO("Got CMT IDX %u\n", cmt->idx);
             NVMEV_DEBUG("%s marking mapping PPA %u grain %u invalid during GC read.\n",
                     __func__, cmt->t_ppa, cmt->grain);
             mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain), 
@@ -620,6 +627,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
+            last_idx = UINT_MAX;
             goto new_ppa;
         }
 
@@ -635,7 +643,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), g_per_cg);
         cmt->grain = offset;
 
-        NVMEV_DEBUG("CMT IDX %u gets grain %u in GC\n", idx, cmt->grain);
+        NVMEV_DEBUG("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
         NVMEV_DEBUG("Setting PPA %u offset %u to LPA %lu in GC idx %lld (%d).\n",
                 ppa, offset, IDX2LPA(cmt->idx), written, nr_valid_grains);
 

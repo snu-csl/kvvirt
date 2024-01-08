@@ -18,7 +18,7 @@ extern struct demand_env d_env;
 extern struct demand_member d_member;
 extern struct demand_stat d_stat;
 
-lpa_t **oob = NULL;
+uint64_t **oob = NULL;
 uint64_t* pg_inv_cnt = NULL;
 uint64_t* pg_v_cnt = NULL;
 
