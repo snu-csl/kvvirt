@@ -6,7 +6,7 @@
 #include "virt_lower.h"
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
-                                    void* mem, uint64_t ppa, uint64_t len,
+                                    void* mem, ppa_t ppa, uint64_t len,
                                     bool (*cb)(void*), void *args, bool);
 
 lower_info virt_info = {
@@ -39,7 +39,7 @@ void *virt_destroy(lower_info *li){
 	return NULL;
 }
 
-static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
+static struct ppa ppa_to_struct(const struct ssdparams *spp, ppa_t ppa_)
 {
     struct ppa ppa;
 
@@ -50,11 +50,11 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
     ppa.g.pg = ppa_ % spp->pgs_per_blk;
 
-    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //printk("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
     if(ppa_ > spp->tt_pgs) {
-        printk("Tried %llu\n", ppa_);
+        printk("Tried %u\n", ppa_);
         printk("Caller is %pS\n", __builtin_return_address(0));
         printk("Caller is %pS\n", __builtin_return_address(1));
         printk("Caller is %pS\n", __builtin_return_address(2));
@@ -89,12 +89,12 @@ void print_kvs(uint64_t off) {
         //}
 
         remain -= g_len;
-        NVMEV_DEBUG("Klen %u vlen %u off %llu remain %lld ", klen, vlen, off, remain);
+        NVMEV_DEBUG("Klen %u vlen %u off %u remain %lld ", klen, vlen, off, remain);
     }
     NVMEV_DEBUG("\n");
 }
 
-uint64_t virt_push_data(uint64_t PPA, uint32_t size, 
+uint64_t virt_push_data(ppa_t PPA, uint32_t size, 
                         value_set* value, bool async,
                         algo_req *const req){
     BUG_ON(async);
@@ -107,11 +107,14 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
-    NVMEV_DEBUG("Writing PPA %llu (%llu) size %u pagesize %u in virt_push_datas\n", 
+    NVMEV_DEBUG("Writing PPA %u (%llu) size %u pagesize %u in virt_push_datas\n", 
                 PPA, off, size, value->ssd->sp.pgsz);
+    //printk("Caller is %pS\n", __builtin_return_address(0));
+    //printk("Caller is %pS\n", __builtin_return_address(1));
+    //printk("Caller is %pS\n", __builtin_return_address(2));
 
     if(off >= (64000LU << 20)) {
-        NVMEV_ERROR("PPA %llu\n", PPA);
+        NVMEV_ERROR("PPA %u\n", PPA);
         BUG_ON(off >= (64000LU << 20));
     }
 
@@ -151,7 +154,7 @@ uint64_t virt_push_data(uint64_t PPA, uint32_t size,
 	return nsecs_completed;
 }
 
-uint64_t virt_pull_data(uint64_t PPA, uint32_t size, 
+uint64_t virt_pull_data(ppa_t PPA, uint32_t size, 
                      value_set* value, bool async,
                      algo_req *const req) {	
     uint64_t nsecs_completed, nsecs_latest;
@@ -170,7 +173,7 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
 
-    NVMEV_DEBUG("Reading PPA %llu (%llu) size %u sqid %u %s in virt_dev\n", 
+    NVMEV_DEBUG("Reading PPA %u (%u) size %u sqid %u %s in virt_dev\n", 
             PPA, off, size, nvmev_vdev->sqes[1]->qid, 
             async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
 
@@ -179,7 +182,7 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
     nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
 
     if(off >= (64000LU << 20)) {
-        NVMEV_ERROR("PPA %llu\n", PPA);
+        NVMEV_ERROR("PPA %u\n", PPA);
         BUG_ON(off >= (64000LU << 20));
     }
 
@@ -201,7 +204,7 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
 
     if(req && req->need_retry) {
         kfree(req);
-        return U64_MAX - 1;
+        return UINT_MAX - 1;
     } else {
         if(req) {
             kfree(req->params);
@@ -211,7 +214,7 @@ uint64_t virt_pull_data(uint64_t PPA, uint32_t size,
     }
 }
 
-void *virt_trim_block(uint64_t PPA, bool async){
+void *virt_trim_block(ppa_t PPA, bool async){
 	virt_info.req_type_cnt[TRIM]++;
 	uint64_t range[2];
 	//range[0]=PPA*virt_info.SOP;

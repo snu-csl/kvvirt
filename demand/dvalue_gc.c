@@ -170,11 +170,11 @@ static int lpa_cmp(const void *a, const void *b)
     return 0;
 }
 
-bool __read_cmt(uint64_t lpa, uint64_t *read_cmts, uint64_t cnt) {
+bool __read_cmt(lpa_t lpa, uint64_t *read_cmts, uint64_t cnt) {
     uint64_t idx = IDX(lpa);
 
     for(int i = 0; i < cnt; i++) {
-        NVMEV_DEBUG("Checking %llu against %llu\n", idx, read_cmts[i]);
+        NVMEV_DEBUG("Checking %u against %u\n", idx, read_cmts[i]);
         if(read_cmts[i] == idx) {
             return true;
         }
@@ -188,17 +188,14 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt) {
     struct ssdparams *spp = &d_member.ssd->sp;
     struct pt_struct *pt = cmt->pt;
     uint64_t ret = 0;
-    uint64_t step = sizeof(uint64_t);
+    uint64_t step = ENTRY_SIZE;
     uint64_t first_lpa = cmt->idx * EPP;
 
     for(int i = 0; i < spp->pgsz / step; i++) {
-        uint64_t ppa = pt[i].ppa;
-#ifdef STORE_KEY_FP
-        BUG_ON(true);
-#endif
+        ppa_t ppa = pt[i].ppa;
 
-        if(ppa != U64_MAX) {
-            NVMEV_DEBUG("LPA %llu PPA %llu IDX %u to %u in the memcpy ret %llu.\n",
+        if(ppa != UINT_MAX) {
+            NVMEV_DEBUG("LPA %u PPA %u IDX %u to %u in the memcpy ret %u.\n",
                     first_lpa + i, ppa, cmt->idx, i, ret);
         }
 
@@ -219,17 +216,17 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
     uint64_t unique_cmts = 0;
-    uint64_t prev = U64_MAX;
+    uint64_t prev = UINT_MAX;
     for(int i = 0; i < nr_valid_grains; i++) {
-        uint64_t lpa = ppas[i].lpa;
+        lpa_t lpa = ppas[i].lpa;
         uint64_t idx = IDX(lpa);
-        if(idx != prev && ppas[i].lpa != U64_MAX) {
+        if(idx != prev && ppas[i].lpa != UINT_MAX) {
             unique_cmts++;
             prev = idx;
         }
     }
 
-    NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
+    NVMEV_DEBUG("There are %u unique CMTs to update with %u pairs. Read %u already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
@@ -250,12 +247,12 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 	for (int i = 0; i < nr_valid_grains; i++) {
         lpa_t lpa = ppas[i].lpa;
 
-        if(lpa == U64_MAX || lpa == U64_MAX - 1) {
+        if(lpa == UINT_MAX || lpa == UINT_MAX - 1) {
             skip_update[i] = true;
             continue;
         }
 
-        NVMEV_DEBUG("%s updating mapping of LPA %llu IDX %llu to PPA %llu\n", 
+        NVMEV_DEBUG("%s updating mapping of LPA %u IDX %u to PPA %u\n", 
                 __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
 		if (d_cache->is_hit(lpa)) {
@@ -267,7 +264,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 		} else {
             NVMEV_DEBUG("%s It wasn't cached.\n", __func__);
             struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-            if (cmt->t_ppa == U64_MAX) {
+            if (cmt->t_ppa == UINT_MAX) {
                 NVMEV_DEBUG("%s But the CMT had already been read here.\n", __func__);
                 continue;
             }
@@ -275,7 +272,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             skip_all = false;
 
             if(__read_cmt(ppas[i].lpa, read_cmts, read_cmt_cnt)) {
-                NVMEV_DEBUG("%s skipping read PPA %llu as it was read earlier.\n",
+                NVMEV_DEBUG("%s skipping read PPA %u as it was read earlier.\n",
                             __func__, cmt->t_ppa);
 
                 uint64_t off = cmt->t_ppa * spp->pgsz;
@@ -285,11 +282,11 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                 _value_mr->ssd = d_member.ssd;
                 __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, NULL);
 
-                NVMEV_DEBUG("%s marking mapping PPA %llu invalid while it was being read during GC.\n",
+                NVMEV_DEBUG("%s marking mapping PPA %u invalid while it was being read during GC.\n",
                         __func__, cmt->t_ppa);
                 mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
             }
-            cmt->t_ppa = U64_MAX;
+            cmt->t_ppa = UINT_MAX;
 
             d_stat.trans_r_dgc++;
             nr_update_tpages++;
@@ -309,7 +306,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 		}
 
         uint64_t idx = IDX(ppas[i].lpa);
-        uint64_t lpa = ppas[i].lpa;
+        lpa_t lpa = ppas[i].lpa;
 
         struct cmt_struct *cmt = d_cache->member.cmt[idx];
 
@@ -320,9 +317,9 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             NVMEV_ASSERT(cmt->pt);
 
             for(int i = 0; i < EPP; i++) {
-                cmt->pt[i].ppa = U64_MAX;
+                cmt->pt[i].ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
-                BUG_ON(true);
+                cmt->pt[i].key_fp = FP_MAX;
 #endif
             }
         }
@@ -332,26 +329,23 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
         uint64_t offset = OFFSET(ppas[i].lpa);
         cmt->pt[offset].ppa = ppas[i].new_ppa;
 
-        NVMEV_DEBUG("%s 1 setting LPA %llu to PPA %llu\n",
+        NVMEV_DEBUG("%s 1 setting LPA %u to PPA %u\n",
                 __func__, ppas[i].lpa, ppas[i].new_ppa);
 
         while(i + 1 < nr_valid_grains && IDX(ppas[i + 1].lpa) == idx) {
             offset = OFFSET(ppas[i + 1].lpa);
             cmt->pt[offset].ppa = ppas[i + 1].new_ppa;
 
-            NVMEV_DEBUG("%s 2 setting LPA %llu to PPA %llu\n",
+            NVMEV_DEBUG("%s 2 setting LPA %u to PPA %u\n",
                          __func__, ppas[i + 1].lpa, ppas[i + 1].new_ppa);
 
-#ifdef STORE_KEY_FP
-            BUG_ON(true);
-#endif
             i++;
         }
 
         __pte_to_page(pts[cmts_loaded], cmt);
  
         struct ppa p = get_new_page(ftl, GC_MAP_IO);
-        uint64_t ppa = ppa2pgidx(ftl, &p);
+        ppa_t ppa = ppa2pgidx(ftl, &p);
 
         advance_write_pointer(ftl, GC_MAP_IO);
         mark_page_valid(ftl, &p);
@@ -359,7 +353,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
         oob[ppa][0] = lpa;
 
-        NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu\n",
+        NVMEV_DEBUG("%s writing CMT IDX %u back to PPA %u\n",
                     __func__, idx, ppa);
 
         __demand.li->write(ppa, spp->pgsz, pts[cmts_loaded], ASYNC, NULL);
@@ -389,29 +383,26 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
     struct ssdparams *spp = &d_member.ssd->sp;
     struct pt_struct *pt = cmt->pt;
     uint64_t ret = 0;
-    uint64_t step = sizeof(uint64_t) * 2;
-    uint64_t start = (spp->pgsz - remaining) / (sizeof(uint64_t) * 2);
+    uint64_t step = ENTRY_SIZE;
+    uint64_t start = (spp->pgsz - remaining) / (ENTRY_SIZE);
 
     uint64_t cur = CACHE_GRAIN * ((cmt->cached_cnt / CACHE_GRAIN) + 1);
     //if(cur * step > remaining) {
-    //    return U64_MAX;
+    //    return UINT_MAX;
     //}
 
     for(int i = start; i < (start + cur); i++) {
-        uint64_t lpa = pt[i - start].lpa;
-        uint64_t ppa = pt[i - start].ppa;
-#ifdef STORE_KEY_FP
-        BUG_ON(true);
-#endif
+        lpa_t lpa = pt[i - start].lpa;
+        ppa_t ppa = pt[i - start].ppa;
 
-        if(lpa != U64_MAX) {
-            NVMEV_DEBUG("LPA %llu PPA %llu IDX %u to %u in the memcpy ret %llu.\n",
+        if(lpa != UINT_MAX) {
+            NVMEV_DEBUG("LPA %u PPA %u IDX %u to %u in the memcpy ret %u.\n",
                     lpa, ppa, cmt->idx, i, ret);
         }
 
         memcpy(value->value + (i * step), &lpa, sizeof(lpa));
         memcpy(value->value + (i * step) + sizeof(lpa), &ppa, sizeof(ppa));
-        ret += (sizeof(uint64_t) * 2);
+        ret += step;
     }
 
     NVMEV_ASSERT(ret <= spp->pgsz);
@@ -421,20 +412,20 @@ uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt,
 value_set* read_ppas_v[EPP];
 uint64_t read_ppas[EPP];
 uint64_t read_ppa_cnt;
-uint64_t __already_read(uint64_t ppa) {
+uint64_t __already_read(ppa_t ppa) {
     for(int i = 0; i < read_ppa_cnt; i++) {
         if(read_ppas[i] == ppa) {
             return i;
         }
     }
-    return U64_MAX;
+    return UINT_MAX;
 }
 
-void __update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
+void __update_pt(struct cmt_struct *pt, lpa_t lpa, ppa_t ppa) {
     struct ssdparams *spp = &d_member.ssd->sp;
-    uint64_t entry_sz = sizeof(uint64_t) * 2;
+    uint64_t entry_sz = ENTRY_SIZE;
 
-    NVMEV_DEBUG("Trying to update IDX %u LPA %llu PPA %llu\n",
+    NVMEV_DEBUG("Trying to update IDX %u LPA %u PPA %u\n",
                 pt->idx, lpa, ppa);
 
     for(int i = 0; i < pt->cached_cnt; i++) {
@@ -444,14 +435,6 @@ void __update_pt(struct cmt_struct *pt, uint64_t lpa, uint64_t ppa) {
         }
     }
 
-    //for(int i = 0; spp->pgsz / entry_sz; i++) {
-    //    uint64_t found_lpa = *(uint64_t*) (page + (i * entry_sz));
-    //    if(found_lpa == lpa) {
-    //        memcpy(page + (i * entry_sz) + sizeof(uint64_t), &ppa, sizeof(ppa));
-    //        return;
-    //    }
-    //}
-
     NVMEV_ASSERT(false);
 }
 
@@ -459,7 +442,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                              uint64_t *read_cmts, uint64_t read_cmt_cnt) {
     struct ssdparams *spp = &d_member.ssd->sp;
 	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
-    uint64_t g_per_cg = (CACHE_GRAIN * sizeof(uint64_t) * 2) / GRAINED_UNIT;
+    uint64_t g_per_cg = (CACHE_GRAIN * ENTRY_SIZE) / GRAINED_UNIT;
     bool skip_all = true;
 
     NVMEV_ASSERT(skip_update);
@@ -467,11 +450,11 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
     uint64_t unique_cmts = 0;
-    uint64_t prev = U64_MAX;
+    uint64_t prev = UINT_MAX;
     for(int i = 0; i < nr_valid_grains; i++) {
-        uint64_t lpa = ppas[i].lpa;
-        uint64_t idx = IDX(lpa);
-        if(idx != prev && ppas[i].lpa != U64_MAX) {
+        lpa_t lpa = ppas[i].lpa;
+        ppa_t idx = IDX(lpa);
+        if(idx != prev && ppas[i].lpa != UINT_MAX) {
             unique_cmts++;
             prev = idx;
         }
@@ -479,7 +462,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
     read_ppa_cnt = 0;
 
-    NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
+    NVMEV_DEBUG("There are %u unique CMTs to update with %u pairs. Read %u already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
@@ -497,19 +480,19 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
     uint64_t to_write = 0;
     uint64_t cur;
-    uint64_t step = sizeof(uint64_t) * 2;
+    uint64_t step = ENTRY_SIZE;
     uint64_t cmts_loaded = 0;
 	/* read mapping table which needs update */
     volatile int nr_update_tpages = 0;
 	for (int i = 0; i < nr_valid_grains; i++) {
         lpa_t lpa = ppas[i].lpa;
 
-        if(lpa == U64_MAX || lpa == U64_MAX - 1) {
+        if(lpa == UINT_MAX || lpa == UINT_MAX - 1) {
             skip_update[i] = true;
             continue;
         }
 
-        NVMEV_DEBUG("%s updating mapping of LPA %llu IDX %llu to PPA %llu\n", 
+        NVMEV_DEBUG("%s updating mapping of LPA %u IDX %u to PPA %u\n", 
                 __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
 		if (d_cache->is_hit(lpa)) {
@@ -520,18 +503,18 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 			skip_update[i] = true;
 		} else {
             struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-            NVMEV_DEBUG("%s It wasn't cached PPA is %llu.\n", __func__, cmt->t_ppa);
+            NVMEV_DEBUG("%s It wasn't cached PPA is %u.\n", __func__, cmt->t_ppa);
             prev = __already_read(cmt->t_ppa);
-            if (cmt->t_ppa == U64_MAX) {
+            if (cmt->t_ppa == UINT_MAX) {
                 continue;
-            } else if(prev != U64_MAX) {
-                NVMEV_DEBUG("%s But the CMT had already been read here at %llu.\n", 
+            } else if(prev != UINT_MAX) {
+                NVMEV_DEBUG("%s But the CMT had already been read here at %u.\n", 
                             __func__, prev);
                 value_set *already_read = read_ppas_v[prev];
                 __page_to_ptes(already_read, cmt->idx, false);
                 mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain), 
                                    g_per_cg);
-                cmt->t_ppa = U64_MAX;
+                cmt->t_ppa = UINT_MAX;
                 continue;
             }
 
@@ -545,12 +528,12 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
             read_ppas_v[read_ppa_cnt] = _value_mr;
             read_ppas[read_ppa_cnt++] = cmt->t_ppa;
 
-            NVMEV_DEBUG("Adding CMT PPA %llu to index %llu\n", cmt->t_ppa, read_ppa_cnt);
-            NVMEV_DEBUG("%s marking mapping PPA %llu grain %llu invalid during GC read.\n",
+            NVMEV_DEBUG("Adding CMT PPA %u to index %u\n", cmt->t_ppa, read_ppa_cnt);
+            NVMEV_DEBUG("%s marking mapping PPA %u grain %u invalid during GC read.\n",
                     __func__, cmt->t_ppa, cmt->grain);
             mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, cmt->grain), 
                                cmt->len_on_disk);
-            cmt->t_ppa = U64_MAX;
+            cmt->t_ppa = UINT_MAX;
             __page_to_ptes(_value_mr, cmt->idx, false);
 
             cur = CACHE_GRAIN * ((cmt->cached_cnt / CACHE_GRAIN) + 1);
@@ -576,10 +559,10 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 		}
 
         uint64_t idx = IDX(ppas[i].lpa);
-        uint64_t lpa = ppas[i].lpa;
-        uint64_t ppa = ppas[i].new_ppa;
+        lpa_t lpa = ppas[i].lpa;
+        ppa_t ppa = ppas[i].new_ppa;
 
-        NVMEV_DEBUG("Updating CMT IDX %llu LPA %llu PPA %llu\n",
+        NVMEV_DEBUG("Updating CMT IDX %u LPA %u PPA %u\n",
                     idx, lpa, ppa);
 
         struct cmt_struct *cmt = d_cache->member.cmt[idx];
@@ -590,11 +573,11 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
     NVMEV_DEBUG("Exiting loop 2.\n");
 
     struct ppa p = get_new_page(ftl, GC_MAP_IO);
-    uint64_t ppa = ppa2pgidx(ftl, &p);
+    ppa_t ppa = ppa2pgidx(ftl, &p);
     uint64_t idx;
     uint64_t offset;
     uint64_t written;
-    uint64_t last_idx = U64_MAX;
+    uint64_t last_idx = UINT_MAX;
     struct cmt_struct *cmt;
 
     advance_write_pointer(ftl, GC_MAP_IO);
@@ -645,15 +628,15 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
 
         uint64_t cur = CACHE_GRAIN * ((cmt->cached_cnt / CACHE_GRAIN) + 1);
         for(int j = 1; j < (cur * step) / GRAINED_UNIT; j++) {
-            oob[ppa][offset + j] = U64_MAX - 1; 
+            oob[ppa][offset + j] = UINT_MAX - 1; 
         }
 
         BUG_ON(cur > CACHE_GRAIN);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), g_per_cg);
         cmt->grain = offset;
 
-        NVMEV_DEBUG("CMT IDX %llu gets grain %llu in GC\n", idx, cmt->grain);
-        NVMEV_DEBUG("Setting PPA %llu offset %llu to LPA %lu in GC idx %lld (%d).\n",
+        NVMEV_DEBUG("CMT IDX %u gets grain %u in GC\n", idx, cmt->grain);
+        NVMEV_DEBUG("Setting PPA %u offset %u to LPA %lu in GC idx %lld (%d).\n",
                 ppa, offset, IDX2LPA(cmt->idx), written, nr_valid_grains);
 
         __pte_to_page(w, cmt, (GRAIN_PER_PAGE - offset) * GRAINED_UNIT);
@@ -671,17 +654,10 @@ new_ppa:
             __demand.li->write(ppa, spp->pgsz, w, ASYNC, NULL);
 
             if(offset < GRAIN_PER_PAGE) {
-                oob[ppa][offset] = U64_MAX;
+                oob[ppa][offset] = UINT_MAX;
             }
 
-            NVMEV_DEBUG("2 Re-wrote a mapping PPA to %llu in GC. First few:\n", ppa);
-
-            //uint64_t entry_sz = sizeof(uint64_t) * 2;
-            //for(int i = 0; i < 10; i++) {
-            //    uint64_t tlpa = *(uint64_t*) (w->value + (i * entry_sz));
-            //    uint64_t tppa = *(uint64_t*) (w->value + ((i * entry_sz) + sizeof(uint64_t)));
-            //    NVMEV_DEBUG("2 LPA %llu PPA %llu\n", tlpa, tppa);
-            //}
+            NVMEV_DEBUG("2 Re-wrote a mapping PPA to %u in GC. First few:\n", ppa);
 
             memset(w->value, 0x0, spp->pgsz);
             p = get_new_page(ftl, GC_MAP_IO);
@@ -699,15 +675,15 @@ new_ppa:
     if(offset < GRAIN_PER_PAGE) {
         __demand.li->write(ppa, spp->pgsz, w, ASYNC, NULL);
 
-        BUG_ON(cmt->t_ppa == U64_MAX);
+        BUG_ON(cmt->t_ppa == UINT_MAX);
 
-        oob[ppa][offset] = U64_MAX;
-        NVMEV_DEBUG("1 PPA %llu closed at grain %llu\n", ppa, offset);
+        oob[ppa][offset] = UINT_MAX;
+        NVMEV_DEBUG("1 PPA %u closed at grain %u\n", ppa, offset);
         mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
                 GRAIN_PER_PAGE - offset);
         mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
                 GRAIN_PER_PAGE - offset);
-        NVMEV_DEBUG("3 Re-wrote a mapping PPA to %llu in GC.\n", ppa);
+        NVMEV_DEBUG("3 Re-wrote a mapping PPA to %u in GC.\n", ppa);
         memset(w->value, 0x0, spp->pgsz);
     }
 
@@ -744,7 +720,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 		} else {
             BUG_ON(true);
 			struct cmt_struct *cmt = d_cache->get_cmt(lpa);
-			if (cmt->t_ppa == U64_MAX) {
+			if (cmt->t_ppa == UINT_MAX) {
 				continue;
 			}
 
@@ -753,7 +729,7 @@ static int _do_bulk_mapping_update(blockmanager *bm, int nr_valid_grains, page_t
 			__demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, make_algo_req_default(GCMR_DGC, _value_mr));
 
 			invalidate_page(bm, cmt->t_ppa, MAP);
-			cmt->t_ppa = U64_MAX;
+			cmt->t_ppa = UINT_MAX;
 			
 			nr_update_tpages++;
 		}

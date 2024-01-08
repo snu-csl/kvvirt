@@ -88,7 +88,7 @@ static void cgo_member_init(struct cache_member *const _member) {
     for (int i = 0; i < cenv->nr_valid_tpages; i++) {
         cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
 
-        cmt[i]->t_ppa = U64_MAX;
+        cmt[i]->t_ppa = UINT_MAX;
         cmt[i]->idx = i;
         cmt[i]->pt = NULL;
         cmt[i]->lru_ptr = NULL;
@@ -182,7 +182,7 @@ int cgo_load(lpa_t lpa, request *const req, snode *wb_entry, uint64_t *nsecs_com
         wb_entry->mapping_v = _value_mr;
     }
 
-    NVMEV_DEBUG("Reading a mapping PPA %llu in %s.\n", cmt->t_ppa, __func__);
+    NVMEV_DEBUG("Reading a mapping PPA %u in %s.\n", cmt->t_ppa, __func__);
     _value_mr->ssd = d_member.ssd;
     nsec = __demand.li->read(cmt->t_ppa, spp.pgsz, _value_mr, ASYNC,
                              make_algo_req_rw(MAPPINGR, _value_mr,
@@ -202,14 +202,15 @@ void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx) {
     uint64_t start_lpa = idx * EPP;
 
     for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        uint64_t ppa = *(uint64_t*) (value->value + (i * ENTRY_SIZE));
+        ppa_t ppa = *(ppa_t*) (value->value + (i * ENTRY_SIZE));
         pt[i].ppa = ppa;
 #ifdef STORE_KEY_FP
-        BUG_ON(true);
+        pt[i].key_fp = *(fp_t*) (value->value + (i * ENTRY_SIZE) + sizeof(ppa));
 #endif
 
-        if(ppa != U64_MAX) {
-            NVMEV_DEBUG("Bringing in LPA %llu PPA %llu in %s.\n", start_lpa + i, ppa, __func__);
+        if(ppa != UINT_MAX) {
+            NVMEV_DEBUG("Bringing in LPA %u PPA %u in %s.\n", 
+                         start_lpa + i, ppa, __func__);
         }
     }
 }
@@ -219,20 +220,22 @@ void __cgo_pte_to_page(value_set *value, struct pt_struct *pt, uint64_t idx) {
     uint64_t start_lpa = idx * EPP;
 
     for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        uint64_t ppa = pt[i].ppa;
+        ppa_t ppa = pt[i].ppa;
+        memcpy(value->value + (i * ENTRY_SIZE), &ppa, sizeof(ppa));
+
 #ifdef STORE_KEY_FP
-        BUG_ON(true);
+        fp_t fp = pt[i].key_fp;
+        memcpy(value->value + (i * ENTRY_SIZE) + sizeof(ppa), &fp, sizeof(fp));
 #endif
 
-        memcpy(value->value + (i * ENTRY_SIZE), &ppa, sizeof(ppa));
-        if(ppa != U64_MAX) {
-            NVMEV_DEBUG("LPA %llu PPA %llu in %s.\n", start_lpa + i, ppa, __func__);
+        if(ppa != UINT_MAX) {
+            NVMEV_DEBUG("LPA %u PPA %u in %s.\n", start_lpa + i, ppa, __func__);
         }
     }
 }
 
 int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
-        uint64_t *nsecs_completed, uint64_t *credits) {
+                uint64_t *nsecs_completed, uint64_t *credits) {
     int rc = 0;
     blockmanager *bm = __demand.bm;
     uint64_t nsecs_latest = 0, nsecs = 0;
@@ -241,12 +244,12 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     struct cmt_struct *victim = NULL;
 
-    NVMEV_ERROR("Got CMT IDX %llu.\n", IDX(lpa));
+    NVMEV_ERROR("Got CMT IDX %u.\n", IDX(lpa));
 
     struct inflight_params *i_params;
 
     if (cgo_is_full()) {
-        NVMEV_DEBUG("%s lpa %llu translation cache full.\n", __func__, lpa);
+        NVMEV_DEBUG("%s lpa %u translation cache full.\n", __func__, lpa);
         victim = (struct cmt_struct *)lru_pop(cmbr->lru);
         cmbr->nr_cached_tpages--;
 
@@ -255,8 +258,8 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
         if (victim->state == DIRTY) {
             cstat->dirty_evict++;
 
-            if(victim->t_ppa != U64_MAX) {
-                //NVMEV_ERROR("Marking previous PPA %llu for IDX %llu invalid.\n",
+            if(victim->t_ppa != UINT_MAX) {
+                //NVMEV_ERROR("Marking previous PPA %u for IDX %u invalid.\n",
                 //        victim->t_ppa, victim->idx);
                 //mark_grain_invalid(ftl, PPA_TO_PGA(victim->t_ppa, 0), GRAIN_PER_PAGE);
             }
@@ -266,14 +269,14 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
             //i_params->pte = cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
 
             struct ppa p = get_new_page(ftl, MAP_IO);
-            uint64_t ppa = ppa2pgidx(ftl, &p);
+            ppa_t ppa = ppa2pgidx(ftl, &p);
 
             advance_write_pointer(ftl, MAP_IO);
             mark_page_valid(ftl, &p);
             mark_grain_valid(ftl, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
 
             /*
-             * U64_MAX - 1 for a mapping page, as opposed to U64_MAX which
+             * UINT_MAX - 1 for a mapping page, as opposed to UINT_MAX which
              * is a page of invalid KV pair mappings.
              *
              * The IDX is used during GC so that we know which CMT entry
@@ -285,7 +288,7 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
             victim->t_ppa = ppa;
             victim->state = CLEAN;
 
-            NVMEV_DEBUG("Assigned PPA %llu to victim at IDX %u in %s.\n",
+            NVMEV_DEBUG("Assigned PPA %u to victim at IDX %u in %s.\n",
                         ppa, victim->idx, __func__);
 
             value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
@@ -293,14 +296,14 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 
             __cgo_pte_to_page(_value_mw, victim->pt, victim->idx);
             nsecs = __demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC,
-                    make_algo_req_rw(MAPPINGW, _value_mw,
-                        req, wb_entry));
+                                       make_algo_req_rw(MAPPINGW, _value_mw,
+                                       req, wb_entry));
 
             rc = 1;
             (*credits) += GRAIN_PER_PAGE;
 
             NVMEV_DEBUG("Evicted DIRTY mapping entry IDX %u in %s.\n",
-                    victim->idx, __func__);
+                         victim->idx, __func__);
         } else {
             NVMEV_DEBUG("Evicted CLEAN mapping entry IDX %u in %s.\n",
                     victim->idx, __func__);
@@ -315,7 +318,7 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
 
     nsecs_latest = max(nsecs_latest, nsecs);
 
-    NVMEV_DEBUG("Building mapping PPA %llu for LPA %llu\n", cmt->t_ppa, lpa);
+    NVMEV_DEBUG("Building mapping PPA %u for LPA %u\n", cmt->t_ppa, lpa);
     cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
     cmbr->nr_cached_tpages++;
 
@@ -328,9 +331,9 @@ int cgo_list_up(lpa_t lpa, request *const req, snode *wb_entry,
             NVMEV_ASSERT(cmt->pt);
 
             for(int i = 0; i < EPP; i++) {
-                cmt->pt[i].ppa = U64_MAX;
+                cmt->pt[i].ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
-                BUG_ON(true);
+                cmt->pt[i].key_fp = FP_MAX;
 #endif
             }
         }
@@ -414,7 +417,7 @@ int cgo_update(lpa_t lpa, struct pt_struct pte) {
     //printk("cgo_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
 
     if (cmt->pt) {
-        NVMEV_DEBUG("Setting LPA %llu to PPA %llu in update.\n", lpa, pte.ppa);
+        NVMEV_DEBUG("Setting LPA %u to PPA %u FP %u in update.\n", lpa, pte.ppa, pte.key_fp);
         cmt->pt[OFFSET(lpa)] = pte;
 
         if (!IS_INITIAL_PPA(cmt->t_ppa) && cmt->state == CLEAN) {
@@ -423,7 +426,7 @@ int cgo_update(lpa_t lpa, struct pt_struct pte) {
              * Only safe if assuming battery-backed DRAM.
              */
 
-            NVMEV_ERROR("Marking mapping PPA %llu invalid as it was dirtied in memory.\n",
+            NVMEV_ERROR("Marking mapping PPA %u invalid as it was dirtied in memory.\n",
                     cmt->t_ppa);
             mark_grain_invalid(ftl, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
         }
@@ -460,12 +463,12 @@ bool cgo_is_full(void) {
 struct pt_struct cgo_get_pte(lpa_t lpa) {
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     if (cmt->pt) {
-        NVMEV_DEBUG("%s returning %llu for LPA %llu IDX %llu\n", 
+        NVMEV_DEBUG("%s returning %u for LPA %u IDX %u\n", 
                     __func__, cmt->pt[OFFSET(lpa)].ppa, lpa, IDX(lpa));
         return cmt->pt[OFFSET(lpa)];
     } else {
-        if(cmt->t_ppa == U64_MAX) {
-            NVMEV_DEBUG("%s CMT was NULL for LPA %llu IDX %llu\n", 
+        if(cmt->t_ppa == UINT_MAX) {
+            NVMEV_DEBUG("%s CMT was NULL for LPA %u IDX %u\n", 
                         __func__, lpa, IDX(lpa));
             /*
              * Haven't used this CMT entry yet.
@@ -473,9 +476,9 @@ struct pt_struct cgo_get_pte(lpa_t lpa) {
 
             cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
             for(int i = 0; i < EPP; i++) {
-                cmt->pt[i].ppa = U64_MAX;
+                cmt->pt[i].ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
-                BUG_ON(true);
+                cmt->pt[i].key_fp = FP_MAX;
 #endif
             }
 

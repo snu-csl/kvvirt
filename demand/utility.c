@@ -40,7 +40,7 @@ struct algo_req *make_algo_req_rw(uint8_t type, value_set *value, request *req, 
 struct algo_req *make_algo_req_sync(uint8_t type, value_set *value) {
 	struct algo_req *a_req = make_algo_req_default(type, value);
 	a_req->rapid = true;
-    a_req->sqid = U64_MAX;
+    a_req->sqid = UINT_MAX;
 
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
 	d_params->sync_mutex = (dl_sync *)kzalloc(sizeof(dl_sync), GFP_KERNEL);
@@ -102,11 +102,11 @@ again:
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
                     (d_cache->env.nr_valid_tentries-1) + 1;
     if(h_params->lpa == 2 || h_params->lpa == 0) {
-        NVMEV_INFO("Got LPA %llu for key %s\n", h_params->lpa, key.key);
+        NVMEV_INFO("Got LPA %u for key %s\n", h_params->lpa, key.key);
         h_params->cnt++;
         goto again;
     }
-    NVMEV_DEBUG("Got LPA %llu key %s cnt %d\n", h_params->lpa, key.key, h_params->cnt);
+    NVMEV_DEBUG("Got LPA %u key %s cnt %d\n", h_params->lpa, key.key, h_params->cnt);
 	return h_params->lpa;
 #else
 	return key;

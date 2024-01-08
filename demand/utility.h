@@ -25,7 +25,7 @@ extern struct demand_cache *d_cache;
 #define CACHE_HIT(x) ((x) != NULL)
 #define IS_READ(x) ((x) != NULL)
 #define IS_INFLIGHT(x) ((x) != NULL)
-#define IS_INITIAL_PPA(x) ((x) == U64_MAX)
+#define IS_INITIAL_PPA(x) ((x) == UINT_MAX)
 
 #define IDX2LPA(x) ((x) * EPP)
 #define IDX(x) ((x) / EPP)

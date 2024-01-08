@@ -30,7 +30,7 @@ DEMAND_OBJS := $(DEMAND_SRCS:c=o)
 ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -Wno-declaration-after-statement -std=gnu99 -Werror
 ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL \
                                         -Ddemand \
-                                        -DFP_SIZE=0 \
+                                        -DFP_SIZE=8 \
                                         -DLEVELN=0 \
                                         -Dlinux_aio=0 \
                                         -DKVSSD \

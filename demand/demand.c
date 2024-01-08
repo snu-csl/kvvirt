@@ -225,14 +225,11 @@ static int count_filled_entry(void) {
     for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
         struct cmt_struct *cmt = d_cache->member.cmt[i];
 #ifdef GC_STANDARD
-        if(cmt->t_ppa != U64_MAX) {
+        if(cmt->t_ppa != UINT_MAX) {
             if(cmt->pt == NULL) {
                 cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
                 for(int i = 0; i < EPP; i++) {
-                    cmt->pt[i].ppa = U64_MAX;
-#ifdef STORE_KEY_FP
-                    BUG_ON(true);
-#endif
+                    cmt->pt[i].ppa = UINT_MAX;
                 }
 
                 BUG_ON(!v->value);
@@ -242,13 +239,13 @@ static int count_filled_entry(void) {
             }
 
             for (int j = 0; j < EPP; j++) {
-                if (cmt->pt[j].ppa != U64_MAX) {
+                if (cmt->pt[j].ppa != UINT_MAX) {
                     ret++;
                 }
             }
         }
 #else
-        if(cmt->t_ppa != U64_MAX) {
+        if(cmt->t_ppa != UINT_MAX) {
             if(cmt->pt == NULL) {
                 memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
                         PAGESIZE);
@@ -256,7 +253,7 @@ static int count_filled_entry(void) {
             }
 
             for (int j = 0; j < EPP; j++) {
-                if (cmt->pt[j].ppa != U64_MAX) {
+                if (cmt->pt[j].ppa != UINT_MAX) {
                     ret++;
                 }
             }
@@ -385,7 +382,7 @@ char* get_demand_stat(struct demand_stat *const _stat) {
 	//length += snprintf(ret + length, buf_size - length, "fp_collision: %lld\n", _stat->fp_collision_r);
 
     //if(_stat->fp_match_r + _stat->fp_collision_r > 0) {
-    //    printk("rate: %llu\n", 100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
+    //    printk("rate: %u\n", 100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
     //}
     //printk("\n");
 
@@ -495,7 +492,8 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("fp_collision: %lld\n", _stat->fp_collision_r);
 
     if(_stat->fp_match_r + _stat->fp_collision_r > 0) {
-        printk("rate: %llu\n", 100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
+        printk("rate: %llu\n", 
+                100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
     }
     printk("\n");
 
@@ -552,7 +550,7 @@ void demand_destroy(lower_info *li, algorithm *algo){
 }
 
 #ifdef HASH_KVSSD
-static uint64_t hashing_key(char* key,uint8_t len) {
+static uint64_t hashing_key(char* key,uint8_t len, fp_t *fp) {
     //uint64_t ret = 0;
     //ret = CityHash64(key, len); 
     //return ret;
@@ -579,11 +577,14 @@ static uint64_t hashing_key(char* key,uint8_t len) {
 		hashkey ^= bytes_arr[i];
 	}
 
+    if(fp) {
+        *fp = (hashkey & ((1<<FP_SIZE)-1));
+    }
+
 	return hashkey;
 }
 
 static uint64_t hashing_key_fp(char* key,uint8_t len) {
-    BUG_ON(true);
     //uint64_t ret = 0;
     //ret = CityHash64(data, 4096); 
     //return ret;
@@ -616,9 +617,11 @@ static uint64_t hashing_key_fp(char* key,uint8_t len) {
 static struct hash_params *make_hash_params(request *const req) {
 	struct hash_params *h_params = 
     (struct hash_params *)kzalloc(sizeof(struct hash_params), GFP_KERNEL);
-	h_params->hash = hashing_key(req->key.key, req->key.len);
 #ifdef STORE_KEY_FP
-	h_params->key_fp = hashing_key_fp(req->key.key, req->key.len);
+    fp_t fp;
+    h_params->hash = hashing_key(req->key.key, req->key.len, &h_params->key_fp);
+#else
+    h_params->hash = hashing_key(req->key.key, req->key.len, NULL);
 #endif
 	h_params->cnt = 0;
 	h_params->find = HASH_KEY_INITIAL;
@@ -638,7 +641,7 @@ uint32_t demand_read(request *const req){
 	}
 #endif
 	rc = __demand_read(req, false);
-	if (rc == U64_MAX) {
+	if (rc == UINT_MAX) {
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
 	}
@@ -674,7 +677,7 @@ uint32_t demand_remove(request *const req) {
     }
 #endif
     rc = __demand_read(req, true);
-    if (rc == U64_MAX) {
+    if (rc == UINT_MAX) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
     }

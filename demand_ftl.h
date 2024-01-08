@@ -8,6 +8,7 @@
 #include <linux/spinlock.h>
 #include <linux/xarray.h>
 
+#include "demand/d_type.h"
 #include "pqueue/pqueue.h"
 #include "ssd_config.h"
 #include "ssd.h"
@@ -147,12 +148,12 @@ extern bool *grain_bitmap;
 extern uint64_t *pg_inv_cnt;
 extern uint64_t *pg_v_cnt;
 #define INV_PAGE_SZ 4096
-#define INV_ENTRY_SZ (sizeof(uint64_t) + sizeof(uint64_t))
+#define INV_ENTRY_SZ (sizeof(lpa_t) + sizeof(ppa_t))
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 #endif
 
-extern uint64_t **oob;
+extern lpa_t **oob;
 
 extern DECLARE_HASHTABLE(mapping_ht, 20);
 struct ht_mapping {

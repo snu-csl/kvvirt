@@ -5,6 +5,7 @@
 #include <linux/highmem.h>
 #include <linux/sched/clock.h>
 
+#include "demand/d_type.h"
 #include "nvmev.h"
 #include "nvme_kv.h"
 #include "dma.h"
@@ -43,17 +44,17 @@ static inline unsigned long long __get_wallclock(void)
  * mapping entries from the disk into a cache somewhere.
  */
 
-static unsigned int __do_perform_internal_copy(uint64_t ppa, void* dst, 
-                                               uint64_t len, bool read)
+static unsigned int __do_perform_internal_copy(ppa_t ppa, void* dst, 
+                                               uint32_t len, bool read)
 {
     uint64_t offset = ppa;
 
     if(read) {
-        printk("Performing an internal read from ppa %llu len %llu\n", ppa, len);
+        printk("Performing an internal read from ppa %u len %u\n", ppa, len);
         memcpy(dst, nvmev_vdev->ns[0].mapped + offset, len);
     } else {
         memcpy(nvmev_vdev->ns[0].mapped + offset, dst, len);
-        printk("Performing an internal write to ppa %llu len %llu data %s\n", 
+        printk("Performing an internal write to ppa %u len %u data %s\n", 
                 ppa, len, (char*) nvmev_vdev->ns[0].mapped + offset);
     }
 
@@ -92,9 +93,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         length = cmd->kv_store.value_len << 2;
     }
 
-    if(offset == U64_MAX - 1) {
+    if(offset == UINT_MAX - 1) {
         return length;
-    } else if (offset == U64_MAX) {
+    } else if (offset == UINT_MAX) {
         return 0;
     }
 

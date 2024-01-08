@@ -23,7 +23,7 @@ struct conv_ftl *ftl;
 
 bool FAIL_MODE = false;
 
-void __hash_remove(uint64_t lpa) {
+void __hash_remove(lpa_t lpa) {
     return;
     struct ht_mapping *cur = NULL;
     bool found = false;
@@ -35,17 +35,17 @@ void __hash_remove(uint64_t lpa) {
     }
 
     //if(cur) {
-    //    NVMEV_ERROR("Removing old LPA PPA mapping %llu %llu\n",
+    //    NVMEV_ERROR("Removing old LPA PPA mapping %u %u\n",
     //            cur->lpa, cur->ppa);
     //    hash_del(&cur->node);
     //}
     NVMEV_ASSERT(found);
 }
 
-void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
+void d_set_oob(lpa_t lpa, ppa_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
-    NVMEV_DEBUG("Trying to set OOB for PPA %llu offset %llu LPA %llu\n", 
+    NVMEV_DEBUG("Trying to set OOB for PPA %u offset %u LPA %u\n", 
                 ppa, offset, lpa);
     oob[ppa][offset] = lpa;
 
@@ -54,11 +54,11 @@ void d_set_oob(uint64_t lpa, uint64_t ppa, uint64_t offset, uint32_t len) {
     }
 }
 
-void print_oob(uint64_t ppa) {
+void print_oob(ppa_t ppa) {
     return;
-    NVMEV_DEBUG("OOB for PPA %llu is: \n", ppa);
+    NVMEV_DEBUG("OOB for PPA %u is: \n", ppa);
     for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        NVMEV_DEBUG("%llu ", oob[ppa][i]);
+        NVMEV_DEBUG("%u ", oob[ppa][i]);
     }
     NVMEV_DEBUG("\n");
 }
@@ -98,7 +98,7 @@ static uint32_t do_wb_delete(skiplist *wb, request *const req) {
 	return 0;
 }
 
-static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
+static struct ppa ppa_to_struct(const struct ssdparams *spp, ppa_t ppa_)
 {
     struct ppa ppa;
 
@@ -109,7 +109,7 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
     ppa.g.pg = ppa_ % spp->pgs_per_blk;
 
-    //printk("%s: For PPA %llu we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //printk("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
@@ -118,7 +118,7 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 }
 
 #ifndef GC_STANDARD
-static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) {
+static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
     struct ssdparams spp = d_member.ssd->sp;
     struct gc_data *gcd = &ftl->gcd;
     struct ppa p = ppa_to_struct(&spp, ppa);
@@ -126,7 +126,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
     uint64_t line = (uint64_t) l->id;
     uint64_t nsecs_completed = 0;
 
-    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %llu %llu line %d (%llu)\n", 
+    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %u %u line %d (%u)\n", 
                  lpa, ppa, line, inv_mapping_offs[line]);
 
     BUG_ON(!credits);
@@ -147,10 +147,10 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %llu to PPA %llu\n", 
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %d off %u to PPA %u\n", 
                      line, inv_mapping_offs[line], w_ppa);
 
-        oob[w_ppa][0] = U64_MAX;
+        oob[w_ppa][0] = UINT_MAX;
         oob[w_ppa][1] = (line << 32) | w_ppa;
 
         struct value_set value;
@@ -162,7 +162,7 @@ static uint64_t _record_inv_mapping(uint64_t lpa, ppa_t ppa, uint64_t *credits) 
         __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
         nvmev_vdev->space_used += INV_PAGE_SZ;
 
-        NVMEV_DEBUG("Added %llu (%llu %llu) to XA.\n", (line << 32) | w_ppa, line, w_ppa);
+        NVMEV_DEBUG("Added %u (%u %u) to XA.\n", (line << 32) | w_ppa, line, w_ppa);
         xa_store(&gcd->inv_mapping_xa, (line << 32) | w_ppa, xa_mk_value(w_ppa), GFP_KERNEL);
         //inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
         
@@ -188,7 +188,7 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
 	if (IS_INITIAL_PPA(ppa)) {
         //printk("%s IS_INITIAL_PPA failure.\n", __func__);
 		warn_notfound(__FILE__, __LINE__);
-		return U64_MAX;
+		return UINT_MAX;
 	}
 
     struct algo_req *a_req = make_algo_req_rw(DATAR, NULL, req, NULL);
@@ -210,7 +210,7 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
         *nsecs_completed = nsecs;
     }
 
-    if(nsecs == U64_MAX - 1) {
+    if(nsecs == UINT_MAX - 1) {
         return 1;
     } else {
         return 0;
@@ -246,14 +246,14 @@ uint64_t __demand_read(request *const req, bool for_del) {
 read_retry:
 	lpa = get_lpa(req->key, req->hash_params);
     //printk("Got LPA %u for key %s!\n", lpa, req->key.key);
-	pte.ppa = U64_MAX;
+	pte.ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
 	pte.key_fp = FP_MAX;
 #endif
 
 #ifdef HASH_KVSSD
 	if (h_params->cnt > d_member.max_try) {
-		rc = U64_MAX;
+		rc = UINT_MAX;
         req->value->length = 0;
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
@@ -288,7 +288,7 @@ read_retry:
 	/* 1. check write buffer first */
 	rc = do_wb_check(d_member.write_buffer, req);
 	if (rc) {
-        req->ppa = U64_MAX - 1;
+        req->ppa = UINT_MAX - 1;
         if(for_del) {
             do_wb_delete(d_member.write_buffer, req);
         } else {
@@ -302,7 +302,7 @@ read_retry:
 	/* 2. check cache */
 	if (d_cache->is_hit(lpa)) {
 		d_cache->touch(lpa);
-        NVMEV_DEBUG("Cache hit for LPA %llu!\n", lpa);
+        NVMEV_DEBUG("Cache hit for LPA %u!\n", lpa);
 	} else {
 cache_load:
 		rc = d_cache->wait_if_flying(lpa, req, NULL);
@@ -312,9 +312,9 @@ cache_load:
 		rc = d_cache->load(lpa, req, NULL, &nsecs_completed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
-            req->ppa = U64_MAX;
+            req->ppa = UINT_MAX;
             req->value->length = 0;
-			rc = U64_MAX;
+			rc = UINT_MAX;
 			warn_notfound(__FILE__, __LINE__);
             goto read_ret;
 		}
@@ -340,16 +340,16 @@ cache_check_complete:
 #endif
 data_read:
 	/* 3. read actual data */
-    NVMEV_DEBUG("Got PPA %lluu for LPA %llu %llu %llu\n", pte.ppa, lpa, nsecs_latest, nsecs_completed);
+    NVMEV_DEBUG("Got PPA %uu for LPA %u %u %u\n", pte.ppa, lpa, nsecs_latest, nsecs_completed);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
-    nsecs_latest = nsecs_latest == U64_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
+    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
 
-    if(rc == U64_MAX) {
-        req->ppa = U64_MAX;
+    if(rc == UINT_MAX) {
+        req->ppa = UINT_MAX;
         req->value->length = 0;
         warn_notfound(__FILE__, __LINE__);
         goto read_ret;
-    } else if(nsecs_latest == U64_MAX - 1) {
+    } else if(nsecs_latest == UINT_MAX - 1) {
         NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
         goto read_retry;
     }
@@ -368,7 +368,7 @@ data_read:
             len++;
         }
 
-        NVMEV_DEBUG("Deleting a pair of length %u (%u) grain %llu PPA %llu\n", 
+        NVMEV_DEBUG("Deleting a pair of length %u (%u) grain %u PPA %u\n", 
                     len, len * GRAINED_UNIT, pte.ppa, G_IDX(pte.ppa));
 
         oob[G_IDX(pte.ppa)][offset] = 2;
@@ -376,11 +376,11 @@ data_read:
 #ifndef GC_STANDARD
         _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
 #endif
-        req->ppa = U64_MAX - 2;
+        req->ppa = UINT_MAX - 2;
 
-        pte.ppa = U64_MAX;
+        pte.ppa = UINT_MAX;
         d_cache->update(lpa, pte);
-        d_htable_insert(d_member.hash_table, U64_MAX, lpa);
+        d_htable_insert(d_member.hash_table, UINT_MAX, lpa);
 
         nvmev_vdev->space_used -= len * GRAINED_UNIT;
     }
@@ -448,7 +448,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
 
         struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
-        NVMEV_DEBUG("%s assigning PPA %llu (%u)\n", __func__, ppa, cnt++);
+        NVMEV_DEBUG("%s assigning PPA %u (%u)\n", __func__, ppa, cnt++);
 
 		int offset = 0;
 
@@ -480,7 +480,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
             char tmp[128];
             memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
             tmp[wb_entry->key.len] = '\0';
-            NVMEV_DEBUG("%s writing %s (%u %s) to %llu (%llu)\n", 
+            NVMEV_DEBUG("%s writing %s (%u %s) to %u (%u)\n", 
                         __func__, tmp, wb_entry->key.len, wb_entry->key.key,
                         ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
 
@@ -498,7 +498,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		}
 
         if(remain > 0) {
-            //NVMEV_ERROR("Had %u bytes leftover PPA %llu offset %u.\n", remain, ppa, offset);
+            //NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
             //NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
             mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
@@ -606,7 +606,7 @@ wb_retry:
 		}
 
 		if (d_cache->is_hit(lpa)) {
-            NVMEV_DEBUG("%s hit for LPA %llu\n", __func__, lpa);
+            NVMEV_DEBUG("%s hit for LPA %u\n", __func__, lpa);
             if(sample) {
                 start = local_clock();
                 d_cache->touch(lpa);
@@ -688,7 +688,7 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_DEBUG("1 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             __hash_remove(lpa);
@@ -699,7 +699,7 @@ wb_update:
                 len++;
             }
 
-            NVMEV_DEBUG("%s LPA %llu old PPA %llu overwrite old len %u.\n", 
+            NVMEV_DEBUG("%s LPA %u old PPA %u overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
@@ -719,7 +719,7 @@ wb_direct_update:
 		d_cache->update(lpa, new_pte);
         end = local_clock();
         update += end - start;
-        NVMEV_DEBUG("2 %s LPA %llu PPA %llu update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_DEBUG("2 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
 		//inflight--;
@@ -745,7 +745,7 @@ wb_direct_update:
 		printk("Should have aborted!!!! %s:%d MQ size RQ size %u %u\n", 
                 __FILE__, __LINE__, d_member.wb_master_q->size, d_member.wb_retry_q->size);
         wb_entry = (snode *)q_dequeue(d_member.wb_master_q);
-        printk("Last one was LPA %llu PPA %llu key %s\n", wb_entry->lpa, wb_entry->ppa,
+        printk("Last one was LPA %u PPA %u key %s\n", wb_entry->lpa, wb_entry->ppa,
                 wb_entry->key.key);
         BUG_ON(true);
 	}
@@ -772,7 +772,7 @@ wb_direct_update:
 	kfree(iter);
 
     if(sample) {
-        //NVMEV_INFO("BREAKDOWN: touch %lluns wait %lluns load %lluns list_up %llu get %llu update %llu.\n",
+        //NVMEV_INFO("BREAKDOWN: touch %uns wait %uns load %uns list_up %u get %u update %u.\n",
         //        touch, wait, load, list_up, get, update);
     }
 
@@ -840,14 +840,14 @@ uint64_t __demand_write(request *const req) {
         nsecs_completed = _do_wb_assign_ppa(wb);
         nsecs_latest = nsecs_completed;
         uint64_t end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_assign_ppa took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_assign_ppa took %uns\n", end - start);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
         start = ktime_get_ns();
 		nsecs_completed = _do_wb_mapping_update(wb);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_mapping_update took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_mapping_update took %uns\n", end - start);
 		
 		/* flush the buffer */
         start = ktime_get_ns();
@@ -855,16 +855,16 @@ uint64_t __demand_write(request *const req) {
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = d_member.write_buffer =  skiplist_init();
         end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_flush took %lluns\n", end - start);
+        NVMEV_DEBUG("_do_wb_flush took %uns\n", end - start);
         NVMEV_DEBUG("Assigned new WB.\n");
 
-        //NVMEV_INFO("%llu pages this flush. %lu pgs_per_line.", 
+        //NVMEV_INFO("%u pages this flush. %lu pgs_per_line.", 
         //            pgs_this_flush, spp->pgs_per_line);
     }
 
     pgs_this_flush = 0;
 
-    ////printk("Advancing WB %llu start %llu length.\n", nsecs_start, length);
+    ////printk("Advancing WB %u start %u length.\n", nsecs_start, length);
 
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
@@ -872,7 +872,7 @@ uint64_t __demand_write(request *const req) {
     nsecs_completed =
     ssd_advance_write_buffer(req->ssd, nsecs_start, length);
 
-    //printk("%llu %llu\n", nsecs_completed, nsecs_latest);
+    //printk("%u %u\n", nsecs_completed, nsecs_latest);
     nsecs_latest = max(nsecs_completed, nsecs_latest);
 
 	req->end_req(req);
@@ -884,8 +884,8 @@ uint32_t __demand_remove(request *const req) {
 	return 0;
 }
 
-uint32_t get_vlen(uint64_t ppa, uint64_t offset) {
-    NVMEV_DEBUG("Checking PPA %llu offset %llu\n", ppa, offset);
+uint32_t get_vlen(ppa_t ppa, uint64_t offset) {
+    NVMEV_DEBUG("Checking PPA %u offset %u\n", ppa, offset);
 
     uint32_t len = 1;
     while(offset + len < GRAIN_PER_PAGE && oob[ppa][offset + len] == 0) {

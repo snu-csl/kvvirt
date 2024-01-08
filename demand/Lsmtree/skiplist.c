@@ -35,8 +35,8 @@ skiplist *skiplist_init(){
 	point->all_length=0;
 	point->header->key=key_max;
 #else
-	point->header->key=U64_MAX;
-	point->start=U64_MAX;
+	point->header->key=UINT_MAX;
+	point->start=UINT_MAX;
 	point->end=0;
 #endif
 	point->header->value=NULL;
@@ -151,7 +151,7 @@ snode *skiplist_strict_range_search(skiplist *list,KEYT key){
 #if defined(KVSSD) 
 	else if(KEYCMP(bf->key,key_max)==0)
 #else
-	else if(bf->key==U64_MAX)
+	else if(bf->key==UINT_MAX)
 #endif
 	{
 		return x;
@@ -383,7 +383,7 @@ snode *skiplist_general_insert(skiplist *list,KEYT key,void* value,void (*overla
 		x->list=(snode**)kzalloc(sizeof(snode*)*(level+1), GFP_KERNEL);
 
 		x->key=key;
-		x->ppa=U64_MAX;
+		x->ppa=UINT_MAX;
 		x->value=(value_set*)value;
 		t_r->run_data=(void*)x;
 
@@ -519,7 +519,7 @@ snode *skiplist_insert_iter(skiplist *list,KEYT key,ppa_t ppa){
 #endif
 
 #ifdef demand
-		x->lpa = U64_MAX;
+		x->lpa = UINT_MAX;
 		x->hash_params = NULL;
 		x->params = NULL;
 #endif
@@ -608,7 +608,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         x->key=key;
         x->isvalid=deletef;
 
-        x->ppa=U64_MAX;
+        x->ppa=UINT_MAX;
         x->value=value;
         x->sqid = sqid;
         x->len = value->length;
@@ -622,7 +622,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
 #endif
 
 #ifdef demand
-        x->lpa = U64_MAX;
+        x->lpa = UINT_MAX;
         x->hash_params = NULL;
         x->params = NULL;
 #endif

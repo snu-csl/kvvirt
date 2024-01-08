@@ -2,9 +2,9 @@
 
 uint32_t virt_create(lower_info*, blockmanager *bm);
 void *virt_destroy(lower_info*);
-uint64_t virt_push_data(uint64_t ppa, uint32_t size, value_set *value,bool async, algo_req * const req);
-uint64_t virt_pull_data(uint64_t ppa, uint32_t size, value_set* value,bool async,algo_req * const req);
-void* virt_trim_block(uint64_t ppa,bool async);
+uint64_t virt_push_data(ppa_t ppa, uint32_t size, value_set *value,bool async, algo_req * const req);
+uint64_t virt_pull_data(ppa_t ppa, uint32_t size, value_set* value,bool async,algo_req * const req);
+void* virt_trim_block(ppa_t ppa,bool async);
 void *virt_refresh(lower_info*);
 void virt_stop(void);
 void virt_flying_req_wait(void);

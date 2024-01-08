@@ -6,6 +6,7 @@
 #include "../include/settings.h"
 #include "../include/lsm_settings.h"
 #ifdef demand
+#include "../d_type.h"
 #include "../include/demand_settings.h"
 #endif
 #ifdef Lsmtree
@@ -44,7 +45,7 @@ typedef struct snode{ //skiplist's node
 	bool isvalid;
 
 #ifdef HASH_KVSSD
-	uint64_t lpa;
+	lpa_t lpa;
 	void *hash_params;
 	void *params;
     uint32_t len;

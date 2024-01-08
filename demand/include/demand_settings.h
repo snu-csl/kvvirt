@@ -8,27 +8,30 @@
 #define HASH_KVSSD
 
 /* Storing the key(or fingerprint(hash) of the key) in the mapping entry */
-#define FP_SIZE 0
+
 #if (FP_SIZE > 0)
 #define STORE_KEY_FP
 #endif
 
 #ifdef STORE_KEY_FP
-#define ENTRY_SIZE (8+(FP_SIZE/8))
-#else
-#define ENTRY_SIZE sizeof(uint64_t)
-#endif
 
 #ifdef GC_STANDARD
-#define EPP (PAGESIZE / ENTRY_SIZE) // Entry Per Page
+#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
+#else
+#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
+#endif
+
 #else
 
-/*
- * The new GC scheme contains LPAs and PPAs in the mapping page.
- */
-
-#define EPP (PAGESIZE / (ENTRY_SIZE * 2)) // Entry Per Page
+#ifdef GC_STANDARD
+#define ENTRY_SIZE (sizeof(ppa_t))
+#else
+#define ENTRY_SIZE (sizeof(lpa_t) + sizeof(ppa_t))
 #endif
+
+#endif
+
+#define EPP (PAGESIZE / ENTRY_SIZE) // Entry Per Page
 
 /* Support variable-sized value. Grain entries of the mapping table as GRAINED_UNIT */
 #define GRAINED_UNIT ( PIECE )

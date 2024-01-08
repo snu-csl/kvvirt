@@ -28,19 +28,19 @@ extern uint64_t map_gc_pgs_this_gc;
 extern uint64_t pgs_this_flush;
 
 struct lpa_len_ppa {
-    uint64_t lpa; /* the lpa we find in the reverse map. */
+    lpa_t lpa; /* the lpa we find in the reverse map. */
     uint32_t len; /* the length of the key-value pair. */
-    uint64_t prev_ppa; /* to copy from during GC */
-    uint64_t new_ppa; /* the new ppa we're writing this key-value pair to. */
+    ppa_t prev_ppa; /* to copy from during GC */
+    ppa_t new_ppa; /* the new ppa we're writing this key-value pair to. */
 #ifndef GC_STANDARD
-    uint64_t cmt_ppa; /* which CMT ppa does this item belong to? */
+    ppa_t cmt_ppa; /* which CMT ppa does this item belong to? */
 #endif
 };
 
 void clear_oob(uint64_t pgidx);
 bool oob_empty(uint64_t pgidx);
 struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
-uint64_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
+ppa_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
 bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
 void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa);
 void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
@@ -89,13 +89,13 @@ struct cmt_struct {
 };
 
 struct hash_params {
-	uint64_t hash;
+	uint32_t hash;
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
 #endif
 	int cnt;
 	int find;
-	uint64_t lpa;
+	lpa_t lpa;
 
 #ifdef DVALUE
 	int fl_idx;
