@@ -16,7 +16,6 @@ WARMUP=1
 SYNC=false
 
 greenecho "Running overwrite test..."
-greenecho "Sync done."
 
 for dist in zipf uniform; do
     if [ "${dist}" = "zipf" ]; then
@@ -26,18 +25,7 @@ for dist in zipf uniform; do
     fi
 
     for ftl in old new; do
-        greenecho "Starting VM..."
-        vm_shutdown > /dev/null
-        vm_start 
-
-        greenecho "Waiting for VM to start..."
-        vm_wait_ssh
-
-        if [ "${SYNC}" = "false" ]; then
-            greenecho "Syncing NVMeVirt source..."
-            nvmev_sync
-            SYNC=true
-        fi
+        vm_start_sync_and_wait
 
         greenecho "VM started."
         if [ "${ftl}" = "old" ]; then
