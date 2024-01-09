@@ -5,6 +5,8 @@ YCSB_DIR=/home/virt/ycsb # on the VM
 VM_USER=virt
 VM_NAME=ubuntuvirt
 VM_IP=192.168.123.41
+NVMEV_CORES="36,37,38,39"
+SYNC="/home/move/MyVirt/sync.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -55,9 +57,13 @@ function vm_get_file {
     scp ${VM_USER}@${VM_IP}:$1 $2
 }
 
+function vm_wait_ssh {
+    until ping -c1 ${VM_IP} > /dev/null 2>&1; do :; done
+}
+
 function vm_renvmev {
     vm_send_cmd "sudo -n rmmod nvmev > /dev/null"
-    vm_send_cmd "sudo -n insmod ${NVMEV_DIR}/nvmev.ko memmap_start=32G memmap_size=32G cpus=38,39"
+    vm_send_cmd "sudo -n insmod ${NVMEV_DIR}/nvmev.ko memmap_start=32G memmap_size=4G cpus=${NVMEV_CORES}"
     vm_send_cmd "dmesg > /tmp/dmesg.log"
     scp ${VM_USER}@${VM_IP}:/tmp/dmesg.log /tmp/dmesg.log > /dev/null
 
@@ -72,8 +78,16 @@ function vm_renvmev {
     return 1
 }
 
+function vm_sync {
+    vm_send_cmd "sync"
+}
+
 function vm_rem_nvmev {
     vm_send_cmd "sudo rmmod nvmev > /dev/null"
+}
+
+function nvmev_sync {
+    ${SYNC} > /dev/null
 }
 
 trap ctrl_c INT

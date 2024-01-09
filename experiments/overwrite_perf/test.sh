@@ -5,16 +5,18 @@ TS=$( date +%s )
 DIR=${TS}_logdir
 mkdir -p ${DIR}
 
-NUM=100000
-OPS=1000
+NUM=750000
 THREADS=20
+OPS=$( echo "10000000 / ${THREADS}" | bc )
 VLEN=1024
 KLEN=8
 CACHE=1
 U=true
 WARMUP=1
+SYNC=false
 
 greenecho "Running overwrite test..."
+greenecho "Sync done."
 
 for dist in zipf uniform; do
     if [ "${dist}" = "zipf" ]; then
@@ -24,6 +26,20 @@ for dist in zipf uniform; do
     fi
 
     for ftl in old new; do
+        greenecho "Starting VM..."
+        vm_shutdown > /dev/null
+        vm_start 
+
+        greenecho "Waiting for VM to start..."
+        vm_wait_ssh
+
+        if [ "${SYNC}" = "false" ]; then
+            greenecho "Syncing NVMeVirt source..."
+            nvmev_sync
+            SYNC=true
+        fi
+
+        greenecho "VM started."
         if [ "${ftl}" = "old" ]; then
             greenecho "This is the old FTL ${dist} test."
             vm_build_old
@@ -42,7 +58,6 @@ for dist in zipf uniform; do
         fi
 
         greenecho "Running benchmark..."
-
         if ! vm_send_cmd "sudo ${YCSB_DIR}/build/ycsb_kvssd \
             --num_pairs=${NUM} \
             --vlen=${VLEN} \
@@ -56,14 +71,17 @@ for dist in zipf uniform; do
             --uniform=${U} \
             --warmup_time=${WARMUP} > ow_${TS}_${dist}_${ftl}_results.log"; then
              vm_get_dmesg ${DIR}/failed_dmesg.log
-             redecho "FAILED"
-             tail -1000 ${DIR}/failed_dmesg.log
+             redecho "This test failed!"
+             echo "ow_${TS}_${dist}_${ftl}" >> ${DIR}/failures
+             tail -500 ${DIR}/failed_dmesg.log
          fi
+
          vm_get_file ow_${TS}_${dist}_${ftl}_results.log ${DIR}/ow_${TS}_${dist}_${ftl}_results.log
          vm_rem_nvmev
          vm_get_dmesg ${DIR}/ow_${TS}_${dist}_${ftl}_dmesg.log
          greenecho "Benchmark done."
-         exit
+         vm_sync
+         vm_shutdown
     done
 done
 
