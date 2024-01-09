@@ -171,3 +171,6 @@ sphinx_*/
 
 # Local makefile
 Makefile.local
+
+# Logs
+*logdir*

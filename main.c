@@ -575,7 +575,11 @@ static void __print_base_config(void)
 		type = "Samsung 970 Pro SSD";
 		break;
     case SAMSUNG_970PRO_HASH_DFTL:
-		type = "Samsung 970 Pro SSD - DFTL HASH KV";
+#ifdef GC_STANDARD
+		type = "Samsung 970 Pro SSD - DFTL HASH KV - OLD FTL";
+#else
+        type = "Samsung 970 Pro SSD - DFTL HASH KV - NEW FTL";
+#endif
 		break;
 	case ZNS_PROTOTYPE:
 		type = "ZNS SSD Prototype";
