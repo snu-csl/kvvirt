@@ -106,7 +106,7 @@ again:
         h_params->cnt++;
         goto again;
     }
-    NVMEV_DEBUG("Got LPA %u key %s cnt %d\n", h_params->lpa, key.key, h_params->cnt);
+    //NVMEV_INFO("Got LPA %u key %s cnt %d\n", h_params->lpa, key.key, h_params->cnt);
 	return h_params->lpa;
 #else
 	return key;

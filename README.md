@@ -1,4 +1,16 @@
-# NVMeVirt
+# Towards Accessible Key-Value SSD Research With NVMeVirt
+
+Welcome to the repository for the work described in the above paper. The KVSSD FTLs in this repository will
+be updated and cleaned up regularly over the next while, so please check back often. This work is not a part of the
+official NVMeVirt repository (https://github.com/snu-csl/NVMeVirt), but with some extra time and effort the KVSSD FTLs might added once the code is neat enough. The original NVMeVirt README with installation instructions is located at the bottom.
+
+Included in this repository is the following:
+
+- The original demand-based KVSSD FTL (DFTLKV) port to NVMeVirt (based on the good work at from https://github.com/dgist-datalab/PinK/)
+- The updated version (DFTLKV+)
+- The scripts required to replicate the tests in the paper
+- A code walkthrough for the DFTLKV+
+- A link to a VM image that you can use to replicate the tests easily (once we work out how to host one)
 
 ## Introduction
 

@@ -72,6 +72,9 @@ struct demand_cache {
 
 /* Functions */
 struct demand_cache *select_cache(cache_t type);
+void clear_cache_stat(void);
+uint32_t get_cache_stat(char* out);
 void print_cache_stat(struct cache_stat *_stat);
+struct cache_stat* get_cstat(void);
 
 #endif

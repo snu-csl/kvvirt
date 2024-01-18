@@ -47,6 +47,69 @@ struct demand_cache *select_cache(cache_t type) {
 	return ret;
 }
 
+struct cache_stat* get_cstat(void) {
+#ifdef GC_STANDARD
+    return &(cgo_cache.stat);
+#else
+    return &(cg_cache.stat);
+#endif
+}
+
+void clear_cache_stat(void) {
+#ifdef GC_STANDARD
+    cgo_cache.stat.cache_hit = 0;
+    cgo_cache.stat.cache_miss = 0;
+    cgo_cache.stat.clean_evict = 0;
+    cgo_cache.stat.dirty_evict = 0;
+    cgo_cache.stat.blocked_miss = 0;
+#else
+    cg_cache.stat.cache_hit = 0;
+    cg_cache.stat.cache_miss = 0;
+    cg_cache.stat.clean_evict = 0;
+    cg_cache.stat.dirty_evict = 0;
+    cg_cache.stat.blocked_miss = 0;
+#endif
+}
+
+uint32_t get_cache_stat(char* out) {
+    struct cache_stat _stat = *get_cstat();
+    char *buf = (char*) kzalloc(4096, GFP_KERNEL);
+    int off = 0;
+
+	sprintf(buf + off, "===================\n");
+    off = strlen(buf);
+	sprintf(buf + off, " Cache Performance \n");
+    off = strlen(buf);
+	sprintf(buf + off, "===================\n");
+    off = strlen(buf);
+
+	sprintf(buf + off, "Cache_Hit:\t%lld\n", _stat.cache_hit);
+    off = strlen(buf);
+	sprintf(buf + off, "Cache_Miss:\t%lld\n", _stat.cache_miss);
+    off = strlen(buf);
+
+    sprintf(buf + off, "Hit ratio:FIXME\n");
+    off = strlen(buf);
+	sprintf(buf + off, "\n");
+    off = strlen(buf);
+
+	sprintf(buf + off, "Blocked miss:\t%lld\n", _stat.blocked_miss);
+    off = strlen(buf);
+	sprintf(buf + off, "\n");
+    off = strlen(buf);
+
+	sprintf(buf + off, "Clean evict:\t%lld\n", _stat.clean_evict);
+    off = strlen(buf);
+	sprintf(buf + off, "Dirty evict:\t%lld\n", _stat.dirty_evict);
+    off = strlen(buf);
+	sprintf(buf + off, "\n");
+    off = strlen(buf);
+
+    memcpy(out, buf, strlen(buf));
+    kfree(buf);
+    return off;
+}
+
 void print_cache_stat(struct cache_stat *_stat) {
 	printk("===================");
 	printk(" Cache Performance ");

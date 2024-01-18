@@ -168,7 +168,7 @@ static int demand_member_init(struct demand_member *const _member, struct ssd *s
 	_member->flush_list = fl;
 
 #ifdef HASH_KVSSD
-	_member->max_try = 5;
+	_member->max_try = 0;
 #endif
 
 	_member->hash_table = d_htable_init(d_env.wb_flush_size * 2);
@@ -219,6 +219,7 @@ uint32_t demand_create(lower_info *li, blockmanager *bm,
 }
 
 static int count_filled_entry(void) {
+    return 0;
 	int ret = 0;
     value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
 
@@ -263,8 +264,33 @@ static int count_filled_entry(void) {
 	return ret;
 }
 
-static void print_hash_collision_cdf(uint64_t *hc) {
+static uint32_t get_hash_collision_cdf(uint64_t *hc, char* out) {
+    char *buf = (char*) kzalloc(4096, GFP_KERNEL);
+    int off = 0;
 
+	int total = 0;
+	for (int i = 0; i < MAX_HASH_COLLISION; i++) {
+		total += hc[i];
+	}
+
+    sprintf(buf, "Total HC this time %d\n", total);
+    off = strlen(buf);
+
+	int _cdf = 0;
+	for (int i = 0; i < MAX_HASH_COLLISION; i++) {
+		if (hc[i]) {
+			_cdf += 100 * hc[i] / total;
+			sprintf(buf + off, "%d,%lld,%d\n", i, hc[i], _cdf);
+            off = strlen(buf);
+		}
+	}
+
+    memcpy(out, buf, strlen(buf));
+    kfree(buf);
+    return strlen(buf);
+}
+
+static void print_hash_collision_cdf(uint64_t *hc) {
 	int total = 0;
 	for (int i = 0; i < MAX_HASH_COLLISION; i++) {
 		total += hc[i];
@@ -281,121 +307,182 @@ static void print_hash_collision_cdf(uint64_t *hc) {
 	}
 }
 
+void clear_demand_stat(void) {
+    for(int i = 0; i < MAX_HASH_COLLISION; i++) {
+        d_stat.w_hash_collision_cnt[i] = 0;
+        d_stat.r_hash_collision_cnt[i] = 0;
+    }
+
+    /* device traffic */
+    d_stat.data_r = 0;
+    d_stat.data_w = 0;
+    d_stat.trans_r = 0;
+    d_stat.trans_w = 0;
+    d_stat.data_r_dgc = 0;
+    d_stat.data_w_dgc = 0;
+    d_stat.trans_r_dgc = 0;
+    d_stat.trans_r_dgc_2 = 0;
+    d_stat.trans_w_dgc = 0;
+    d_stat.trans_r_tgc = 0;
+    d_stat.trans_w_tgc = 0;
+    d_stat.dgc_cnt = 0;
+    d_stat.tgc_cnt = 0;
+    d_stat.tgc_by_read = 0;
+    d_stat.tgc_by_write = 0;
+    d_stat.read_req_cnt = 0;
+    d_stat.write_req_cnt = 0;
+    d_stat.d_read_on_read = 0;
+    d_stat.d_write_on_read = 0;
+    d_stat.t_read_on_read = 0;
+    d_stat.t_write_on_read = 0;
+    d_stat.d_read_on_write = 0;
+    d_stat.d_write_on_write = 0;
+    d_stat.t_read_on_write = 0;
+    d_stat.t_write_on_write = 0;
+    d_stat.wb_hit = 0;
+    d_stat.gc_pair_copy = 0;
+    d_stat.gc_invm_copy = 0;
+    d_stat.gc_cmt_copy = 0;
+    d_stat.fp_match_r = 0;
+    d_stat.fp_match_w = 0;
+    d_stat.fp_collision_r = 0;
+    d_stat.fp_collision_w = 0;
+    d_stat.inv_w = 0;
+    d_stat.inv_r = 0;
+}
+
 char* get_demand_stat(struct demand_stat *const _stat) {
-    //uint32_t buf_size = 4096;
-    //uint32_t length = 0;
-    //char *ret = kzalloc(buf_size, GFP_KERNEL);
-    //memset(ret, 0x0, buf_size);
+    uint32_t buf_size = 16384;
+    uint32_t length = 0;
+    char *ret = kzalloc(buf_size, GFP_KERNEL);
+    char tmp_buf[4096];
+    memset(ret, 0x0, buf_size);
 
-	///* device traffic */
-	//length += snprintf(ret + length, buf_size - length, "================");
-	//length += snprintf(ret + length, buf_size - length, " Device Traffic ");
-	//length += snprintf(ret + length, buf_size - length, "================");
+	/* device traffic */
+	length += snprintf(ret + length, buf_size - length, "================\n");
+	length += snprintf(ret + length, buf_size - length, " Device Traffic \n");
+	length += snprintf(ret + length, buf_size - length, "================\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "Data_Read:  \t%lld\n", _stat->data_r);
-	//length += snprintf(ret + length, buf_size - length, "Data_Write: \t%lld\n", _stat->data_w);
-	//length += snprintf(ret + length, buf_size - length, "\n");
-	//length += snprintf(ret + length, buf_size - length, "Trans_Read: \t%lld\n", _stat->trans_r);
-	//length += snprintf(ret + length, buf_size - length, "Trans_Write:\t%lld\n", _stat->trans_w);
-	//length += snprintf(ret + length, buf_size - length, "\n");
-	//length += snprintf(ret + length, buf_size - length, "DataGC cnt: \t%lld\n", _stat->dgc_cnt);
-	//length += snprintf(ret + length, buf_size - length, "DataGC_DR:  \t%lld\n", _stat->data_r_dgc);
-	//length += snprintf(ret + length, buf_size - length, "DataGC_DW:  \t%lld\n", _stat->data_w_dgc);
-	//length += snprintf(ret + length, buf_size - length, "DataGC_TR:  \t%lld (%lld)\n", _stat->trans_r_dgc, _stat->trans_r_dgc_2);
-	//length += snprintf(ret + length, buf_size - length, "DataGC_TW:  \t%lld\n", _stat->trans_w_dgc);
-	//length += snprintf(ret + length, buf_size - length, "\n");
-	//length += snprintf(ret + length, buf_size - length, "TransGC cnt:\t%lld\n", _stat->tgc_cnt);
-	//length += snprintf(ret + length, buf_size - length, "TransGC_TR: \t%lld\n", _stat->trans_r_tgc);
-	//length += snprintf(ret + length, buf_size - length, "TransGC_TW: \t%lld\n", _stat->trans_w_tgc);
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "Data_Read:  \t%lld\n", _stat->data_r);
+	length += snprintf(ret + length, buf_size - length, "Data_Write: \t%lld\n", _stat->data_w);
+	length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "Trans_Read: \t%lld\n", _stat->trans_r);
+	length += snprintf(ret + length, buf_size - length, "Trans_Write:\t%lld\n", _stat->trans_w);
+	length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "DataGC cnt: \t%lld\n", _stat->dgc_cnt);
+	length += snprintf(ret + length, buf_size - length, "DataGC_DR:  \t%lld\n", _stat->data_r_dgc);
+	length += snprintf(ret + length, buf_size - length, "DataGC_DW:  \t%lld\n", _stat->data_w_dgc);
+	length += snprintf(ret + length, buf_size - length, "DataGC_TR:  \t%lld (%lld)\n", _stat->trans_r_dgc, _stat->trans_r_dgc_2);
+	length += snprintf(ret + length, buf_size - length, "DataGC_TW:  \t%lld\n", _stat->trans_w_dgc);
+	length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "TransGC cnt:\t%lld\n", _stat->tgc_cnt);
+	length += snprintf(ret + length, buf_size - length, "TransGC_TR: \t%lld\n", _stat->trans_r_tgc);
+	length += snprintf(ret + length, buf_size - length, "TransGC_TW: \t%lld\n", _stat->trans_w_tgc);
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	//int amplified_read = _stat->trans_r + _stat->data_r_dgc + _stat->trans_r_dgc + _stat->trans_r_tgc;
-	//int amplified_write = _stat->trans_w + _stat->data_w_dgc + _stat->trans_w_dgc + _stat->trans_w_tgc;
+	int amplified_read = _stat->trans_r + _stat->data_r_dgc + _stat->trans_r_dgc + _stat->trans_r_tgc;
+	int amplified_write = _stat->trans_w + _stat->data_w_dgc + _stat->trans_w_dgc + _stat->trans_w_tgc;
 
-    //if(_stat->data_r > 0) {
-    //    length += snprintf(ret + length, buf_size - length,
-    //                      "RAF: %lld\n", 
-    //                      100 * (_stat->data_r + amplified_read) /_stat->data_r);
-    //}
+    if(_stat->data_r > 0) {
+        length += snprintf(ret + length, buf_size - length,
+                          "RAF: %lld\n", 
+                          100 * (_stat->data_r + amplified_read) /_stat->data_r);
+    }
 
-    //if(_stat->data_w > 0) {
-    //    length += snprintf(ret + length, buf_size - length,
-    //                      "WAF: %lld\n", 
-    //                      100 * (_stat->data_w + amplified_write)/_stat->data_w);
-    //}
-	//length += snprintf(ret + length, buf_size - length, "\n");
+    if(_stat->data_w > 0) {
+        length += snprintf(ret + length, buf_size - length,
+                          "WAF: %lld\n", 
+                          100 * (_stat->data_w + amplified_write)/_stat->data_w);
+    }
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	///* r/w specific traffic */
-	//length += snprintf(ret + length, buf_size - length, "==============");
-	//length += snprintf(ret + length, buf_size - length, " R/W analysis ");
-	//length += snprintf(ret + length, buf_size - length, "==============");
+	/* r/w specific traffic */
+	length += snprintf(ret + length, buf_size - length, "==============\n");
+	length += snprintf(ret + length, buf_size - length, " R/W analysis \n");
+	length += snprintf(ret + length, buf_size - length, "==============\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "[Read]");
-	//length += snprintf(ret + length, buf_size - length, "*Read Reqs: \t%lld\n", _stat->read_req_cnt);
-	//length += snprintf(ret + length, buf_size - length, "Data read:  \t%lld (+%lld Write-buffer hits)\n", _stat->d_read_on_read, _stat->wb_hit);
-	//length += snprintf(ret + length, buf_size - length, "Data write: \t%lld\n", _stat->d_write_on_read);
-	//length += snprintf(ret + length, buf_size - length, "Trans read: \t%lld\n", _stat->t_read_on_read);
-	//length += snprintf(ret + length, buf_size - length, "Trans write:\t%lld\n", _stat->t_write_on_read);
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "[Read]\n");
+	length += snprintf(ret + length, buf_size - length, "*Read Reqs: \t%lld\n", _stat->read_req_cnt);
+	length += snprintf(ret + length, buf_size - length, "Data read:  \t%lld (+%lld Write-buffer hits)\n", _stat->d_read_on_read, _stat->wb_hit);
+	length += snprintf(ret + length, buf_size - length, "Data write: \t%lld\n", _stat->d_write_on_read);
+	length += snprintf(ret + length, buf_size - length, "Trans read: \t%lld\n", _stat->t_read_on_read);
+	length += snprintf(ret + length, buf_size - length, "Trans write:\t%lld\n", _stat->t_write_on_read);
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "[Write]");
-	//length += snprintf(ret + length, buf_size - length, "*Write Reqs:\t%lld\n", _stat->write_req_cnt);
-	//length += snprintf(ret + length, buf_size - length, "Data read:  \t%lld\n", _stat->d_read_on_write);
-	//length += snprintf(ret + length, buf_size - length, "Data write: \t%lld\n", _stat->d_write_on_write);
-	//length += snprintf(ret + length, buf_size - length, "Trans read: \t%lld\n", _stat->t_read_on_write);
-	//length += snprintf(ret + length, buf_size - length, "Trans write:\t%lld\n", _stat->t_write_on_write);
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "[Write]\n");
+	length += snprintf(ret + length, buf_size - length, "*Write Reqs:\t%lld\n", _stat->write_req_cnt);
+	length += snprintf(ret + length, buf_size - length, "Data read:  \t%lld\n", _stat->d_read_on_write);
+	length += snprintf(ret + length, buf_size - length, "Data write: \t%lld\n", _stat->d_write_on_write);
+	length += snprintf(ret + length, buf_size - length, "Trans read: \t%lld\n", _stat->t_read_on_write);
+	length += snprintf(ret + length, buf_size - length, "Trans write:\t%lld\n", _stat->t_write_on_write);
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	///* write buffer */
-	//length += snprintf(ret + length, buf_size - length, "==============");
-	//length += snprintf(ret + length, buf_size - length, " Write Buffer ");
-	//length += snprintf(ret + length, buf_size - length, "==============");
+	/* write buffer */
+	length += snprintf(ret + length, buf_size - length, "==============\n");
+	length += snprintf(ret + length, buf_size - length, " Write Buffer \n");
+	length += snprintf(ret + length, buf_size - length, "==============\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "Write-buffer Hit cnt: %lld\n", _stat->wb_hit);
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "Write-buffer Hit cnt: %lld\n", _stat->wb_hit);
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "================");
-	//length += snprintf(ret + length, buf_size - length, " Hash Collision ");
-	//length += snprintf(ret + length, buf_size - length, "================");
+	length += snprintf(ret + length, buf_size - length, "================\n");
+	length += snprintf(ret + length, buf_size - length, " Hash Collision \n");
+	length += snprintf(ret + length, buf_size - length, "================\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "[Overall Hash-table Load Factor]");
-	//int filled_entry_cnt = count_filled_entry();
-	//int total_entry_cnt = d_cache->env.nr_valid_tentries;
-	//length += snprintf(ret + length, buf_size - length, "Total entry:  %d\n", total_entry_cnt);
-	//length += snprintf(ret + length, buf_size - length, "Filled entry: %d\n", filled_entry_cnt);
-	//length += snprintf(ret + length, buf_size - length, "Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "[Overall Hash-table Load Factor]\n");
+	int filled_entry_cnt = count_filled_entry();
+	int total_entry_cnt = d_cache->env.nr_valid_tentries;
+	length += snprintf(ret + length, buf_size - length, "Total entry:  %d\n", total_entry_cnt);
+	length += snprintf(ret + length, buf_size - length, "Filled entry: %d\n", filled_entry_cnt);
+	length += snprintf(ret + length, buf_size - length, "Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "[write(insertion)]");
-	//length += snprintf(ret + length, buf_size - length, print_hash_collision_cdf(_stat->w_hash_collision_cnt));
+	length += snprintf(ret + length, buf_size - length, "[write(insertion)]\n");
+    length += get_hash_collision_cdf(_stat->w_hash_collision_cnt, ret + length);
 
-	//length += snprintf(ret + length, buf_size - length, "[read]");
+	length += snprintf(ret + length, buf_size - length, "[read]\n");
+    length += get_hash_collision_cdf(_stat->r_hash_collision_cnt, ret + length);
 	//length += snprintf(ret + length, buf_size - length, print_hash_collision_cdf(_stat->r_hash_collision_cnt));
-	//length += snprintf(ret + length, buf_size - length, "\n");
+	length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "=======================");
-	//length += snprintf(ret + length, buf_size - length, " Fingerprint Collision ");
-	//length += snprintf(ret + length, buf_size - length, "=======================");
+	length += snprintf(ret + length, buf_size - length, "=======================\n");
+	length += snprintf(ret + length, buf_size - length, " Fingerprint Collision \n");
+	length += snprintf(ret + length, buf_size - length, "=======================\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
 
-	//length += snprintf(ret + length, buf_size - length, "[Read]");
-	//length += snprintf(ret + length, buf_size - length, "fp_match:     %lld\n", _stat->fp_match_r);
-	//length += snprintf(ret + length, buf_size - length, "fp_collision: %lld\n", _stat->fp_collision_r);
+	length += snprintf(ret + length, buf_size - length, "[Read]\n");
+	length += snprintf(ret + length, buf_size - length, "fp_match:     %lld\n", _stat->fp_match_r);
+	length += snprintf(ret + length, buf_size - length, "fp_collision: %lld\n", _stat->fp_collision_r);
 
-    //if(_stat->fp_match_r + _stat->fp_collision_r > 0) {
-    //    printk("rate: %u\n", 100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r)*100);
-    //}
-    //printk("\n");
+    if(_stat->fp_match_r + _stat->fp_collision_r > 0) {
+        length += snprintf(ret+length, buf_size - length, "rate: %llu\n", 
+                  100 * _stat->fp_collision_r/(_stat->fp_match_r+_stat->fp_collision_r) * 100);
+    }
 
-	//printk("[Write]");
-	//printk("fp_match:     %lld\n", _stat->fp_match_w);
-	//printk("fp_collision: %lld\n", _stat->fp_collision_w);
+	length += snprintf(ret + length, buf_size - length, "[Write]\n");
+	length += snprintf(ret + length, buf_size - length, "fp_match:     %lld\n", _stat->fp_match_w);
+	length += snprintf(ret + length, buf_size - length, "fp_collision: %lld\n", _stat->fp_collision_w);
 
-    //if(_stat->fp_match_w + _stat->fp_collision_w > 0) {
-    //    printk("rate: %lld\n", 100 * _stat->fp_collision_w/(_stat->fp_match_w+_stat->fp_collision_w)*100);
-    //}
-	//printk("\n");
+    if(_stat->fp_match_w + _stat->fp_collision_w > 0) {
+        length += snprintf(ret + length, buf_size - length, "rate: %lld\n", 
+                  100 * _stat->fp_collision_w/(_stat->fp_match_w+_stat->fp_collision_w)*100);
+    }
 
-    return NULL;
+#ifndef GC_STANDARD
+	length += snprintf(ret + length, buf_size - length, "=======================\n");
+	length += snprintf(ret + length, buf_size - length, " Invalid Mappings \n");
+	length += snprintf(ret + length, buf_size - length, "=======================\n");
+    length += snprintf(ret + length, buf_size - length, "\n");
+
+    length += snprintf(ret + length, buf_size - length, "Write: %lld\n", _stat->inv_w);
+	length += snprintf(ret + length, buf_size - length, "Read: %lld\n", _stat->inv_r);
+#endif
+
+    return ret;
 }
 
 void print_demand_stat(struct demand_stat *const _stat) {
@@ -689,27 +776,52 @@ uint64_t demand_append(request *const req) {
     uint32_t rc;
     struct ssdparams *spp = &d_member.ssd->sp;
     uint32_t to_append = req->target_len;
+    uint32_t before, after;
+
+    char* buf = (char*) kzalloc(4096, GFP_KERNEL);
 
     mutex_lock(&d_member.op_lock);
 #ifdef HASH_KVSSD
     if (!req->hash_params) {
         d_stat.read_req_cnt++;
         req->hash_params = (void *)make_hash_params(req);
+        before = ((struct hash_params*) req->hash_params)->hash;
     }
 #endif
-    rc = __demand_read(req, true);
+    rc = __demand_read(req, false);
 
-    NVMEV_ERROR("Attempting to append %u bytes to a value of length %u\n",
-                 to_append, req->value->length);
+    uint64_t k = *(uint64_t*) (req->target_buf + 1);
+    NVMEV_INFO("Attempting to append %u bytes to a value of length %u. Key is %llu\n",
+                to_append, req->value->length, k);
 
-    NVMEV_ASSERT(req->value->length + to_append <= spp->pgsz);
-    memcpy(req->value->value + req->value->length, req->target_buf, to_append);
+    if(req->value->length + to_append > spp->pgsz) {
+        NVMEV_INFO("Was too big! Returning.\n");
+        req->ppa = UINT_MAX - 3;
+        mutex_unlock(&d_member.op_lock);
+        return 0;
+    }
+
+    uint32_t offset = req->ppa % GRAIN_PER_PAGE;
+    memcpy(buf, req->value->value + (offset * GRAINED_UNIT), req->value->length);
+    //k = *(uint64_t*) (buf + 1);
+    //NVMEV_INFO("We found key %llu in the append read. Vlen was %u.\n", 
+    //        k, req->value->length);
+    memcpy(buf + req->value->length, req->target_buf, to_append);
+    //k = *(uint64_t*) (buf + 1);
+    //NVMEV_INFO("Key %llu after the copy.\n", k);
+
+    kfree(req->value->value);
+    req->value->value = buf;
     req->value->length += to_append;
+    memcpy(buf + sizeof(uint8_t) + req->key.len, &req->value->length, sizeof(uint32_t));
 
     req->hash_params = (void *)make_hash_params(req);
+    after = ((struct hash_params*) req->hash_params)->hash;
+    NVMEV_ASSERT(before == after);
 
     rc = __demand_write(req);
+    NVMEV_INFO("Write in append done.\n");
     mutex_unlock(&d_member.op_lock);
-    return 0;
+    return rc;
 }
 

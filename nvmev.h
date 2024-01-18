@@ -24,7 +24,7 @@
 #define NVMEV_SUBSYSTEM_ID	0x370d
 #define NVMEV_SUBSYSTEM_VENDOR_ID NVMEV_VENDOR_ID
 
-#define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
+#define NVMEV_INFO(string, args...) (void) string // printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ERROR(string, args...) (void) string // printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
@@ -318,4 +318,8 @@ void NVMEV_IO_WORKER_FINAL(struct nvmev_dev *nvmev_vdev);
 int nvmev_proc_io_sq(int qid, int new_db, int old_db);
 void nvmev_proc_io_cq(int qid, int new_db, int old_db);
 
+// CALLBACKS
+void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
+                                    void* mem, uint64_t ppa, uint64_t len,
+                                    bool (*cb)(void*), void *args, bool read);
 #endif /* _LIB_NVMEV_H */

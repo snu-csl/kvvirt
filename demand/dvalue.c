@@ -29,6 +29,7 @@ bool* grain_bitmap = NULL;
 int grain_create(void) {
 #ifdef GC_STANDARD
 	grain_bitmap = (bool *)vmalloc(d_env.nr_grains * sizeof(bool));
+    memset(grain_bitmap, 0x0, d_env.nr_grains * sizeof(bool));
 	if (!grain_bitmap) return 1;
 #endif
 

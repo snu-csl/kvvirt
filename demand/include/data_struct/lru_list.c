@@ -124,7 +124,7 @@ void lru_update(LRU* lru, NODE* now){
 void lru_delete(LRU* lru, NODE* now){
 	if(now == NULL){
         BUG_ON(true);
-		return ;
+		return;
 	}
 	if(now == lru->head){
 		lru->head = now->next;

@@ -40,6 +40,7 @@ typedef enum {
 	// generic command status
 	KV_SUCCESS = 0, // success
 	KV_ERR_KEY_NOT_EXIST = 0x310,
+    KV_ERR_BUFFER_SMALL=0x301
 } kvs_result;
 
 struct convparams {

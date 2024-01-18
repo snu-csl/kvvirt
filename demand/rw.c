@@ -45,8 +45,8 @@ void __hash_remove(lpa_t lpa) {
 void d_set_oob(lpa_t lpa, ppa_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
-    NVMEV_DEBUG("Trying to set OOB for PPA %u offset %u LPA %u\n", 
-                ppa, offset, lpa);
+    NVMEV_INFO("Setting OOB for PPA %u offset %llu LPA %u len %u\n", 
+                ppa, offset, lpa, len);
     oob[ppa][offset] = lpa;
 
     for(int i = 1; i < len; i++) {
@@ -66,8 +66,8 @@ void print_oob(ppa_t ppa) {
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
-        NVMEV_DEBUG("WB hit for key %s! Length %u!\n", 
-                    req->key.key, wb_entry->value->length);
+        //NVMEV_INFO("WB hit for key %s! Length %u!\n", 
+        //            req->key.key, wb_entry->value->length);
 		d_stat.wb_hit++;
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
@@ -126,9 +126,10 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
     uint64_t line = (uint64_t) l->id;
     uint64_t nsecs_completed = 0;
 
-    NVMEV_DEBUG("Got an invalid LPA to PPA mapping %u %u line %d (%u)\n", 
+    NVMEV_INFO("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
                  lpa, ppa, line, inv_mapping_offs[line]);
 
+    BUG_ON(lpa == UINT_MAX);
     BUG_ON(!credits);
  
     if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
@@ -147,7 +148,7 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_DEBUG("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
+        NVMEV_INFO("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
                     line, inv_mapping_offs[line], w_ppa);
 
         oob[w_ppa][0] = UINT_MAX;
@@ -164,12 +165,12 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
 
         NVMEV_DEBUG("Added %u (%u %u) to XA.\n", (line << 32) | w_ppa, line, w_ppa);
         xa_store(&gcd->inv_mapping_xa, (line << 32) | w_ppa, xa_mk_value(w_ppa), GFP_KERNEL);
-        //inv_mapping_ppas[line][inv_mapping_cnts[line]++] = w_ppa;
         
         memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
         inv_mapping_offs[line] = 0;
 
         (*credits) += GRAIN_PER_PAGE;
+        d_stat.inv_w++;
     }
 
     memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
@@ -245,7 +246,8 @@ uint64_t __demand_read(request *const req, bool for_del) {
 
 read_retry:
 	lpa = get_lpa(req->key, req->hash_params);
-    //printk("Got LPA %u for key %s!\n", lpa, req->key.key);
+    //NVMEV_INFO("Got LPA %u for key %s (%llu)!\n", 
+    //            lpa, req->key.key, *(uint64_t*) req->key.key);
 	pte.ppa = UINT_MAX;
 #ifdef STORE_KEY_FP
 	pte.key_fp = FP_MAX;
@@ -254,7 +256,13 @@ read_retry:
 #ifdef HASH_KVSSD
 	if (h_params->cnt > d_member.max_try) {
 		rc = UINT_MAX;
+        req->ppa = UINT_MAX;
         req->value->length = 0;
+        free_iparams(req, NULL);
+        kfree(h_params);
+
+        printk("Exceeded max try of %d\n", d_member.max_try);
+
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
 	}
@@ -296,6 +304,7 @@ read_retry:
             ssd_advance_pcie(req->ssd, req->req->nsecs_start, 1024);
             req->end_req(req);
         }
+        free_iparams(req, NULL);
 		goto read_ret;
 	}
 
@@ -334,22 +343,24 @@ cache_check_complete:
 #ifdef STORE_KEY_FP
 	/* fast fingerprint compare */
 	if (h_params->key_fp != pte.key_fp) {
+        NVMEV_DEBUG("The fingerprints didn't match.\n");
 		h_params->cnt++;
 		goto read_retry;
 	}
 #endif
 data_read:
 	/* 3. read actual data */
-    NVMEV_DEBUG("Got PPA %uu for LPA %u %u %u\n", pte.ppa, lpa, nsecs_latest, nsecs_completed);
+    NVMEV_INFO("Got PPA %u for LPA %u\n", pte.ppa, lpa);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
-    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed :  max(nsecs_latest, nsecs_completed);
+    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : max(nsecs_latest, nsecs_completed);
 
     if(rc == UINT_MAX) {
         req->ppa = UINT_MAX;
         req->value->length = 0;
+        kfree(h_params);
         warn_notfound(__FILE__, __LINE__);
         goto read_ret;
-    } else if(nsecs_latest == UINT_MAX - 1) {
+    } else if(rc == 1) {
         NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
         goto read_retry;
     }
@@ -480,9 +491,11 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
             char tmp[128];
             memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
             tmp[wb_entry->key.len] = '\0';
-            NVMEV_DEBUG("%s writing %s (%u %s) to %u (%u)\n", 
-                        __func__, tmp, wb_entry->key.len, wb_entry->key.key,
-                        ppa + (offset * GRAINED_UNIT), wb_entry->ppa);
+            NVMEV_INFO("%s writing %s length %u (%u %llu) to %u (%u)\n", 
+                        __func__, tmp, *(uint8_t*) wb_entry->value->value, 
+                        wb_entry->value->length, 
+                        *(uint64_t*) (wb_entry->value->value + sizeof(uint8_t)),
+                        ppa, wb_entry->ppa);
 
 			inf_free_valueset(wb_entry->value, FS_MALLOC_W);
 			wb_entry->value = NULL;
@@ -498,8 +511,8 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		}
 
         if(remain > 0) {
-            //NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
-            //NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
+            NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
+            NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
             mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
@@ -536,9 +549,8 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static uint64_t _do_wb_mapping_update(skiplist *wb) {
+static uint64_t _do_wb_mapping_update(skiplist *wb, uint64_t* credits) {
 	int rc = 0;
-    uint64_t credits = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 	blockmanager *bm = __demand.bm;
 
@@ -637,7 +649,7 @@ wb_cache_list_up:
              */
 
             start = local_clock();
-			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL, &credits);
+			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL, credits);
             end = local_clock();
             list_up += end - start;
 			if (rc) continue; /* mapping write */
@@ -688,7 +700,7 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_DEBUG("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
+        NVMEV_INFO("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             __hash_remove(lpa);
@@ -699,12 +711,12 @@ wb_update:
                 len++;
             }
 
-            NVMEV_DEBUG("%s LPA %u old PPA %u overwrite old len %u.\n", 
+            NVMEV_INFO("%s LPA %u old PPA %u overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
-            mark_grain_invalid(ftl, pte.ppa, wb_entry->len);
+            mark_grain_invalid(ftl, pte.ppa, len);
 #ifndef GC_STANDARD
-            nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
+            nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), credits);
 #endif
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
@@ -753,21 +765,10 @@ wb_direct_update:
 	iter = skiplist_get_iterator(wb);
 	for (size_t i = 0; i < d_env.wb_flush_size; i++) {
 		snode *wb_entry = skiplist_get_next(iter);
-        credits += wb_entry->len;
+        //(*credits) += wb_entry->len;
 		if (wb_entry->hash_params) kfree(wb_entry->hash_params);
 		free_iparams(NULL, wb_entry);
 	}
-
-    /*
-     * CAUTION, only consume credits after both the OOBs and grains
-     * have been set for the writes you want to consume the credits for.
-     * Otherwise, GC will be incorrect because it will see pages
-     * with valid grains, but invalid OOBs, or vice versa.
-     */
-
-    consume_write_credit(ftl, credits);
-    nsecs_completed = check_and_refill_write_credit(ftl);
-    nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 	kfree(iter);
 
@@ -779,7 +780,7 @@ wb_direct_update:
     return nsecs_latest;
 }
 
-uint64_t _do_wb_flush(skiplist *wb) {
+uint64_t _do_wb_flush(skiplist *wb, uint64_t credits) {
 	struct flush_list *fl = d_member.flush_list;
     struct ssdparams spp = d_member.ssd->sp;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
@@ -793,6 +794,7 @@ uint64_t _do_wb_flush(skiplist *wb) {
         __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
                            make_algo_req_rw(DATAW, value, NULL, NULL));
         nsecs_latest = max(nsecs_latest, nsecs_completed);
+        credits += GRAIN_PER_PAGE;
     }
 
 	fl->size = 0;
@@ -805,6 +807,17 @@ uint64_t _do_wb_flush(skiplist *wb) {
 	__demand.li->lower_flying_req_wait();
 
 	skiplist_kfree(wb);
+
+    /*
+     * CAUTION, only consume credits after both the OOBs and grains
+     * have been set for the writes you want to consume the credits for.
+     * Otherwise, GC will be incorrect because it will see pages
+     * with valid grains, but invalid OOBs, or vice versa.
+     */
+
+    consume_write_credit(ftl, credits);
+    nsecs_completed = check_and_refill_write_credit(ftl);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 	return nsecs_latest;
 }
@@ -824,16 +837,30 @@ static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	else return 0;
 }
 
+struct wb_insert_args {
+    skiplist *wb;
+    request *req;
+};
+
+void* _do_wb_insert_cb(void *voidargs) {
+    printk("In _do_wb_insert_cb.\n");
+    struct wb_insert_args *args = (struct wb_insert_args*) voidargs;
+    _do_wb_insert(args->wb, args->req);
+    return NULL;
+}
+
 uint64_t __demand_write(request *const req) {
 	uint32_t rc = 0;
     uint64_t nsecs_latest = 0, nsecs_completed = 0;
     uint64_t nsecs_start = req->req->nsecs_start;
     uint64_t length = req->value->length;
+    uint64_t credits = 0;
 	skiplist *wb = d_member.write_buffer;
     struct ssdparams *spp = &d_member.ssd->sp;
 
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
+        BUG_ON(true);
 		/* assign ppa first */
         
         uint64_t start = ktime_get_ns();
@@ -844,14 +871,14 @@ uint64_t __demand_write(request *const req) {
 
 		/* mapping update [lpa, origin]->[lpa, new] */
         start = ktime_get_ns();
-		nsecs_completed = _do_wb_mapping_update(wb);
+		nsecs_completed = _do_wb_mapping_update(wb, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         end = ktime_get_ns();
         NVMEV_DEBUG("_do_wb_mapping_update took %uns\n", end - start);
 		
 		/* flush the buffer */
         start = ktime_get_ns();
-		nsecs_latest = _do_wb_flush(wb);
+		nsecs_latest = _do_wb_flush(wb, credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = d_member.write_buffer =  skiplist_init();
         end = ktime_get_ns();
@@ -867,10 +894,20 @@ uint64_t __demand_write(request *const req) {
     ////printk("Advancing WB %u start %u length.\n", nsecs_start, length);
 
 	/* default: insert to the buffer */
-	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
+	//rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
    
     nsecs_completed =
     ssd_advance_write_buffer(req->ssd, nsecs_start, length);
+
+    struct wb_insert_args *args = 
+    (struct wb_insert_args*) kzalloc(sizeof(*args), GFP_KERNEL);
+    args->wb = wb;
+    args->req = req;
+
+    schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed,
+                                   (void*) req->cmd->kv_store.dptr.prp1, 0,
+                                   req->value->length, (void*) _do_wb_insert_cb, 
+                                   args, false);
 
     //printk("%u %u\n", nsecs_completed, nsecs_latest);
     nsecs_latest = max(nsecs_completed, nsecs_latest);
@@ -923,13 +960,26 @@ void *demand_end_req(algo_req *a_req) {
             BUG_ON(!req->hash_params);
 			h_params = (struct hash_params *)req->hash_params;
 
+            BUG_ON(!req->key.key);
             BUG_ON(!req->value);
+            BUG_ON(!a_req);
 
 			copy_key_from_value(&check_key, req->value, offset);
+            BUG_ON(!check_key.key);
 
-            NVMEV_DEBUG("Comparing %s and %s\n", check_key.key, req->key.key);
+            //NVMEV_INFO("Passed check %p %p %llu\n", 
+            //            req, &(req->key), *(uint64_t*) req->key.key);
+            //NVMEV_INFO("Passed check 2 %p %p %llu\n", 
+            //            req, &(req->key), *(uint64_t*) check_key.key);
+
+            //NVMEV_INFO("Comparing %s (%llu) and %s (%llu)\n", 
+            //            check_key.key, *(uint64_t*) check_key.key,
+            //            req->key.key, *(uint64_t*) req->key.key);
 			if (KEYCMP(req->key, check_key) == 0) {
-                NVMEV_DEBUG("Match %s and %s.\n", check_key.key, req->key.key);
+                //NVMEV_INFO("Passed cmp.\n");
+                //NVMEV_INFO("Match %llu and %llu.\n", 
+                //           *(uint64_t*) check_key.key, 
+                //           *(uint64_t*) (req->key.key));
 				d_stat.fp_match_r++;
 
                 a_req->need_retry = false;
@@ -938,12 +988,16 @@ void *demand_end_req(algo_req *a_req) {
                 req->value->length = get_vlen(G_IDX(req->ppa), offset);
 				req->end_req(req);
 			} else {
-                NVMEV_DEBUG("Mismatch %s and %s.\n", check_key.key, req->key.key);
+                NVMEV_INFO("Passed cmp 2.\n");
+                NVMEV_INFO("Mismatch %llu and %llu.\n", 
+                           *(uint64_t*) check_key.key,
+                           *(uint64_t*) (req->key.key));
 				d_stat.fp_collision_r++;
 
 				h_params->find = HASH_KEY_DIFF;
 				h_params->cnt++;
 
+                kfree(check_key.key);
                 a_req->need_retry = true;
                 return NULL;
 
@@ -1021,6 +1075,7 @@ void *demand_end_req(algo_req *a_req) {
 		if (IS_READ(req)) {
 			d_stat.t_write_on_read++;
 			req->type_ftl+=100;
+            free_algo_req(a_req);
             return NULL;
             //printk("Re-queuing read-type req in MAPPINGW.\n");
 			//insert_retry_read(req);

@@ -5,10 +5,6 @@
 #include "../include/settings.h"
 #include "virt_lower.h"
 
-void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
-                                    void* mem, ppa_t ppa, uint64_t len,
-                                    bool (*cb)(void*), void *args, bool);
-
 lower_info virt_info = {
 	.create=virt_create,
 	.destroy=virt_destroy,
@@ -197,9 +193,9 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
         }
     } else {
         //printk("Scheduling with req %p\n", req);
-        schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
-                value->value, PPA, size, 
-                (void*) req->end_req, (void*) req, true);
+        //schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
+        //        value->value, PPA, size, 
+        //        (void*) req->end_req, (void*) req, true);
     }
 
     if(req && req->need_retry) {

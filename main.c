@@ -22,6 +22,8 @@
 #include "simple_ftl.h"
 #include "kv_ftl.h"
 #include "dma.h"
+#include "demand/cache.h"
+#include "demand/demand.h"
 
 /****************************************************************
  * Memory Layout
@@ -330,7 +332,17 @@ static int __proc_file_read(struct seq_file *m, void *data)
 	} else if(strcmp(filename, "space") == 0) {
         seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
     } else if(strcmp(filename, "dstat") == 0) {
-        seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
+        char* dstat = get_demand_stat(&d_stat);
+        seq_printf(m, "%s", dstat);
+        kfree(dstat);
+
+        char* buf = (char*) kzalloc(4096, GFP_KERNEL);
+        get_cache_stat(buf);
+        seq_printf(m, "%s", buf);
+        kfree(buf);
+    } else if(strcmp(filename, "cleardstat") == 0) {
+        clear_demand_stat();
+        clear_cache_stat();
     }
 
 	return 0;
@@ -437,6 +449,8 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
 	nvmev_vdev->proc_stat = proc_create("stat", 0444, nvmev_vdev->proc_root, &proc_file_fops);
 	nvmev_vdev->proc_debug = proc_create("debug", 0444, nvmev_vdev->proc_root, &proc_file_fops);
     nvmev_vdev->proc_space = proc_create("space", 0664, nvmev_vdev->proc_root, &proc_file_fops);
+    nvmev_vdev->proc_space = proc_create("dstat", 0444, nvmev_vdev->proc_root, &proc_file_fops);
+    nvmev_vdev->proc_space = proc_create("cleardstat", 0664, nvmev_vdev->proc_root, &proc_file_fops);
 }
 
 void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
@@ -447,6 +461,8 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
 	remove_proc_entry("stat", nvmev_vdev->proc_root);
 	remove_proc_entry("debug", nvmev_vdev->proc_root);
     remove_proc_entry("space", nvmev_vdev->proc_root);
+    remove_proc_entry("dstat", nvmev_vdev->proc_root);
+    remove_proc_entry("cleardstat", nvmev_vdev->proc_root);
 
 	remove_proc_entry("nvmev", NULL);
 

@@ -250,14 +250,24 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define MDTS (6)
 #define CELL_MODE (CELL_MODE_MLC)
 
+//#define SSD_PARTITIONS (1)
+//#define NAND_CHANNELS (8)
+//#define LUNS_PER_NAND_CH (8)
+//#define PLNS_PER_LUN (1)
+//#define FLASH_PAGE_SIZE KB(32)
+//#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
+//#define BLKS_PER_PLN (0)
+//#define BLK_SIZE KB(64) /*BLKS_PER_PLN should not be 0 */
+//static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+
 #define SSD_PARTITIONS (1)
 #define NAND_CHANNELS (8)
 #define LUNS_PER_NAND_CH (8)
 #define PLNS_PER_LUN (1)
-#define FLASH_PAGE_SIZE KB(32)
+#define FLASH_PAGE_SIZE KB(8)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE KB(64) /*BLKS_PER_PLN should not be 0 */
+#define BLK_SIZE MB(2) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
@@ -266,13 +276,13 @@ static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 #define NAND_CHANNEL_BANDWIDTH (800ull) //MB/s
 #define PCIE_BANDWIDTH (3360ull) //MB/s
 
-#define NAND_4KB_READ_LATENCY_LSB (35760 - 6000) //ns
-#define NAND_4KB_READ_LATENCY_MSB (35760 + 6000) //ns
+#define NAND_4KB_READ_LATENCY_LSB (75000 * 2) //ns
+#define NAND_4KB_READ_LATENCY_MSB (75000 * 2) //ns
 #define NAND_4KB_READ_LATENCY_CSB (0) //not used
-#define NAND_READ_LATENCY_LSB (36013 - 6000)
-#define NAND_READ_LATENCY_MSB (36013 + 6000)
+#define NAND_READ_LATENCY_LSB (75000 * 2)
+#define NAND_READ_LATENCY_MSB (75000 * 2)
 #define NAND_READ_LATENCY_CSB (0) //not used
-#define NAND_PROG_LATENCY (185000)
+#define NAND_PROG_LATENCY (1300000 * 2)
 #define NAND_ERASE_LATENCY (0)
 
 #define FW_4KB_READ_LATENCY (21500)

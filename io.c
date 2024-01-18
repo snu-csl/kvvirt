@@ -77,7 +77,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
     bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
     bool delete = cmd->common.opcode == nvme_cmd_kv_delete;
-    //printk("In io_kv for a %s!\n", read ? "read" : "write");
 
     if(delete) {
         return 0;
@@ -145,7 +144,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else {
             NVMEV_DEBUG("Copying from %lu (key is %s)\n", offset, 
-                         (char*) (nvmev_vdev->ns[nsid].mapped + offset + sizeof(uint8_t)));
+                        (char*) (nvmev_vdev->ns[nsid].mapped + offset + sizeof(uint8_t)));
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
 		}
 
@@ -797,6 +796,8 @@ static int nvmev_io_worker(void *data)
 #endif
 				if (w->is_internal) {
                     if(w->cb) {
+                        NVMEV_ASSERT(w->args);
+                        w->cb(w->args);
                     }
 				} else if (io_using_dma) {
 					__do_perform_io_using_dma(w->sqid, w->sq_entry);

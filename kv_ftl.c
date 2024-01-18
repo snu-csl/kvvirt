@@ -65,7 +65,7 @@ static unsigned long long __schedule_io_units(int opcode, unsigned long lba, uns
 		(lba >> (nvmev_vdev->config.io_unit_shift - 9)) % nvmev_vdev->config.nr_io_units;
 	int nr_io_units = min(nvmev_vdev->config.nr_io_units, DIV_ROUND_UP(length, io_unit_size));
 
-    printk("LBA when scheduling this IO unit was %llu\n", lba);
+    printk("LBA when scheduling this IO unit was %lu\n", lba);
 
 	unsigned long long latest; /* Time of completion */
 	unsigned int delay = 0;

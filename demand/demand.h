@@ -226,6 +226,9 @@ struct demand_stat {
 	uint64_t fp_match_w;
 	uint64_t fp_collision_r;
 	uint64_t fp_collision_w;
+
+    uint64_t inv_w;
+    uint64_t inv_r;
 #endif
 
 };
@@ -245,6 +248,8 @@ uint64_t __demand_write(request *const);
 uint32_t __demand_remove(request *const);
 void *demand_end_req(algo_req*);
 
+void clear_demand_stat(void);
+char* get_demand_stat(struct demand_stat *const _stat);
 void print_demand_stat(struct demand_stat *const _stat);
 
 int range_create(void);
@@ -262,6 +267,7 @@ int invalidate_grain(blockmanager *, pga_t);
 #ifdef GC_STANDARD
 void __page_to_pte(value_set*, struct pt_struct*, uint64_t);
 #else
+void __page_to_ptes_wcmt(value_set *value, struct cmt_struct *cmt);
 void __page_to_ptes(value_set*, uint64_t, bool);
 #endif
 

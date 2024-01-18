@@ -67,7 +67,7 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 {
 	uint64_t blk_size, total_size;
 
-    capacity = 1024LU << 20;
+    capacity = capacity - (4096LU << 20);
 
 	spp->secsz = 512;
 	spp->secs_per_pg = 8;
@@ -201,6 +201,8 @@ static void ssd_init_nand_blk(struct nand_block *blk, struct ssdparams *spp)
 	}
 	blk->ipc = 0;
 	blk->vpc = 0;
+    blk->igc = 0;
+    blk->vgc = 0;
 	blk->erase_cnt = 0;
 	blk->wp = 0;
 }
