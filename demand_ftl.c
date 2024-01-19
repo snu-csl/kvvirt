@@ -533,6 +533,8 @@ extern struct algorithm __demand;
 extern struct lower_info virt_info;
 extern struct blockmanager pt_bm;
 
+char** wb_bufs;
+uint64_t wb_off;
 char **inv_mapping_bufs;
 uint64_t *inv_mapping_offs;
 
@@ -605,6 +607,12 @@ void demand_init(uint64_t size, struct ssd* ssd)
         for(int j = 0; j < GRAIN_PER_PAGE; j++) {
             oob[i][j] = 2;
         }
+    }
+
+    wb_off = 0;
+    wb_bufs = (char**) kzalloc(sizeof(char*) * MAX_WRITE_BUF, GFP_KERNEL);
+    for(int i = 0; i < MAX_WRITE_BUF; i++) {
+        wb_bufs[i] = (char*) kzalloc(spp->pgsz, GFP_KERNEL);
     }
 
     int temp[PARTNUM];
@@ -2334,99 +2342,6 @@ static bool is_same_flash_page(struct conv_ftl *conv_ftl, struct ppa ppa1, struc
 	return (ppa1.h.blk_in_ssd == ppa2.h.blk_in_ssd) && (ppa1_page == ppa2_page);
 }
 
-/*
- * If we find a KV pair in the write buffer, we copy the data directly
- * to the buffer provided by the user here. We can't do it later in
- * __do_perform_io_kv in io.c because that copies from virt's
- * reserved disk memory, on which KV pairs in the write buffer don't
- * exist yet.
- */
-
-static unsigned int __quick_copy(struct nvme_kv_command *cmd, void *buf, uint64_t buf_len)
-{
-	size_t offset;
-	size_t length, remaining;
-	int prp_offs = 0;
-	int prp2_offs = 0;
-	u64 paddr;
-	u64 *paddr_list = NULL;
-	size_t nsid = 0;  // 0-based
-
-    bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
-
-    nsid = 0;
-
-    if(read) {
-        offset = cmd->kv_retrieve.rsvd;
-        length = buf_len;
-    } else {
-        offset = cmd->kv_store.rsvd;
-        length = cmd->kv_store.value_len << 2;
-    }
-
-	remaining = length;
-    //printk("Length %lu\n", length);
-
-	while (remaining) {
-		size_t io_size;
-		void *vaddr;
-		size_t mem_offs = 0;
-
-		prp_offs++;
-		if (prp_offs == 1) {
-            if(read) {
-                paddr = cmd->kv_retrieve.dptr.prp1;
-            } else {
-                paddr = cmd->kv_store.dptr.prp1;
-            }
-		} else if (prp_offs == 2) {
-            if(read) {
-                paddr = cmd->kv_retrieve.dptr.prp2;
-            } else {
-                paddr = cmd->kv_store.dptr.prp2;
-            }
-			if (remaining > PAGE_SIZE) {
-				paddr_list = kmap_atomic_pfn(PRP_PFN(paddr)) +
-					     (paddr & PAGE_OFFSET_MASK);
-				paddr = paddr_list[prp2_offs++];
-			}
-		} else {
-			paddr = paddr_list[prp2_offs++];
-		}
-
-		vaddr = kmap_atomic_pfn(PRP_PFN(paddr));
-		io_size = min_t(size_t, remaining, PAGE_SIZE);
-
-		if (paddr & PAGE_OFFSET_MASK) {
-			mem_offs = paddr & PAGE_OFFSET_MASK;
-			if (io_size + mem_offs > PAGE_SIZE)
-				io_size = PAGE_SIZE - mem_offs;
-		}
-
-		if (!read) {
-            //printk("Quick copying for write key %s size %lu data %s!\n", 
-                    //cmd->kv_retrieve.key, io_size, (char*) buf);
-			memcpy(buf, vaddr + mem_offs, io_size);
-		} else {
-            //printk("Quick copying for read key %s size %lu data %s!\n", 
-                    //cmd->kv_retrieve.key, io_size, (char*) buf);
-			memcpy(vaddr + mem_offs, buf, io_size);
-		}
-
-		kunmap_atomic(vaddr);
-
-		remaining -= io_size;
-		offset += io_size;
-	}
-
-	if (paddr_list != NULL)
-		kunmap_atomic(paddr_list);
-
-    //printk("Done\n");
-	return length;
-}
-
-
 bool end_w(struct request *req) 
 {
     return true;
@@ -2582,6 +2497,12 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     struct request d_req;
     KEYT key;
 
+    /*
+     * Haven't done this the new way yet.
+     */
+
+    BUG_ON(true);
+
     memset(&d_req, 0x0, sizeof(d_req));
 
     d_req.ssd = conv_ftl->ssd;
@@ -2602,8 +2523,8 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     key.len = klen;
     d_req.key = key;
 
-    //NVMEV_INFO("Read for key %s (%llu) klen %u vlen %u\n", 
-    //            key.key, *(uint64_t*) key.key, klen, vlen);
+    NVMEV_DEBUG("Read for key %s (%llu) klen %u vlen %u\n", 
+                key.key, *(uint64_t*) key.key, klen, vlen);
 
     if(!strncmp(key.key, "LOG", 3)) {
         uint64_t bid = *(uint64_t*) (key.key + 4);
@@ -2622,43 +2543,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     d_req.end_req = &end_r;
     d_req.cmd = cmd;
     nsecs_latest = nsecs_xfer_completed = __demand.read(&d_req);
-
-    //printk("Demand passed for key %s len %u data %s\n", key.key, key.len, (char*) value->value);
-
-    //if ((cmd->rw.control & NVME_RW_FUA) || (spp->write_early_completion == 0)) {
-    //    /* Wait all flash operations */
-    ret->nsecs_target = nsecs_latest;
-    //} else {
-    //    /* Early completion */
-    //    ret->nsecs_target = nsecs_xfer_completed;
-    //}
- 
-    if(d_req.ppa != UINT_MAX && d_req.ppa != UINT_MAX - 1) {
-        cmd->kv_retrieve.rsvd = 
-        (G_IDX(d_req.ppa) * (uint64_t) spp->pgsz) + (G_OFFSET(d_req.ppa) * GRAINED_UNIT);
-        NVMEV_DEBUG("%s switching ppa to offset %llu\n", __func__, cmd->kv_retrieve.rsvd);
-    } else {
-        cmd->kv_retrieve.rsvd = d_req.ppa;
-    }
-    //printk("Storing ppa %u\n", d_req.ppa);
-
-    if (d_req.ppa == UINT_MAX - 1) {
-        __quick_copy(cmd, value->value, value->length);
-    }
-
-    if(d_req.ppa == UINT_MAX) {
-        NVMEV_INFO("NOT_EXIST for key %s len %u\n", key.key, key.len);
-
-        if(key.key[0] == 'L') {
-            NVMEV_DEBUG("NOT_EXIST Log key. Bid %u log num %u\n", 
-                    *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
-        }
-
-        ret->status = KV_ERR_KEY_NOT_EXIST;
-    } else {
-        ret->nsecs_target = nsecs_latest;
-        ret->status = NVME_SC_SUCCESS;
-    }
 
     kfree(value->value);
     kfree(value);
@@ -2683,6 +2567,14 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
  * __do_perform_io later.
  */
 
+char* __get_wb_buf(void) {
+    char* ret = wb_bufs[wb_off++];
+    if(wb_off == MAX_WRITE_BUF) {
+        wb_off = 0;
+    }
+    return ret;
+}
+
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, 
                        struct nvmev_result *ret, bool internal)
 {
@@ -2697,14 +2589,14 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 	uint64_t nsecs_latest;
 	uint64_t nsecs_xfer_completed;
 
-    struct request d_req;
+    struct request *d_req;
     KEYT key;
 
-    memset(&d_req, 0x0, sizeof(d_req));
-
-    d_req.ssd = conv_ftl->ssd;
-    d_req.req = req;
-    d_req.hash_params = NULL;
+    d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
+    d_req->ssd = conv_ftl->ssd;
+    d_req->req = req;
+    d_req->hash_params = NULL;
+    d_req->cmd = cmd;
 
     uint8_t klen = cmd_key_length(*cmd);
     uint32_t vlen = cmd_value_length(*cmd);
@@ -2721,52 +2613,35 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     memcpy(key.key, cmd->kv_store.key, klen);
     key.key[klen] = '\0';
     key.len = klen;
-    d_req.key = key;
+    d_req->key = key;
 
-    //NVMEV_INFO("Write for key %s (%llu) klen %u vlen %u\n", 
-    //            key.key, *(uint64_t*) (key.key), klen, vlen);
+    NVMEV_DEBUG("Write for key %s (%llu) klen %u vlen %u\n", 
+                key.key, *(uint64_t*) (key.key), klen, vlen);
 
     struct value_set *value;
     value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
     value->value = (char*)kzalloc(spp->pgsz, GFP_KERNEL);
     value->ssd = conv_ftl->ssd;
     value->length = vlen;
-    d_req.value = value;
-    d_req.end_req = &end_w;
-    d_req.sqid = req->sq_id;
+    d_req->value = value;
+    d_req->end_req = &end_w;
+    d_req->sqid = req->sq_id;
 
     NVMEV_ASSERT(value->value);
 
-    //if(!internal) {
-    //    __quick_copy(cmd, value->value, value->length);
-    //} else {
-    //    memcpy(value->value, (void*) cmd->kv_store.dptr.prp1, value->length);
-    //}
+    schedule_internal_operation_cb(req->sq_id, 0,
+                                   (void*) cmd->kv_store.dptr.prp1, 0,
+                                   value->length, (void*) __demand.write, 
+                                   (void*) d_req, false);
 
-    nsecs_latest = nsecs_xfer_completed = __demand.write(&d_req);
-
-	//if ((cmd->rw.control & NVME_RW_FUA) || (spp->write_early_completion == 0)) {
-	//	/* Wait all flash operations */
-	ret->nsecs_target = nsecs_latest;
-	//} else {
-	//	/* Early completion */
-	//	ret->nsecs_target = nsecs_xfer_completed;
-	//}
-    
     /*
-     * write() puts the KV pair in the memory buffer, which is flushed to
-     * disk at a later time.
+     * This write shouldn't complete until __demand.write has completed,
+     * so we give it a high timestamp.
      *
-     * We set rsvd to UINT_MAX here so that in __do_perform_io_kv we skip
-     * a memory copy to virt's reserved disk memory (since this KV pair isn't
-     * actually on the disk yet).
-     *
-     * Even if this pair causes a flush of the write buffer, that's done 
-     * asynchronously and the copy to virt's reserved disk memory happens
-     * in nvmev_io_worker().
+     * Won't work if you're using this code sometime in the year 2554.
      */
-    
-    cmd->kv_store.rsvd = 100000;
+
+	ret->nsecs_target = U64_MAX;
 	ret->status = NVME_SC_SUCCESS;
 
 	return true;
@@ -2788,6 +2663,12 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
 
     struct request d_req;
     KEYT key;
+
+    /*
+     * Haven't done this the new way yet.
+     */
+
+    BUG_ON(true);
 
     memset(&d_req, 0x0, sizeof(d_req));
 
@@ -2838,8 +2719,7 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
     d_req.end_req = &end_w;
     d_req.sqid = req->sq_id;
 
-    __quick_copy(cmd, d_req.target_buf, vlen);
-    nsecs_latest = nsecs_xfer_completed = __demand.append(&d_req);
+    //nsecs_latest = nsecs_xfer_completed = __demand.append(&d_req);
 
     if(d_req.ppa == UINT_MAX - 3) {
         /*
@@ -2919,8 +2799,14 @@ static bool conv_batch(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
     uint32_t remaining = cmd_value_length(*cmd);
     KEYT key;
 
+    /*
+     * Not updated for new design yet.
+     */
+
+    BUG_ON(true);
+
     char* value = (char*) kzalloc(remaining, GFP_KERNEL);
-    __quick_copy(cmd, value, remaining);
+    //__quick_copy(cmd, value, remaining);
     
     while(remaining > 0) {
         klen = *(uint8_t*) value + offset;

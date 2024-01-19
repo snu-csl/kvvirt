@@ -505,7 +505,7 @@ void schedule_internal_operation_withcopy(int sqid, unsigned long long nsecs_tar
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
                                     void* mem, uint64_t ppa, uint64_t len,
-                                    bool (*cb)(void*), void *args, bool read)
+                                    uint64_t (*cb)(void*), void *args, bool read)
 {
 	struct nvmev_io_worker *worker;
 	struct nvmev_io_work *w;
@@ -518,7 +518,7 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 
 	w = worker->work_queue + entry;
 
-	NVMEV_INFO("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
+	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
 		    local_clock(), nsecs_target - local_clock());
 
 	/////////////////////////////////
@@ -531,8 +531,6 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 	w->next = -1;
     w->cb = cb;
     w->args = args;
-
-    printk("Set args to %p work %p\n", args, w);
 
     w->read = read;
     w->mem = mem;
@@ -795,10 +793,12 @@ static int nvmev_io_worker(void *data)
 				w->nsecs_copy_start = local_clock() + delta;
 #endif
 				if (w->is_internal) {
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
                     if(w->cb) {
                         NVMEV_ASSERT(w->args);
-                        w->cb(w->args);
+                        w->nsecs_target = w->cb(w->args);
                     }
+#endif
 				} else if (io_using_dma) {
 					__do_perform_io_using_dma(w->sqid, w->sq_entry);
 				} else {

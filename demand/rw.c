@@ -860,56 +860,27 @@ uint64_t __demand_write(request *const req) {
 
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
-        BUG_ON(true);
 		/* assign ppa first */
         
-        uint64_t start = ktime_get_ns();
         nsecs_completed = _do_wb_assign_ppa(wb);
         nsecs_latest = nsecs_completed;
-        uint64_t end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_assign_ppa took %uns\n", end - start);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
-        start = ktime_get_ns();
 		nsecs_completed = _do_wb_mapping_update(wb, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-        end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_mapping_update took %uns\n", end - start);
 		
 		/* flush the buffer */
-        start = ktime_get_ns();
 		nsecs_latest = _do_wb_flush(wb, credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = d_member.write_buffer =  skiplist_init();
-        end = ktime_get_ns();
-        NVMEV_DEBUG("_do_wb_flush took %uns\n", end - start);
-        NVMEV_DEBUG("Assigned new WB.\n");
-
-        //NVMEV_INFO("%u pages this flush. %lu pgs_per_line.", 
-        //            pgs_this_flush, spp->pgs_per_line);
     }
 
-    pgs_this_flush = 0;
-
-    ////printk("Advancing WB %u start %u length.\n", nsecs_start, length);
-
 	/* default: insert to the buffer */
-	//rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
+	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
    
     nsecs_completed =
     ssd_advance_write_buffer(req->ssd, nsecs_start, length);
 
-    struct wb_insert_args *args = 
-    (struct wb_insert_args*) kzalloc(sizeof(*args), GFP_KERNEL);
-    args->wb = wb;
-    args->req = req;
-
-    schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed,
-                                   (void*) req->cmd->kv_store.dptr.prp1, 0,
-                                   req->value->length, (void*) _do_wb_insert_cb, 
-                                   args, false);
-
-    //printk("%u %u\n", nsecs_completed, nsecs_latest);
     nsecs_latest = max(nsecs_completed, nsecs_latest);
 
 	req->end_req(req);

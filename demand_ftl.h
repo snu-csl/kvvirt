@@ -36,6 +36,14 @@
 
 extern struct conv_ftl *ftl;
 
+/*
+ * A set of buffers that are always around for
+ * copies to the write buffer.
+ */
+
+extern char** wb_bufs;
+extern uint64_t wb_off;
+
 typedef enum {
 	// generic command status
 	KV_SUCCESS = 0, // success

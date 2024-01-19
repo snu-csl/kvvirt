@@ -192,7 +192,7 @@ struct nvmev_io_work {
     void* mem;
     unsigned long long ppa;
 
-    bool (*cb)(void*);
+    uint64_t (*cb)(void*);
     void* args;
 
     /* Internal copy parameters end */
@@ -321,5 +321,5 @@ void nvmev_proc_io_cq(int qid, int new_db, int old_db);
 // CALLBACKS
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
                                     void* mem, uint64_t ppa, uint64_t len,
-                                    bool (*cb)(void*), void *args, bool read);
+                                    uint64_t (*cb)(void*), void *args, bool read);
 #endif /* _LIB_NVMEV_H */
