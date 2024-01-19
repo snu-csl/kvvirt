@@ -23,25 +23,6 @@ struct conv_ftl *ftl;
 
 bool FAIL_MODE = false;
 
-void __hash_remove(lpa_t lpa) {
-    return;
-    struct ht_mapping *cur = NULL;
-    bool found = false;
-
-    hash_for_each_possible(mapping_ht, cur, node, lpa) {
-        found = true;
-        cur = cur;
-        hash_del(&cur->node);
-    }
-
-    //if(cur) {
-    //    NVMEV_ERROR("Removing old LPA PPA mapping %u %u\n",
-    //            cur->lpa, cur->ppa);
-    //    hash_del(&cur->node);
-    //}
-    NVMEV_ASSERT(found);
-}
-
 void d_set_oob(lpa_t lpa, ppa_t ppa, uint64_t offset, uint32_t len) {
     BUG_ON(!oob);
 
@@ -52,15 +33,6 @@ void d_set_oob(lpa_t lpa, ppa_t ppa, uint64_t offset, uint32_t len) {
     for(int i = 1; i < len; i++) {
         oob[ppa][offset + i] = 0;
     }
-}
-
-void print_oob(ppa_t ppa) {
-    return;
-    NVMEV_DEBUG("OOB for PPA %u is: \n", ppa);
-    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        NVMEV_DEBUG("%u ", oob[ppa][i]);
-    }
-    NVMEV_DEBUG("\n");
 }
 
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
@@ -83,18 +55,6 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 
 static uint32_t do_wb_delete(skiplist *wb, request *const req) {
     NVMEV_ASSERT(!skiplist_delete(wb, req->key));
-	//snode *wb_entry = skiplist_delete(wb, req->key);
-	//if (WB_HIT(wb_entry)) {
-	//	d_stat.wb_hit++;
-//#ifdef HASH_KVSSD
-	//	kfree(req->hash_params);
-//#endif
-    //    copy_value(req->value, wb_entry->value, wb_entry->value->length * GRAINED_UNIT);
-	//	req->type_ftl = 0;
-	//	req->type_lower = 0;
-    //    req->value->length = wb_entry->value->length * GRAINED_UNIT;
-	//	return 1;
-	//}
 	return 0;
 }
 
@@ -412,7 +372,7 @@ uint32_t cnt = 0;
 static bool _do_wb_assign_ppa(skiplist *wb) {
 	blockmanager *bm = __demand.bm;
 	struct flush_list *fl = d_member.flush_list;
-    struct ssdparams spp = d_member.ssd->sp;
+    struct ssdparams *spp = &d_member.ssd->sp;
 
 	snode *wb_entry;
 	sk_iter *iter = skiplist_get_iterator(wb);
@@ -434,9 +394,10 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 
 	int ordering_done = 0;
 	while (ordering_done < d_env.wb_flush_size) {
-		value_set *new_vs = inf_get_valueset(NULL, FS_MALLOC_W, spp.pgsz);
+		struct value_set *new_vs = get_vs(spp);
+
 		PTR page = new_vs->value;
-		int remain = spp.pgsz;
+		int remain = spp->pgsz;
         uint32_t credits = 0;
 
         struct ppa ppa_s = get_new_page(ftl, USER_IO);
@@ -497,7 +458,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
                         *(uint64_t*) (wb_entry->value->value + sizeof(uint8_t)),
                         ppa, wb_entry->ppa);
 
-			inf_free_valueset(wb_entry->value, FS_MALLOC_W);
+            put_vs(wb_entry->value);
 			wb_entry->value = NULL;
 
 			//validate_grain(bm, wb_entry->ppa);
@@ -703,8 +664,6 @@ wb_update:
         NVMEV_INFO("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 		pte = d_cache->get_pte(lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
-            __hash_remove(lpa);
-
             uint64_t offset = G_OFFSET(pte.ppa);
             uint32_t len = 1;
             while(offset + len < GRAIN_PER_PAGE && oob[G_IDX(pte.ppa)][offset + len] == 0) {
@@ -746,9 +705,7 @@ wb_direct_update:
 #ifdef HASH_KVSSD
 		d_member.max_try = (h_params->cnt > d_member.max_try) ? h_params->cnt : d_member.max_try;
 		hash_collision_logging(h_params->cnt, DWRITE);
-
 		d_set_oob(lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa), wb_entry->len);
-        print_oob(G_IDX(new_pte.ppa));
 #endif
 	}
 
@@ -861,7 +818,6 @@ uint64_t __demand_write(request *const req) {
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
 		/* assign ppa first */
-        
         nsecs_completed = _do_wb_assign_ppa(wb);
         nsecs_latest = nsecs_completed;
 
@@ -1011,8 +967,7 @@ void *demand_end_req(algo_req *a_req) {
 	case DATAW:
 		d_stat.data_w++;
 		d_stat.d_write_on_write++;
-
-		inf_free_valueset(d_params->value, FS_MALLOC_W);
+        put_vs(d_params->value);
 #ifndef DVALUE
 		kfree(wb_entry->hash_params);
 #endif

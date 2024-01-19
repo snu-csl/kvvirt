@@ -533,8 +533,9 @@ extern struct algorithm __demand;
 extern struct lower_info virt_info;
 extern struct blockmanager pt_bm;
 
-char** wb_bufs;
-uint64_t wb_off;
+struct kmem_cache *vs_cache;
+struct kmem_cache *page_cache;
+
 char **inv_mapping_bufs;
 uint64_t *inv_mapping_offs;
 
@@ -609,11 +610,10 @@ void demand_init(uint64_t size, struct ssd* ssd)
         }
     }
 
-    wb_off = 0;
-    wb_bufs = (char**) kzalloc(sizeof(char*) * MAX_WRITE_BUF, GFP_KERNEL);
-    for(int i = 0; i < MAX_WRITE_BUF; i++) {
-        wb_bufs[i] = (char*) kzalloc(spp->pgsz, GFP_KERNEL);
-    }
+    vs_cache = kmem_cache_create("vs_cache", sizeof(struct value_set), 0, 
+                                  SLAB_POISON, NULL);
+    page_cache = kmem_cache_create("page_cache", spp->pgsz, spp->pgsz, 
+                                  SLAB_POISON, NULL);
 
     int temp[PARTNUM];
     temp[MAP_S] = spp->tt_map_pgs;
@@ -2567,14 +2567,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
  * __do_perform_io later.
  */
 
-char* __get_wb_buf(void) {
-    char* ret = wb_bufs[wb_off++];
-    if(wb_off == MAX_WRITE_BUF) {
-        wb_off = 0;
-    }
-    return ret;
-}
-
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, 
                        struct nvmev_result *ret, bool internal)
 {
@@ -2619,8 +2611,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
                 key.key, *(uint64_t*) (key.key), klen, vlen);
 
     struct value_set *value;
-    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = (char*)kzalloc(spp->pgsz, GFP_KERNEL);
+    value = get_vs(spp);
     value->ssd = conv_ftl->ssd;
     value->length = vlen;
     d_req->value = value;

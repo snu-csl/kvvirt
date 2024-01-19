@@ -256,6 +256,9 @@ int range_create(void);
 uint32_t demand_range_query(request *const);
 bool range_end_req(request *);
 
+struct value_set* get_vs(struct ssdparams *spp);
+void put_vs(struct value_set *vs);
+
 #ifdef DVALUE
 int grain_create(void);
 int is_valid_grain(pga_t);

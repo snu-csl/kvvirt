@@ -4,8 +4,10 @@
 #define _NVMEVIRT_CONV_FTL_H
 
 #include <linux/hashtable.h> 
-#include <linux/types.h>
+#include <linux/slab.h>
+#include <linux/slub_def.h>
 #include <linux/spinlock.h>
+#include <linux/types.h>
 #include <linux/xarray.h>
 
 #include "demand/d_type.h"
@@ -35,14 +37,8 @@
  */
 
 extern struct conv_ftl *ftl;
-
-/*
- * A set of buffers that are always around for
- * copies to the write buffer.
- */
-
-extern char** wb_bufs;
-extern uint64_t wb_off;
+extern struct kmem_cache *vs_cache;
+extern struct kmem_cache *page_cache;
 
 typedef enum {
 	// generic command status
