@@ -2636,11 +2636,16 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 
     /*
      * This write shouldn't complete until __demand.write has completed,
-     * so we give it a high timestamp.
+     * so we give it a high timestamp. We use the rsvd field for now
+     * to specify where to copy from on the disk for reads. We copy
+     * the value for this write on the worker thread scheduled above,
+     * so we don't do the copy this time. Set rsvd to UINT_MAX so the
+     * copy is skipped.
      *
      * Won't work if you're using this code sometime in the year 2554.
      */
 
+    cmd->kv_store.rsvd = UINT_MAX;
 	ret->nsecs_target = U64_MAX;
 	ret->status = NVME_SC_SUCCESS;
 
