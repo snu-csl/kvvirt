@@ -98,7 +98,7 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
     BUG_ON(!value);
 
     struct ssdparams *spp = (struct ssdparams*) &value->ssd->sp;
-    uint64_t nsecs_completed, nsecs_latest;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0;
     struct ppa ppa;
 
     uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
@@ -108,11 +108,6 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
     //printk("Caller is %pS\n", __builtin_return_address(0));
     //printk("Caller is %pS\n", __builtin_return_address(1));
     //printk("Caller is %pS\n", __builtin_return_address(2));
-
-    if(off >= (64000LU << 20)) {
-        NVMEV_ERROR("PPA %u\n", PPA);
-        BUG_ON(off >= (64000LU << 20));
-    }
 
     memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
 
@@ -177,37 +172,20 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
     swr.ppa = &ppa;
     nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
 
-    if(off >= (64000LU << 20)) {
-        NVMEV_ERROR("PPA %u\n", PPA);
-        BUG_ON(off >= (64000LU << 20));
+    BUG_ON(!value);
+    BUG_ON(!value->value);
+
+    memcpy(value->value, nvmev_vdev->ns[0].mapped + off, size);
+
+    if(req) {
+        req->end_req(req);
     }
 
-    //printk("Advanced nand PPA %u\n", PPA);
-    if(!async) {
-        BUG_ON(!value);
-        BUG_ON(!value->value);
-
-        memcpy(value->value, nvmev_vdev->ns[0].mapped + off, size);
-        if(req) {
-            req->end_req(req);
-        }
-    } else {
-        //printk("Scheduling with req %p\n", req);
-        //schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
-        //        value->value, PPA, size, 
-        //        (void*) req->end_req, (void*) req, true);
+    if(req && !req->need_retry) {
+        kfree(req->params);
     }
 
-    if(req && req->need_retry) {
-        kfree(req);
-        return UINT_MAX - 1;
-    } else {
-        if(req) {
-            kfree(req->params);
-            kfree(req);
-        }
-        return nsecs_completed;
-    }
+    return nsecs_completed;
 }
 
 void *virt_trim_block(ppa_t PPA, bool async){

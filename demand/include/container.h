@@ -1,6 +1,7 @@
 #ifndef __H_CONTAINER__
 #define __H_CONTAINER__
  
+#include "../../nvme_kv.h"
 #include "../../nvmev.h"
 #include "../../ssd.h"
 #include "settings.h"
@@ -82,7 +83,7 @@ struct request {
 	struct request *parents;
 
     /* NVMeVirt */
-    struct nvmev_request *req;
+    uint64_t nsecs_start;
     struct ssd *ssd;
     uint64_t sqid;
     struct nvme_kv_command *cmd;

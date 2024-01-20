@@ -811,7 +811,8 @@ static struct hash_params *make_hash_params(request *const req) {
 #endif
 
 uint32_t demand_read(request *const req){
-	uint32_t rc;
+	uint64_t rc;
+    uint64_t local;
 	mutex_lock(&d_member.op_lock);
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
@@ -824,6 +825,32 @@ uint32_t demand_read(request *const req){
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
 	}
+
+    /*
+     * Why put copies within the lock? Later, the plan is to
+     * stop memcpying so much data for writes and reads,
+     * and instead just give pointers to virt's reserved memory.
+     * We therefore keep copies inside the lock so the memory
+     * isn't modified while we're copying.
+     */
+
+    if(req->ppa == UINT_MAX - 1) {
+        /*
+         * Hit in the write buffer. Copy from the allocated DRAM
+         * buffer instead of from virt's reserved memory (disk).
+         */
+
+        struct nvme_kv_command *cmd = req->cmd;
+        __buf_copy(cmd, req->value->value, req->value->length);
+    }
+
+    local = local_clock();
+    rc = max(rc, local);
+
+    put_vs(req->value);
+    kfree(req->key.key);
+    kfree(req);
+
 	mutex_unlock(&d_member.op_lock);
 	return rc;
 }
@@ -833,11 +860,13 @@ uint64_t demand_write(request *const req) {
         return 0;
     }
 
+	uint64_t rc;
+    uint64_t local;
+	mutex_lock(&d_member.op_lock);
+
     struct nvme_kv_command *cmd = req->cmd;
     __buf_copy(cmd, req->value->value, req->value->length);
 
-	uint32_t rc;
-	mutex_lock(&d_member.op_lock);
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
 		d_stat.write_req_cnt++;
@@ -845,6 +874,10 @@ uint64_t demand_write(request *const req) {
 	}
 #endif
 	rc = __demand_write(req);
+
+    local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
+    rc = max(rc, local);
+
 	mutex_unlock(&d_member.op_lock);
 	return rc;
 }

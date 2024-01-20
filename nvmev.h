@@ -40,7 +40,6 @@
 #define NVMEV_DEBUG_VERBOSE(string, args...)
 #endif
 
-
 #define NR_MAX_IO_QUEUE 72
 #define NR_MAX_PARALLEL_IO 16384
 

@@ -469,40 +469,6 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 	__insert_req_sorted(entry, worker, nsecs_target);
 }
 
-void schedule_internal_operation_withcopy(int sqid, unsigned long long nsecs_target,
-                                          struct buffer *write_buffer, size_t buffs_to_release,
-                                          uint64_t from, uint64_t to)
-{
-	struct nvmev_io_worker *worker;
-	struct nvmev_io_work *w;
-	unsigned int entry;
-
-	worker = __allocate_work_queue_entry(sqid, &entry);
-	if (!worker)
-		return;
-
-	w = worker->work_queue + entry;
-
-	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
-		    local_clock(), nsecs_target - local_clock());
-
-	/////////////////////////////////
-	w->sqid = sqid;
-	w->nsecs_start = w->nsecs_enqueue = local_clock();
-	w->nsecs_target = nsecs_target;
-	w->is_completed = false;
-	w->is_copied = true;
-	w->prev = -1;
-	w->next = -1;
-
-	w->is_internal = true;
-	w->write_buffer = write_buffer;
-	w->buffs_to_release = buffs_to_release;
-	mb(); /* IO worker shall see the updated w at once */
-
-	__insert_req_sorted(entry, worker, nsecs_target);
-}
-
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
                                     void* mem, uint64_t ppa, uint64_t len,
                                     uint64_t (*cb)(void*), void *args, bool read)
@@ -523,8 +489,8 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 
 	/////////////////////////////////
 	w->sqid = sqid;
-	w->nsecs_start = w->nsecs_enqueue = local_clock();
-	w->nsecs_target = nsecs_target;
+	w->nsecs_start = w->nsecs_enqueue = __get_wallclock();
+	w->nsecs_target = w->nsecs_start + 1;
 	w->is_completed = false;
 	w->is_copied = false;
 	w->prev = -1;
@@ -637,6 +603,7 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	prev_clock2 = local_clock();
 #endif
 
+    BUG_ON(nsecs_start < 1000000);
 	__enqueue_io_req(sqid, sq->cqid, sq_entry, nsecs_start, &ret);
 
 #ifdef PERF_DEBUG

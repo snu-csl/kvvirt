@@ -2389,8 +2389,8 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct n
     memset(&d_req, 0x0, sizeof(d_req));
 
     d_req.ssd = conv_ftl->ssd;
-    d_req.req = req;
     d_req.hash_params = NULL;
+    d_req.nsecs_start = req->nsecs_start;
 
     key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
 
@@ -2454,28 +2454,18 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct n
 
 bool end_r(struct request *req) 
 {
+    struct ssdparams *spp = &req->ssd->sp;
     if(req->ppa == UINT_MAX) {
+        req->cmd->kv_retrieve.rsvd = UINT_MAX;
         req->ppa = UINT_MAX;
         return false;
     }
 
-    //uint32_t real_vlen = 
-    //    *(uint32_t*) ((uint8_t*) req->value->value + req->key.len + sizeof(uint8_t));
+    uint64_t ppa = G_IDX(req->ppa);
+    uint16_t off = G_OFFSET(req->ppa);
+
+    req->cmd->kv_retrieve.rsvd = ppa + (off * GRAINED_UNIT);
     req->cmd->kv_retrieve.value_len = req->value->length;
-    NVMEV_DEBUG("Set value length to %u for key %s\n", 
-                req->value->length, req->cmd->kv_retrieve.key);
-
-    //NVMEV_ERROR("2 Got a real VLEN of %u (%u %lu %lu)\n", 
-    //        real_vlen, req->key.len, sizeof(uint8_t), sizeof(uint32_t));
-
-    if(req->ppa == UINT_MAX - 1) {
-        return true;
-    }
-
-    uint64_t pgsz = req->ssd->sp.pgsz;
-    uint32_t prev = req->ppa;
-    //req->ppa = (G_IDX(req->ppa) * pgsz) + (G_OFFSET(req->ppa) * GRAINED_UNIT);
-    //NVMEV_INFO("%s switching ppa %u to offset %u\n", __func__, prev, req->ppa);
 
     return true;
 }
@@ -2494,23 +2484,14 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     uint64_t nsecs_latest;
     uint64_t nsecs_xfer_completed;
 
-    struct request d_req;
+    struct request *d_req;
     KEYT key;
 
-    /*
-     * Haven't done this the new way yet.
-     */
-
-    BUG_ON(true);
-
-    memset(&d_req, 0x0, sizeof(d_req));
-
-    d_req.ssd = conv_ftl->ssd;
-    d_req.req = req;
-    d_req.hash_params = NULL;
-
-    BUG_ON(!cmd->kv_retrieve.key);
-    BUG_ON(!cmd);
+    d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
+    d_req->ssd = conv_ftl->ssd;
+    d_req->nsecs_start = req->nsecs_start;
+    d_req->hash_params = NULL;
+    d_req->cmd = cmd;
 
     uint8_t klen = cmd_key_length(tmp);
     uint32_t vlen = cmd_value_length(*cmd);
@@ -2518,10 +2499,15 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     key.key = NULL;
     key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
 
+    NVMEV_ASSERT(key.key);
+    NVMEV_ASSERT(cmd->kv_store.key);
+    NVMEV_ASSERT(cmd);
+    NVMEV_ASSERT(vlen > klen);
+
     memcpy(key.key, cmd->kv_retrieve.key, klen);
     key.key[klen] = '\0';
     key.len = klen;
-    d_req.key = key;
+    d_req->key = key;
 
     NVMEV_DEBUG("Read for key %s (%llu) klen %u vlen %u\n", 
                 key.key, *(uint64_t*) key.key, klen, vlen);
@@ -2535,18 +2521,22 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     memset(read_buf, 0x0, 4096);
 
     struct value_set *value;
-    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = kzalloc(4096, GFP_KERNEL); // read_buf;
+    value = get_vs(spp);
     value->ssd = conv_ftl->ssd;
     value->length = vlen;
-    d_req.value = value;
-    d_req.end_req = &end_r;
-    d_req.cmd = cmd;
-    nsecs_latest = nsecs_xfer_completed = __demand.read(&d_req);
+    d_req->value = value;
+    d_req->end_req = &end_r;
+    d_req->sqid = req->sq_id;
 
-    kfree(value->value);
-    kfree(value);
-    kfree(key.key);
+    schedule_internal_operation_cb(req->sq_id, 0,
+                                   (void*) cmd->kv_store.dptr.prp1, 0,
+                                   value->length, (void*) __demand.read, 
+                                   (void*) d_req, false);
+
+    cmd->kv_store.rsvd = UINT_MAX;
+	ret->nsecs_target = U64_MAX;
+	ret->status = NVME_SC_SUCCESS;
+
     return true;
 }
 
@@ -2586,7 +2576,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
     d_req->ssd = conv_ftl->ssd;
-    d_req->req = req;
+    d_req->nsecs_start = req->nsecs_start;
     d_req->hash_params = NULL;
     d_req->cmd = cmd;
 
@@ -2596,10 +2586,9 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     key.key = NULL;
     key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
 
-    BUG_ON(!key.key);
-    BUG_ON(!cmd->kv_store.key);
-    BUG_ON(!cmd);
-
+    NVMEV_ASSERT(key.key);
+    NVMEV_ASSERT(cmd->kv_store.key);
+    NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(vlen > klen);
 
     memcpy(key.key, cmd->kv_store.key, klen);
@@ -2607,8 +2596,9 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     key.len = klen;
     d_req->key = key;
 
-    NVMEV_DEBUG("Write for key %s (%llu) klen %u vlen %u\n", 
-                key.key, *(uint64_t*) (key.key), klen, vlen);
+    NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u cmd %p req %p\n", 
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                klen, vlen, cmd, req);
 
     struct value_set *value;
     value = get_vs(spp);
@@ -2618,6 +2608,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     d_req->end_req = &end_w;
     d_req->sqid = req->sq_id;
 
+    NVMEV_ASSERT(value);
     NVMEV_ASSERT(value->value);
 
     schedule_internal_operation_cb(req->sq_id, 0,
@@ -2669,8 +2660,8 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
     memset(&d_req, 0x0, sizeof(d_req));
 
     d_req.ssd = conv_ftl->ssd;
-    d_req.req = req;
     d_req.hash_params = NULL;
+    d_req.nsecs_start = req->nsecs_start;
 
     uint8_t klen = cmd_key_length(tmp);
     uint32_t vlen = cmd_value_length(*cmd);

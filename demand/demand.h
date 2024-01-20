@@ -19,6 +19,7 @@
 #include "./include/data_struct/lru_list.h"
 
 #include <linux/highmem.h>
+#include <linux/sched/clock.h>
 #include <linux/vmalloc.h>
 
 extern uint64_t user_pgs_this_gc;

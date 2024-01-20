@@ -171,9 +171,11 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
         *nsecs_completed = nsecs;
     }
 
-    if(nsecs == UINT_MAX - 1) {
+    if(a_req->need_retry) {
+        kfree(a_req);
         return 1;
     } else {
+        kfree(a_req);
         return 0;
     }
 }
@@ -191,12 +193,14 @@ static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 #endif
     _value_dr_check->ssd = d_member.ssd;
 	nsecs_completed = __demand.li->read(ppa, spp.pgsz, _value_dr_check, ASYNC, a_req);
+
+    kfree(a_req);
 	return nsecs_completed;
 }
 
 uint64_t __demand_read(request *const req, bool for_del) {
 	uint64_t rc = 0;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = req->nsecs_start;
     uint64_t credits = 0;
 
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
@@ -261,7 +265,7 @@ read_retry:
             do_wb_delete(d_member.write_buffer, req);
         } else {
             nsecs_completed =
-            ssd_advance_pcie(req->ssd, req->req->nsecs_start, 1024);
+            ssd_advance_pcie(req->ssd, req->nsecs_start, 1024);
             req->end_req(req);
         }
         free_iparams(req, NULL);
@@ -312,7 +316,8 @@ data_read:
 	/* 3. read actual data */
     NVMEV_INFO("Got PPA %u for LPA %u\n", pte.ppa, lpa);
     rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
-    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : max(nsecs_latest, nsecs_completed);
+    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : 
+                   max(nsecs_latest, nsecs_completed);
 
     if(rc == UINT_MAX) {
         req->ppa = UINT_MAX;
@@ -656,7 +661,6 @@ wb_data_check:
 		/* data check is necessary before update */
 		nsecs_completed = read_for_data_check(pte.ppa, wb_entry);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-        //printk("%s passed data check for LPA %u\n", __func__, lpa);
 		continue;
 #endif
 
@@ -809,7 +813,7 @@ void* _do_wb_insert_cb(void *voidargs) {
 uint64_t __demand_write(request *const req) {
 	uint32_t rc = 0;
     uint64_t nsecs_latest = 0, nsecs_completed = 0;
-    uint64_t nsecs_start = req->req->nsecs_start;
+    uint64_t nsecs_start = req->nsecs_start;
     uint64_t length = req->value->length;
     uint64_t credits = 0;
 	skiplist *wb = d_member.write_buffer;
@@ -818,8 +822,7 @@ uint64_t __demand_write(request *const req) {
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
 		/* assign ppa first */
-        nsecs_completed = _do_wb_assign_ppa(wb);
-        nsecs_latest = nsecs_completed;
+        _do_wb_assign_ppa(wb);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
 		nsecs_completed = _do_wb_mapping_update(wb, &credits);
@@ -828,7 +831,7 @@ uint64_t __demand_write(request *const req) {
 		/* flush the buffer */
 		nsecs_latest = _do_wb_flush(wb, credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-        wb = d_member.write_buffer =  skiplist_init();
+        wb = d_member.write_buffer = skiplist_init();
     }
 
 	/* default: insert to the buffer */
