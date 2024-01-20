@@ -536,6 +536,11 @@ extern struct blockmanager pt_bm;
 struct kmem_cache *vs_cache;
 struct kmem_cache *page_cache;
 
+static void vs_ctor(void *obj) {
+    struct value_set *vs = (struct value_set*) obj;
+	memset(vs, 0x0, sizeof(*vs));
+}
+
 char **inv_mapping_bufs;
 uint64_t *inv_mapping_offs;
 
@@ -611,7 +616,7 @@ void demand_init(uint64_t size, struct ssd* ssd)
     }
 
     vs_cache = kmem_cache_create("vs_cache", sizeof(struct value_set), 0, 
-                                  SLAB_POISON, NULL);
+                                  SLAB_POISON, vs_ctor);
     page_cache = kmem_cache_create("page_cache", spp->pgsz, spp->pgsz, 
                                   SLAB_POISON, NULL);
 
@@ -2509,7 +2514,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     key.len = klen;
     d_req->key = key;
 
-    NVMEV_DEBUG("Read for key %s (%llu) klen %u vlen %u\n", 
+    printk("Read for key %s (%llu) klen %u vlen %u\n", 
                 key.key, *(uint64_t*) key.key, klen, vlen);
 
     if(!strncmp(key.key, "LOG", 3)) {

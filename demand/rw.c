@@ -149,6 +149,11 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
 	if (IS_INITIAL_PPA(ppa)) {
         //printk("%s IS_INITIAL_PPA failure.\n", __func__);
 		warn_notfound(__FILE__, __LINE__);
+        
+        if(nsecs_completed) {
+            *nsecs_completed = 0;
+        }
+
 		return UINT_MAX;
 	}
 
@@ -224,8 +229,6 @@ read_retry:
         req->value->length = 0;
         free_iparams(req, NULL);
         kfree(h_params);
-
-        printk("Exceeded max try of %d\n", d_member.max_try);
 
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
@@ -796,18 +799,6 @@ static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 
 	if (wb_is_full(wb)) return 1;
 	else return 0;
-}
-
-struct wb_insert_args {
-    skiplist *wb;
-    request *req;
-};
-
-void* _do_wb_insert_cb(void *voidargs) {
-    printk("In _do_wb_insert_cb.\n");
-    struct wb_insert_args *args = (struct wb_insert_args*) voidargs;
-    _do_wb_insert(args->wb, args->req);
-    return NULL;
 }
 
 uint64_t __demand_write(request *const req) {

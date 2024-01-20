@@ -271,11 +271,15 @@ struct value_set* get_vs(struct ssdparams *spp) {
     } else {
         memset(ret->value, 0x0, spp->pgsz);
     }
+
+    NVMEV_ASSERT(ret->value);
     return ret;
 }
 
 void put_vs(struct value_set *vs) {
-    return kmem_cache_free(vs_cache, vs);
+    kmem_cache_free(page_cache, vs->value);
+	memset(vs, 0x0, sizeof(*vs));
+    kmem_cache_free(vs_cache, vs);
 }
 
 static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf, 
@@ -821,7 +825,7 @@ uint32_t demand_read(request *const req){
 	}
 #endif
 	rc = __demand_read(req, false);
-	if (rc == UINT_MAX) {
+	if (req->ppa == UINT_MAX) {
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
 	}
