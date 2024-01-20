@@ -878,6 +878,8 @@ uint64_t demand_write(request *const req) {
     local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     rc = max(rc, local);
 
+    kfree(req);
+
 	mutex_unlock(&d_member.op_lock);
 	return rc;
 }
