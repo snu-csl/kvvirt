@@ -15,12 +15,15 @@ struct demand_cache *select_cache(struct demand_shard *shard, cache_t type) {
 	 * This Fucntion returns selected cache module pointer with create() it
 	 */
 
+    NVMEV_ASSERT(false);
+
 	switch (type) {
 	case COARSE_GRAINED:
         NVMEV_ASSERT(false);
 		//ret = &cg_cache;
 		break;
 	case OLD_COARSE_GRAINED:
+        printk("Trying ID %llu\n", shard->id);
 		shard->cache = &cgo_cache[shard->id];
 		break;
 	case FINE_GRAINED:

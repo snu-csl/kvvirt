@@ -193,7 +193,7 @@ uint32_t demand_create(struct demand_shard *shard, lower_info *li,
     d_env.cache_id = COARSE_GRAINED;
 #endif
 
-	shard->cache = select_cache(shard, (cache_t)d_env.cache_id);
+	//shard->cache = select_cache(shard, (cache_t)d_env.cache_id);
 
 	return 0;
 }

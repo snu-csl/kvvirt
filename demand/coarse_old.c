@@ -13,19 +13,20 @@ extern struct algorithm __demand;
 extern struct demand_env d_env;
 extern struct demand_stat d_stat;
 
-struct demand_cache cgo_cache = {
-    .create = cgo_create,
-    .destroy = cgo_destroy,
-    .load = cgo_load,
-    .list_up = cgo_list_up,
-    .wait_if_flying = cgo_wait_if_flying,
-    .touch = cgo_touch,
-    .update = cgo_update,
-    .get_pte = cgo_get_pte,
-    .get_cmt = cgo_get_cmt,
-    .is_hit = cgo_is_hit,
-    .is_full = cgo_is_full,
-};
+struct demand_cache cgo_cache[SSD_PARTITIONS];
+//struct demand_cache cgo_cache = {
+//    .create = cgo_create,
+//    .destroy = cgo_destroy,
+//    .load = cgo_load,
+//    .list_up = cgo_list_up,
+//    .wait_if_flying = cgo_wait_if_flying,
+//    .touch = cgo_touch,
+//    .update = cgo_update,
+//    .get_pte = cgo_get_pte,
+//    .get_cmt = cgo_get_cmt,
+//    .is_hit = cgo_is_hit,
+//    .is_full = cgo_is_full,
+//};
 
 //static struct cache_env *cenv;
 //static struct cache_member *cmbr;
@@ -109,6 +110,19 @@ static void cgo_stat_init(struct cache_stat *const _stat) {
 
 int cgo_create(struct demand_shard *shard, cache_t c_type) {
     struct demand_cache *dc = shard->cache;
+
+    dc->create = cgo_create;
+    dc->destroy = cgo_destroy;
+    dc->load = cgo_load;
+    dc->list_up = cgo_list_up;
+    dc->wait_if_flying = cgo_wait_if_flying;
+    dc->touch = cgo_touch;
+    dc->update = cgo_update;
+    dc->get_pte = cgo_get_pte;
+    dc->get_cmt = cgo_get_cmt;
+    dc->is_hit = cgo_is_hit;
+    dc->is_full = cgo_is_full;
+
     cstat = &dc->stat;
 
     cgo_env_init(shard, c_type, &dc->env);

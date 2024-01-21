@@ -11,7 +11,7 @@
 #include "demand_ftl.h"
 
 #include "demand/cache.h"
-//#include "demand/coarse.h"
+#include "demand/coarse_old.h"
 #include "demand/d_param.h"
 #include "demand/demand.h"
 #include "demand/utility.h"
@@ -575,6 +575,14 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 
     shard->ftl = (struct demand_member*) 
                   kzalloc(sizeof(*shard->ftl), GFP_KERNEL);
+    shard->cache = (struct demand_cache*)
+                    kzalloc(sizeof(*shard->cache), GFP_KERNEL);
+#ifdef GC_STANDARD
+    cgo_create(shard, OLD_COARSE_GRAINED);
+#else
+    NVMEV_ASSERT(false);
+#endif
+
     demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
     print_demand_stat(&d_stat);
 }
@@ -601,12 +609,13 @@ void demand_free(struct demand_shard *shard) {
     vfree(shard->oob);
 }
 
-static void conv_init_ftl(struct demand_shard *demand_shard, struct convparams *cpp, struct ssd *ssd)
+static void conv_init_ftl(uint64_t id, struct demand_shard *demand_shard, 
+                          struct convparams *cpp, struct ssd *ssd)
 {
 	/*copy convparams*/
 	demand_shard->cp = *cpp;
-
 	demand_shard->ssd = ssd;
+    demand_shard->id = id;
 
 	/* initialize maptbl */
 	init_maptbl(demand_shard); // mapping table
@@ -669,8 +678,7 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 	for (i = 0; i < nr_parts; i++) {
 		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
 		ssd_init(ssd, &spp, cpu_nr_dispatcher);
-		conv_init_ftl(&demand_shards[i], &cpp, ssd);
-        demand_shards[i].id = i;
+		conv_init_ftl(i, &demand_shards[i], &cpp, ssd);
 	}
     
     nvmev_vdev->space_used = 0;

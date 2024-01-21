@@ -825,8 +825,8 @@ uint64_t __demand_write(struct demand_shard *shard, request *const req) {
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
    
-    nsecs_completed =
-    ssd_advance_write_buffer(req->ssd, nsecs_start, length);
+    nsecs_completed = nsecs_start + 1;
+    //ssd_advance_write_buffer(req->ssd, nsecs_start, length);
 
     nsecs_latest = max(nsecs_completed, nsecs_latest);
 
