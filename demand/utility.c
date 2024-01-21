@@ -14,7 +14,8 @@ struct algo_req *make_algo_req_default(uint8_t type, value_set *value) {
 	a_req->end_req = demand_end_req;
     a_req->need_retry = false;
 
-	struct demand_params *d_params = (struct demand_params *)kzalloc(sizeof(struct demand_params), GFP_KERNEL);
+	struct demand_params *d_params = 
+    (struct demand_params *)kzalloc(sizeof(struct demand_params), GFP_KERNEL);
 	d_params->value = value;
 	d_params->wb_entry = NULL;
 	//d_params->cmt = NULL;
@@ -26,12 +27,15 @@ struct algo_req *make_algo_req_default(uint8_t type, value_set *value) {
 	return a_req;
 }
 
-struct algo_req *make_algo_req_rw(uint8_t type, value_set *value, request *req, snode *wb_entry) {
+struct algo_req *make_algo_req_rw(struct demand_shard *shard, uint8_t type, 
+                                  value_set *value, request *req, 
+                                  snode *wb_entry) {
 	struct algo_req *a_req = make_algo_req_default(type, value);
 	a_req->parents = req;
 	a_req->rapid = true;
 
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
+    d_params->shard = shard;
 	d_params->wb_entry = wb_entry;
 
 	return a_req;
@@ -95,12 +99,12 @@ void copy_key_from_grain(KEYT *dst, value_set *src, int offset) {
 #endif
 #endif
 
-lpa_t get_lpa(KEYT key, void *_h_params) {
+lpa_t get_lpa(struct demand_cache *cache, KEYT key, void *_h_params) {
 #ifdef HASH_KVSSD
 	struct hash_params *h_params = (struct hash_params *)_h_params;
 again:
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
-                    (d_cache->env.nr_valid_tentries-1) + 1;
+                    (cache->env.nr_valid_tentries-1) + 1;
     if(h_params->lpa == 2 || h_params->lpa == 0) {
         NVMEV_INFO("Got LPA %u for key %s\n", h_params->lpa, key.key);
         h_params->cnt++;
@@ -115,27 +119,6 @@ again:
 
 lpa_t *get_oob(blockmanager *bm, ppa_t ppa) {
 	return (lpa_t *)bm->get_oob(bm, ppa);
-}
-
-void set_oob(blockmanager *bm, lpa_t lpa, ppa_t ppa, page_t type) {
-	int offset = 0;
-
-#ifdef DVALUE
-	switch (type) {
-	case DATA:
-		offset = G_OFFSET(ppa);
-		ppa = G_IDX(ppa);
-		break;
-	case MAP:
-		break;
-	default:
-		printk("[ERROR] Invalid type\n");
-		printk("Should have aborted!!!! %s:%d\n", __FILE__, __LINE__);;
-	}
-#endif
-
-	lpa_t *lpa_list = get_oob(bm, ppa);
-	lpa_list[offset] = lpa;
 }
 
 void set_oob_bulk(blockmanager *bm, lpa_t *lpa_list, ppa_t ppa) {
@@ -204,12 +187,5 @@ int wb_lpa_compare(const void *a, const void *b) {
 }
 
 void insert_retry_read(request *const req) {
-	if (req->parents) {
-		q_enqueue((void *)req, d_member.range_q);
-	} else {
-        printk("insert_retry_read FIXME %pS %pS %pS\n", 
-                __builtin_return_address(0), __builtin_return_address(1), 
-                __builtin_return_address(2));
-		//inf_assign_try(req);
-	}
+    NVMEV_ASSERT(false);
 }

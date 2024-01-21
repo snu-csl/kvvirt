@@ -337,12 +337,17 @@ static int __proc_file_read(struct seq_file *m, void *data)
         kfree(dstat);
 
         char* buf = (char*) kzalloc(4096, GFP_KERNEL);
-        get_cache_stat(buf);
-        seq_printf(m, "%s", buf);
+        for(int i = 0; i < SSD_PARTITIONS; i++) {
+            get_cache_stat(i, buf);
+            seq_printf(m, "%s", buf);
+        }
+
         kfree(buf);
     } else if(strcmp(filename, "cleardstat") == 0) {
         clear_demand_stat();
-        clear_cache_stat();
+        for(int i = 0; i < SSD_PARTITIONS; i++) {
+            clear_cache_stat(i);
+        }
     }
 
 	return 0;

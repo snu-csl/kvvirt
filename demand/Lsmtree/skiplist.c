@@ -574,7 +574,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         list->data_size-=(x->value->length*PIECE);
         list->data_size+=(value->length*PIECE);
         if(x->value) {
-            kfree(x->value->value);
+            //kfree(x->value->value);
             //inf_free_valueset(x->value,FS_MALLOC_W);
         }
 #if defined(KVSSD)

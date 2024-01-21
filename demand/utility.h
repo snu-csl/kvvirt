@@ -6,13 +6,7 @@
 #define __DEMAND_UTILITY_H__
 
 #include "demand.h"
-#include "page.h"
 #include "d_type.h"
-
-extern algorithm __demand;
-extern struct demand_stat d_stat;
-extern struct demand_member d_member;
-extern struct demand_cache *d_cache;
 
 /* Defines */
 #define QUADRATIC_PROBING(h,c) ((h)+(c)+(c)*(c))
@@ -37,7 +31,9 @@ extern struct demand_cache *d_cache;
 
 /* Functions */
 struct algo_req *make_algo_req_default(uint8_t type, value_set *value);
-struct algo_req *make_algo_req_rw(uint8_t type, value_set *value, request *req, snode *wb_entry);
+struct algo_req *make_algo_req_rw(struct demand_shard *shard, uint8_t type, 
+                                  value_set *value, request *req, 
+                                  snode *wb_entry);
 struct algo_req *make_algo_req_sync(uint8_t type, value_set *value);
 void free_algo_req(struct algo_req *a_req);
 
@@ -52,11 +48,9 @@ void copy_value_onlykey(value_set *dst, value_set *src);
 #endif
 #endif
 
-lpa_t get_lpa(KEYT key, void *_h_params);
+lpa_t get_lpa(struct demand_cache*, KEYT key, void *_h_params);
 
 lpa_t *get_oob(blockmanager *bm, ppa_t ppa);
-void set_oob(blockmanager *bm, lpa_t lpa, ppa_t ppa, page_t type);
-void set_oob_bulk(blockmanager *bm, lpa_t *lpa_list, ppa_t ppa);
 
 struct inflight_params *get_iparams(request *const req, snode *wb_entry);
 void free_iparams(request *const req, snode *wb_entry);

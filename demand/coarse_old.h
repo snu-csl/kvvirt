@@ -7,16 +7,16 @@
 
 #include "demand.h"
 
-int cgo_create(cache_t, struct demand_cache *);
-int cgo_destroy(void);
-int cgo_load(lpa_t, request *const, snode *wb_entry, uint64_t*);
-int cgo_list_up(lpa_t, request *const, snode *wb_entry, uint64_t*, uint64_t*);
+int cgo_create(struct demand_shard*, cache_t);
+int cgo_destroy(struct demand_cache *);
+int cgo_load(struct demand_shard*, lpa_t, request *const, snode *wb_entry, uint64_t*);
+int cgo_list_up(struct demand_shard*, lpa_t, request *const, snode *wb_entry, uint64_t*, uint64_t*);
 int cgo_wait_if_flying(lpa_t, request *const, snode *wb_entry);
-int cgo_touch(lpa_t);
-int cgo_update(lpa_t, struct pt_struct pte);
-bool cgo_is_hit(lpa_t);
-bool cgo_is_full(void);
-struct pt_struct cgo_get_pte(lpa_t lpa);
-struct cmt_struct *cgo_get_cmt(lpa_t lpa);
+int cgo_touch(struct demand_cache*, lpa_t);
+int cgo_update(struct demand_shard*, lpa_t, struct pt_struct pte);
+bool cgo_is_hit(struct demand_cache*, lpa_t);
+bool cgo_is_full(struct demand_cache*);
+struct pt_struct cgo_get_pte(struct demand_cache*, lpa_t lpa);
+struct cmt_struct *cgo_get_cmt(struct demand_cache*, lpa_t lpa);
 
 #endif

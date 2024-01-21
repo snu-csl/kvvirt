@@ -94,28 +94,23 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
                         value_set* value, bool async,
                         algo_req *const req){
     BUG_ON(async);
-    BUG_ON(!value->ssd);
     BUG_ON(!value);
+    BUG_ON(!value->shard);
 
-    struct ssdparams *spp = (struct ssdparams*) &value->ssd->sp;
+    struct demand_shard *shard = value->shard;
+    struct ssd* ssd = shard->ssd;
+    struct ssdparams *spp = &ssd->sp;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
     struct ppa ppa;
 
-    uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
+    uint64_t off = (uint64_t) PPA * ssd->sp.pgsz;
 
     NVMEV_DEBUG("Writing PPA %u (%llu) size %u pagesize %u in virt_push_datas\n", 
-                PPA, off, size, value->ssd->sp.pgsz);
-    //printk("Caller is %pS\n", __builtin_return_address(0));
-    //printk("Caller is %pS\n", __builtin_return_address(1));
-    //printk("Caller is %pS\n", __builtin_return_address(2));
+                PPA, off, size, ssd->sp.pgsz);
 
     memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
 
-    //NVMEV_DEBUG("2 Klen %u K %s vlen %u\n", klen,
-    //            (char*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t)),
-    //            *(uint32_t*) (nvmev_vdev->ns[0].mapped + off + sizeof(uint8_t) + klen));
-
-    if (last_pg_in_wordline(ftl, &ppa)) {
+    if (last_pg_in_wordline(value->shard, &ppa)) {
         struct nand_cmd swr = {
             .type = USER_IO,
             .cmd = NAND_WRITE,
@@ -124,19 +119,12 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
             .stime = 0,
         };
 
-        ppa = ppa_to_struct(&value->ssd->sp, PPA);
+        ppa = ppa_to_struct(spp, PPA);
         swr.ppa = &ppa;
 
-        nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
+        nsecs_completed = ssd_advance_nand(ssd, &swr);
         nsecs_latest = max(nsecs_completed, nsecs_latest);
-
-        //schedule_internal_operation(nvmev_vdev->sqes[1], nsecs_completed, wbuf,
-        //        spp->pgs_per_oneshotpg * spp->pgsz);
     }
-
-    //schedule_internal_operation_cb(nvmev_vdev->sqes[1]->qid, nsecs_completed, 
-    //                               value->value, PPA, size, 
-    //                               (void*) req->end_req, req, false);
 
     if(req) {
         req->end_req(req);
@@ -159,21 +147,22 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
     };
 
     BUG_ON(async);
-    BUG_ON(!value->ssd);
     BUG_ON(!value);
+    BUG_ON(!value->shard);
 
-    uint64_t off = (uint64_t) PPA * value->ssd->sp.pgsz;
+    struct demand_shard *shard = value->shard;
+    struct ssd* ssd = shard->ssd;
+    struct ssdparams *spp = &ssd->sp;
+
+    uint64_t off = (uint64_t) PPA * ssd->sp.pgsz;
 
     NVMEV_DEBUG("Reading PPA %u (%u) size %u sqid %u %s in virt_dev\n", 
             PPA, off, size, nvmev_vdev->sqes[1]->qid, 
             async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
 
-    ppa = ppa_to_struct(&value->ssd->sp, PPA);
+    ppa = ppa_to_struct(spp, PPA);
     swr.ppa = &ppa;
-    nsecs_completed = ssd_advance_nand((struct ssd*) value->ssd, &swr);
-
-    BUG_ON(!value);
-    BUG_ON(!value->value);
+    nsecs_completed = ssd_advance_nand(ssd, &swr);
 
     memcpy(value->value, nvmev_vdev->ns[0].mapped + off, size);
 

@@ -5,9 +5,6 @@
 #include "cache.h"
 #include "../city.h"
 #include "demand.h"
-#include "page.h"
-
-#define _PPS (_PPB*BPS)
 
 #include "./interface/interface.h"
 #ifdef HASH_KVSSD
@@ -34,10 +31,7 @@ struct algorithm __demand = {
 };
 
 struct demand_env d_env;
-struct demand_member d_member;
 struct demand_stat d_stat;
-
-struct demand_cache *d_cache;
 
 #ifdef HASH_KVSSD
 KEYT key_max, key_min;
@@ -170,9 +164,7 @@ static int demand_member_init(struct demand_member *const _member, struct ssd *s
 #ifdef HASH_KVSSD
 	_member->max_try = 0;
 #endif
-
 	_member->hash_table = d_htable_init(d_env.wb_flush_size * 2);
-    _member->ssd = ssd;
 
 	return 0;
 }
@@ -181,18 +173,17 @@ static void demand_stat_init(struct demand_stat *const _stat) {
 
 }
 
-uint32_t demand_create(lower_info *li, blockmanager *bm, 
-                       algorithm *algo, struct ssd *ssd,
+uint32_t demand_create(struct demand_shard *shard, lower_info *li, 
+                       blockmanager *bm, algorithm *algo, struct ssd *ssd,
                        uint64_t size) {
 
 	/* map modules */
 	algo->li = li;
-	algo->bm = bm;
 
 	/* init env */
 	demand_env_init(&d_env, &ssd->sp, size);
 	/* init member */
-	demand_member_init(&d_member, ssd);
+	demand_member_init(shard->ftl, ssd);
 	/* init stat */
 	demand_stat_init(&d_stat);
 
@@ -202,66 +193,55 @@ uint32_t demand_create(lower_info *li, blockmanager *bm,
     d_env.cache_id = COARSE_GRAINED;
 #endif
 
-	d_cache = select_cache((cache_t)d_env.cache_id);
-
-	///* create() for range query */
-	//range_create();
-
-	/* create() for page allocation module */
-	page_create(bm);
-
-#ifdef DVALUE
-	/* create() for grain functions */
-	grain_create();
-#endif
+	shard->cache = select_cache(shard, (cache_t)d_env.cache_id);
 
 	return 0;
 }
 
-static int count_filled_entry(void) {
+static int count_filled_entry(struct demand_cache *cache) {
     return 0;
-	int ret = 0;
-    value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
-
-    for (int i = 0; i < d_cache->env.nr_valid_tpages; i++) {
-        struct cmt_struct *cmt = d_cache->member.cmt[i];
-#ifdef GC_STANDARD
-        if(cmt->t_ppa != UINT_MAX) {
-            if(cmt->pt == NULL) {
-                cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-                for(int i = 0; i < EPP; i++) {
-                    cmt->pt[i].ppa = UINT_MAX;
-                }
-
-                BUG_ON(!v->value);
-                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
-                        PAGESIZE);
-                __page_to_pte(v, cmt->pt, cmt->idx);
-            }
-
-            for (int j = 0; j < EPP; j++) {
-                if (cmt->pt[j].ppa != UINT_MAX) {
-                    ret++;
-                }
-            }
-        }
-#else
-        if(cmt->t_ppa != UINT_MAX) {
-            if(cmt->pt == NULL) {
-                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
-                        PAGESIZE);
-                __page_to_ptes(v, cmt->idx, false);
-            }
-
-            for (int j = 0; j < EPP; j++) {
-                if (cmt->pt[j].ppa != UINT_MAX) {
-                    ret++;
-                }
-            }
-        }
-#endif
-    }
-	return ret;
+//	int ret = 0;
+//    value_set *v = inf_get_valueset(NULL, FS_MALLOC_R, PAGESIZE);
+//
+//    for (int i = 0; i < cache->env.nr_valid_tpages; i++) {
+//        struct cmt_struct *cmt = cache->member.cmt[i];
+//#ifdef GC_STANDARD
+//        if(cmt->t_ppa != UINT_MAX) {
+//            if(cmt->pt == NULL) {
+//                cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
+//                for(int i = 0; i < EPP; i++) {
+//                    cmt->pt[i].ppa = UINT_MAX;
+//                }
+//
+//                BUG_ON(!v->value);
+//                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
+//                        PAGESIZE);
+//                __page_to_pte(v, cmt->pt, cmt->idx);
+//            }
+//
+//            for (int j = 0; j < EPP; j++) {
+//                if (cmt->pt[j].ppa != UINT_MAX) {
+//                    ret++;
+//                }
+//            }
+//        }
+//#else
+//        if(cmt->t_ppa != UINT_MAX) {
+//            if(cmt->pt == NULL) {
+//                memcpy(v->value, nvmev_vdev->ns[0].mapped + (cmt->t_ppa * PAGESIZE), 
+//                        PAGESIZE);
+//                __page_to_ptes(v, cmt->idx, false);
+//            }
+//
+//            for (int j = 0; j < EPP; j++) {
+//                if (cmt->pt[j].ppa != UINT_MAX) {
+//                    ret++;
+//                }
+//            }
+//        }
+//#endif
+//    }
+//	return ret;
 }
 
 struct value_set* get_vs(struct ssdparams *spp) {
@@ -530,11 +510,11 @@ char* get_demand_stat(struct demand_stat *const _stat) {
     length += snprintf(ret + length, buf_size - length, "\n");
 
 	length += snprintf(ret + length, buf_size - length, "[Overall Hash-table Load Factor]\n");
-	int filled_entry_cnt = count_filled_entry();
-	int total_entry_cnt = d_cache->env.nr_valid_tentries;
+	int filled_entry_cnt = count_filled_entry(NULL);
+	int total_entry_cnt = 0; //d_cache->env.nr_valid_tentries;
 	length += snprintf(ret + length, buf_size - length, "Total entry:  %d\n", total_entry_cnt);
 	length += snprintf(ret + length, buf_size - length, "Filled entry: %d\n", filled_entry_cnt);
-	length += snprintf(ret + length, buf_size - length, "Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
+	//length += snprintf(ret + length, buf_size - length, "Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
 	length += snprintf(ret + length, buf_size - length, "\n");
 
 	length += snprintf(ret + length, buf_size - length, "[write(insertion)]\n");
@@ -652,11 +632,11 @@ void print_demand_stat(struct demand_stat *const _stat) {
 	printk("================");
 
 	printk("[Overall Hash-table Load Factor]");
-	int filled_entry_cnt = count_filled_entry();
-	int total_entry_cnt = d_cache->env.nr_valid_tentries;
+	int filled_entry_cnt = 0; //count_filled_entry();
+	int total_entry_cnt = 0; //d_cache->env.nr_valid_tentries;
 	printk("Total entry:  %d\n", total_entry_cnt);
 	printk("Filled entry: %d\n", filled_entry_cnt);
-	printk("Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
+	//printk("Load factor: %d%%\n", 100 * (filled_entry_cnt/total_entry_cnt*100));
 	printk("\n");
 
 	printk("[write(insertion)]");
@@ -720,16 +700,16 @@ static void demand_member_kfree(struct demand_member *const _member) {
 #endif
 }
 
-void demand_destroy(lower_info *li, algorithm *algo){
+void demand_destroy(struct demand_shard *shard, lower_info *li, algorithm *algo){
 
 	/* print stat */
 	print_demand_stat(&d_stat);
 
 	/* free member */
-	demand_member_kfree(&d_member);
+	demand_member_kfree(shard->ftl);
 
 	/* cleanup cache */
-	d_cache->destroy();
+	shard->cache->destroy(shard->cache);
 }
 
 #ifdef HASH_KVSSD
@@ -814,17 +794,17 @@ static struct hash_params *make_hash_params(request *const req) {
 }
 #endif
 
-uint32_t demand_read(request *const req){
+uint32_t demand_read(struct demand_shard* shard, request *const req){
 	uint64_t rc;
     uint64_t local;
-	mutex_lock(&d_member.op_lock);
+	mutex_lock(&shard->ftl->op_lock);
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
 		d_stat.read_req_cnt++;
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-	rc = __demand_read(req, false);
+	rc = __demand_read(shard, req, false);
 	if (req->ppa == UINT_MAX) {
 		req->type = FS_NOTFOUND_T;
 		req->end_req(req);
@@ -855,18 +835,19 @@ uint32_t demand_read(request *const req){
     kfree(req->key.key);
     kfree(req);
 
-	mutex_unlock(&d_member.op_lock);
+	mutex_unlock(&shard->ftl->op_lock);
 	return rc;
 }
 
-uint64_t demand_write(request *const req) {
-    if(FAIL_MODE) {
-        return 0;
-    }
-
+uint64_t demand_write(void *voidargs) { 
 	uint64_t rc;
     uint64_t local;
-	mutex_lock(&d_member.op_lock);
+
+    struct d_cb_args *args = (struct d_cb_args*) voidargs;
+    struct demand_shard *shard = args->shard;
+    struct request *req = args->req;
+
+	mutex_lock(&shard->ftl->op_lock);
 
     struct nvme_kv_command *cmd = req->cmd;
     __buf_copy(cmd, req->value->value, req->value->length);
@@ -877,44 +858,46 @@ uint64_t demand_write(request *const req) {
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-	rc = __demand_write(req);
+	rc = __demand_write(shard, req);
 
     local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     rc = max(rc, local);
 
     kfree(req);
+    kfree(args);
 
-	mutex_unlock(&d_member.op_lock);
+	mutex_unlock(&shard->ftl->op_lock);
 	return rc;
 }
 
-uint32_t demand_remove(request *const req) {
+uint32_t demand_remove(struct demand_shard* shard, request *const req) {
     uint32_t rc;
-    mutex_lock(&d_member.op_lock);
+    mutex_lock(&shard->ftl->op_lock);
 #ifdef HASH_KVSSD
     if (!req->hash_params) {
         d_stat.read_req_cnt++;
         req->hash_params = (void *)make_hash_params(req);
     }
 #endif
-    rc = __demand_read(req, true);
+    rc = __demand_read(shard, req, true);
     if (rc == UINT_MAX) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
     }
-    mutex_unlock(&d_member.op_lock);
+    mutex_unlock(&shard->ftl->op_lock);
     return rc;
 }
 
-uint64_t demand_append(request *const req) {
+uint64_t demand_append(struct demand_shard* shard, request *const req) {
     uint32_t rc;
-    struct ssdparams *spp = &d_member.ssd->sp;
+    struct ssd *ssd = shard->ssd;
+    struct ssdparams *spp = &ssd->sp;
     uint32_t to_append = req->target_len;
     uint32_t before, after;
 
     char* buf = (char*) kzalloc(4096, GFP_KERNEL);
 
-    mutex_lock(&d_member.op_lock);
+    mutex_lock(&shard->ftl->op_lock);
 #ifdef HASH_KVSSD
     if (!req->hash_params) {
         d_stat.read_req_cnt++;
@@ -922,7 +905,7 @@ uint64_t demand_append(request *const req) {
         before = ((struct hash_params*) req->hash_params)->hash;
     }
 #endif
-    rc = __demand_read(req, false);
+    rc = __demand_read(shard, req, false);
 
     uint64_t k = *(uint64_t*) (req->target_buf + 1);
     NVMEV_INFO("Attempting to append %u bytes to a value of length %u. Key is %llu\n",
@@ -931,7 +914,7 @@ uint64_t demand_append(request *const req) {
     if(req->value->length + to_append > spp->pgsz) {
         NVMEV_INFO("Was too big! Returning.\n");
         req->ppa = UINT_MAX - 3;
-        mutex_unlock(&d_member.op_lock);
+        mutex_unlock(&shard->ftl->op_lock);
         return 0;
     }
 
@@ -953,9 +936,9 @@ uint64_t demand_append(request *const req) {
     after = ((struct hash_params*) req->hash_params)->hash;
     NVMEV_ASSERT(before == after);
 
-    rc = __demand_write(req);
+    rc = __demand_write(shard, req);
     NVMEV_INFO("Write in append done.\n");
-    mutex_unlock(&d_member.op_lock);
+    mutex_unlock(&shard->ftl->op_lock);
     return rc;
 }
 

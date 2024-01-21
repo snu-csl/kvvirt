@@ -4,13 +4,15 @@
 #include "../../nvme_kv.h"
 #include "../../nvmev.h"
 #include "../../ssd.h"
+#include "sem_lock.h"
 #include "settings.h"
 #include "types.h"
 #include "utils.h"
-#include "sem_lock.h"
-#include <stdarg.h>
 
 #include <linux/mutex.h>
+#include <stdarg.h>
+
+struct demand_shard;
 
 typedef struct lower_info lower_info;
 typedef struct algorithm algorithm;
@@ -27,7 +29,7 @@ typedef struct upper_request{
 }upper_request;
 
 typedef struct value_set{
-    const struct ssd *ssd;
+    struct demand_shard *shard;
 	PTR value;
 	uint32_t length;
 	int dmatag; //-1 == not dma_alloc, others== dma_alloc
@@ -83,6 +85,7 @@ struct request {
 	struct request *parents;
 
     /* NVMeVirt */
+    struct demand_shard *shard;
     uint64_t nsecs_start;
     struct ssd *ssd;
     uint64_t sqid;
@@ -158,12 +161,12 @@ struct lower_info {
 struct algorithm{
 	/*interface*/
 	uint32_t (*argument_set) (int argc, char**argv);
-	uint32_t (*create) (lower_info*, blockmanager *bm, struct algorithm *, 
-                        struct ssd*, uint64_t size);
-	void (*destroy) (lower_info*, struct algorithm *);
-	uint32_t (*read)(request *const);
-	uint64_t (*write)(request *const);
-	uint32_t (*remove)(request *const);
+	uint32_t (*create) (struct demand_shard*, lower_info*, blockmanager *bm, 
+                        struct algorithm *, struct ssd*, uint64_t size);
+	void (*destroy) (struct demand_shard*, lower_info*, struct algorithm *);
+	uint32_t (*read)(struct demand_shard*, request *const);
+	uint64_t (*write)(void*);
+	uint32_t (*remove)(struct demand_shard*, request *const);
 #ifdef KVSSD
 	uint32_t (*iter_create)(request *const);
 	uint32_t (*iter_next)(request *const);
@@ -174,7 +177,7 @@ struct algorithm{
 	uint32_t (*multi_set)(request *const,int num);
 	uint32_t (*multi_get)(request *const,int num);
 	uint32_t (*range_query)(request *const);
-    uint64_t (*append)(request *const);
+    uint64_t (*append)(struct demand_shard*, request *const);
 #endif
 	lower_info* li;
 	struct blockmanager *bm;

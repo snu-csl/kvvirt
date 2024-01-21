@@ -36,9 +36,13 @@
  * For DFTL.
  */
 
-extern struct conv_ftl *ftl;
 extern struct kmem_cache *vs_cache;
 extern struct kmem_cache *page_cache;
+
+struct d_cb_args {
+    struct demand_shard *shard;
+    struct request *req;
+};
 
 typedef enum {
 	// generic command status
@@ -123,7 +127,12 @@ struct gc_data {
     struct xarray gc_xa;
 };
 
-struct conv_ftl {
+struct demand_shard {
+    uint64_t id;
+
+    struct demand_member *ftl;
+    struct demand_cache *cache;
+
 	struct ssd *ssd;
 
 	struct convparams cp;
@@ -136,6 +145,9 @@ struct conv_ftl {
 	struct line_mgmt lm;
 	struct write_flow_control wfc;
     struct gc_data gcd;
+
+    uint64_t **oob;
+    bool *grain_bitmap;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
@@ -147,9 +159,7 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
                          struct nvmev_result *ret);
 void demand_warmup(struct nvmev_ns *ns);
 
-#ifdef GC_STANDARD
-extern bool *grain_bitmap;
-#else
+#ifndef GC_STANDARD
 extern uint64_t *pg_inv_cnt;
 extern uint64_t *pg_v_cnt;
 #define INV_PAGE_SZ 4096
@@ -157,8 +167,6 @@ extern uint64_t *pg_v_cnt;
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 #endif
-
-extern uint64_t **oob;
 
 extern DECLARE_HASHTABLE(mapping_ht, 20);
 struct ht_mapping {

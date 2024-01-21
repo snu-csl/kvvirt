@@ -3,7 +3,6 @@
  */
 
 #include "demand.h"
-#include "page.h"
 #include "utility.h"
 #include "cache.h"
 #include "./interface/interface.h"
@@ -12,26 +11,17 @@
 #include <linux/sched/clock.h>
 
 extern algorithm __demand;
-
 extern struct demand_env d_env;
-extern struct demand_member d_member;
 extern struct demand_stat d_stat;
 
-extern struct demand_cache *d_cache;
-
-struct conv_ftl *ftl;
-
-bool FAIL_MODE = false;
-
-void d_set_oob(lpa_t lpa, ppa_t ppa, uint64_t offset, uint32_t len) {
-    BUG_ON(!oob);
-
+void d_set_oob(struct demand_shard *shard, lpa_t lpa, ppa_t ppa, 
+               uint64_t offset, uint32_t len) {
     NVMEV_INFO("Setting OOB for PPA %u offset %llu LPA %u len %u\n", 
                 ppa, offset, lpa, len);
-    oob[ppa][offset] = lpa;
 
+    shard->oob[ppa][offset] = lpa;
     for(int i = 1; i < len; i++) {
-        oob[ppa][offset + i] = 0;
+        shard->oob[ppa][offset + i] = 0;
     }
 }
 
@@ -79,7 +69,7 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, ppa_t ppa_)
 
 #ifndef GC_STANDARD
 static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
-    struct ssdparams spp = d_member.ssd->sp;
+    struct ssdparams spp = shard->ssd->sp;
     struct gc_data *gcd = &ftl->gcd;
     struct ppa p = ppa_to_struct(&spp, ppa);
     struct line* l = get_line(ftl, &p); 
@@ -116,7 +106,7 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
 
         struct value_set value;
         value.value = inv_mapping_bufs[line];
-        value.ssd = d_member.ssd;
+        value.ssd = shard->ssd;
         value.length = INV_PAGE_SZ;
 
         nsecs_completed = 
@@ -142,8 +132,10 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
 }
 #endif
 
-static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs_completed) {
-    struct ssdparams spp = d_member.ssd->sp;
+static uint64_t read_actual_dpage(struct demand_shard *shard, ppa_t ppa, 
+                                  request *const req, uint64_t *nsecs_completed) {
+    struct ssd *ssd = shard->ssd;
+    struct ssdparams *spp = &ssd->sp;
     uint64_t nsecs = 0;
 
 	if (IS_INITIAL_PPA(ppa)) {
@@ -157,7 +149,7 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
 		return UINT_MAX;
 	}
 
-    struct algo_req *a_req = make_algo_req_rw(DATAR, NULL, req, NULL);
+    struct algo_req *a_req = make_algo_req_rw(shard, DATAR, NULL, req, NULL);
     a_req->parents = req;
     a_req->parents->ppa = ppa;
     //printk("%s ppa %u offset %u\n", 
@@ -167,10 +159,8 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
 	ppa = G_IDX(ppa);
 #endif
 
-    //printk("%s ppa %u offset %u\n", 
-            //__func__, ppa, ((struct demand_params *)a_req->params)->offset);
-    req->value->ssd = d_member.ssd;
-	nsecs = __demand.li->read(ppa, spp.pgsz, req->value, false, a_req);
+    req->value->shard = shard;
+	nsecs = __demand.li->read(ppa, spp->pgsz, req->value, false, a_req);
 
     if(nsecs_completed) {
         *nsecs_completed = nsecs;
@@ -185,10 +175,12 @@ static uint64_t read_actual_dpage(ppa_t ppa, request *const req, uint64_t *nsecs
     }
 }
 
-static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
-    struct ssdparams spp = d_member.ssd->sp;
-	value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp.pgsz);
-	struct algo_req *a_req = make_algo_req_rw(DATAR, _value_dr_check, NULL, wb_entry);
+static uint64_t read_for_data_check(struct demand_shard *shard, 
+                                    ppa_t ppa, snode *wb_entry) {
+    struct ssd *ssd = shard->ssd;
+    struct ssdparams *spp = &ssd->sp;
+	value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
+	struct algo_req *a_req = make_algo_req_rw(shard, DATAR, _value_dr_check, NULL, wb_entry);
     uint64_t nsecs_completed;
 
     a_req->ppa = ppa;
@@ -196,25 +188,26 @@ static uint64_t read_for_data_check(ppa_t ppa, snode *wb_entry) {
 	((struct demand_params *)a_req->params)->offset = G_OFFSET(ppa);
 	ppa = G_IDX(ppa);
 #endif
-    _value_dr_check->ssd = d_member.ssd;
-	nsecs_completed = __demand.li->read(ppa, spp.pgsz, _value_dr_check, ASYNC, a_req);
+    _value_dr_check->shard = shard;
+	nsecs_completed = __demand.li->read(ppa, spp->pgsz, _value_dr_check, ASYNC, a_req);
 
     kfree(a_req);
 	return nsecs_completed;
 }
 
-uint64_t __demand_read(request *const req, bool for_del) {
+uint64_t __demand_read(struct demand_shard *shard,
+                       request *const req, bool for_del) {
 	uint64_t rc = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = req->nsecs_start;
     uint64_t credits = 0;
-
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
+    uint64_t **oob = shard->oob;
 
 	lpa_t lpa;
 	struct pt_struct pte;
 
 read_retry:
-	lpa = get_lpa(req->key, req->hash_params);
+	lpa = get_lpa(shard->cache, req->key, req->hash_params);
     //NVMEV_INFO("Got LPA %u for key %s (%llu)!\n", 
     //            lpa, req->key.key, *(uint64_t*) req->key.key);
 	pte.ppa = UINT_MAX;
@@ -223,7 +216,7 @@ read_retry:
 #endif
 
 #ifdef HASH_KVSSD
-	if (h_params->cnt > d_member.max_try) {
+	if (h_params->cnt > shard->ftl->max_try) {
 		rc = UINT_MAX;
         req->ppa = UINT_MAX;
         req->value->length = 0;
@@ -261,11 +254,11 @@ read_retry:
 	}
 
 	/* 1. check write buffer first */
-	rc = do_wb_check(d_member.write_buffer, req);
+	rc = do_wb_check(shard->ftl->write_buffer, req);
 	if (rc) {
         req->ppa = UINT_MAX - 1;
         if(for_del) {
-            do_wb_delete(d_member.write_buffer, req);
+            do_wb_delete(shard->ftl->write_buffer, req);
         } else {
             nsecs_completed =
             ssd_advance_pcie(req->ssd, req->nsecs_start, 1024);
@@ -276,16 +269,16 @@ read_retry:
 	}
 
 	/* 2. check cache */
-	if (d_cache->is_hit(lpa)) {
-		d_cache->touch(lpa);
+	if (shard->cache->is_hit(shard->cache, lpa)) {
+		shard->cache->touch(shard->cache, lpa);
         NVMEV_DEBUG("Cache hit for LPA %u!\n", lpa);
 	} else {
 cache_load:
-		rc = d_cache->wait_if_flying(lpa, req, NULL);
+		rc = shard->cache->wait_if_flying(lpa, req, NULL);
 		if (rc) {
 			goto read_ret;
 		}
-		rc = d_cache->load(lpa, req, NULL, &nsecs_completed);
+		rc = shard->cache->load(shard, lpa, req, NULL, &nsecs_completed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
             req->ppa = UINT_MAX;
@@ -295,7 +288,8 @@ cache_load:
             goto read_ret;
 		}
 cache_list_up:
-		rc = d_cache->list_up(lpa, req, NULL, &nsecs_completed, &credits);
+		rc = shard->cache->list_up(shard, lpa, req, NULL, 
+                                   &nsecs_completed, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		//if (rc) {
         //    req->value->length = 0;
@@ -306,7 +300,7 @@ cache_list_up:
 cache_check_complete:
 	free_iparams(req, NULL);
 
-	pte = d_cache->get_pte(lpa);
+	pte = shard->cache->get_pte(shard->cache, lpa);
 #ifdef STORE_KEY_FP
 	/* fast fingerprint compare */
 	if (h_params->key_fp != pte.key_fp) {
@@ -318,7 +312,7 @@ cache_check_complete:
 data_read:
 	/* 3. read actual data */
     NVMEV_INFO("Got PPA %u for LPA %u\n", pte.ppa, lpa);
-    rc = read_actual_dpage(pte.ppa, req, &nsecs_completed);
+    rc = read_actual_dpage(shard, pte.ppa, req, &nsecs_completed);
     nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : 
                    max(nsecs_latest, nsecs_completed);
 
@@ -351,22 +345,22 @@ data_read:
                     len, len * GRAINED_UNIT, pte.ppa, G_IDX(pte.ppa));
 
         oob[G_IDX(pte.ppa)][offset] = 2;
-        mark_grain_invalid(ftl, pte.ppa, len);
+        mark_grain_invalid(shard, pte.ppa, len);
 #ifndef GC_STANDARD
         _record_inv_mapping(lpa, G_IDX(pte.ppa), &credits);
 #endif
         req->ppa = UINT_MAX - 2;
 
         pte.ppa = UINT_MAX;
-        d_cache->update(lpa, pte);
-        d_htable_insert(d_member.hash_table, UINT_MAX, lpa);
+        shard->cache->update(shard, lpa, pte);
+        d_htable_insert(shard->ftl->hash_table, UINT_MAX, lpa);
 
         nvmev_vdev->space_used -= len * GRAINED_UNIT;
     }
 
     if(credits > 0) {
-        consume_write_credit(ftl, credits);
-        check_and_refill_write_credit(ftl);
+        consume_write_credit(shard, credits);
+        check_and_refill_write_credit(shard);
     }
 
 read_ret:
@@ -377,10 +371,11 @@ read_ret:
 static bool wb_is_full(skiplist *wb) { return (wb->size == d_env.wb_flush_size); }
 
 uint32_t cnt = 0;
-static bool _do_wb_assign_ppa(skiplist *wb) {
+static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 	blockmanager *bm = __demand.bm;
-	struct flush_list *fl = d_member.flush_list;
-    struct ssdparams *spp = &d_member.ssd->sp;
+	struct flush_list *fl = shard->ftl->flush_list;
+    struct ssdparams *spp = &shard->ssd->sp;
+    uint64_t **oob = shard->oob;
 
 	snode *wb_entry;
 	sk_iter *iter = skiplist_get_iterator(wb);
@@ -408,26 +403,21 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 		int remain = spp->pgsz;
         uint32_t credits = 0;
 
-        struct ppa ppa_s = get_new_page(ftl, USER_IO);
-        if(!advance_write_pointer(ftl, USER_IO)) {
+        struct ppa ppa_s = get_new_page(shard, USER_IO);
+        if(!advance_write_pointer(shard, USER_IO)) {
             NVMEV_ERROR("Failing wb flush because we had no available pages!\n");
             /*
              * TODO
              * Leak here of remaining wb_entries.
              */
 
-            /*
-             * So we can just rmmod nvmev instead of rebooting the VM.
-             */
-
-            FAIL_MODE = true;
             return false;
         }
 
-        mark_page_valid(ftl, &ppa_s);
-		ppa_t ppa = ppa2pgidx(ftl, &ppa_s);
+        mark_page_valid(shard, &ppa_s);
+		ppa_t ppa = ppa2pgidx(shard, &ppa_s);
 
-        struct ppa tmp_ppa = ppa_to_struct(&d_member.ssd->sp, ppa);
+        struct ppa tmp_ppa = ppa_to_struct(&shard->ssd->sp, ppa);
         NVMEV_DEBUG("%s assigning PPA %u (%u)\n", __func__, ppa, cnt++);
 
 		int offset = 0;
@@ -470,7 +460,7 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
 			wb_entry->value = NULL;
 
 			//validate_grain(bm, wb_entry->ppa);
-            mark_grain_valid(ftl, wb_entry->ppa, target_length);
+            mark_grain_valid(shard, wb_entry->ppa, target_length);
 
             credits += target_length;
 			offset += target_length;
@@ -482,9 +472,9 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
         if(remain > 0) {
             NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
             NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
-            mark_grain_valid(ftl, PPA_TO_PGA(ppa, offset), 
+            mark_grain_valid(shard, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
-            mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
+            mark_grain_invalid(shard, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
             oob[ppa][offset] = 2;
             nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
@@ -518,10 +508,12 @@ static bool _do_wb_assign_ppa(skiplist *wb) {
     return true;
 }
 
-static uint64_t _do_wb_mapping_update(skiplist *wb, uint64_t* credits) {
+static uint64_t _do_wb_mapping_update(struct demand_shard *shard, skiplist *wb, 
+                                      uint64_t* credits) {
 	int rc = 0;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 	blockmanager *bm = __demand.bm;
+    uint64_t **oob = shard->oob;
 
     bool sample = false;
     uint64_t touch = 0, wait = 0, load = 0, list_up = 0, get = 0, update = 0;
@@ -544,22 +536,22 @@ static uint64_t _do_wb_mapping_update(skiplist *wb, uint64_t* credits) {
 	sk_iter *iter = skiplist_get_iterator(wb);
 	for (int i = 0; i < d_env.wb_flush_size; i++) {
 		wb_entry = skiplist_get_next(iter);
-		q_enqueue((void *)wb_entry, d_member.wb_master_q);
+		q_enqueue((void *)wb_entry, shard->ftl->wb_master_q);
 	}
 	kfree(iter);
 
 	/* mapping update */
 	volatile int updated = 0;
 	while (updated < d_env.wb_flush_size) {
-		wb_entry = (snode *)q_dequeue(d_member.wb_retry_q);
+		wb_entry = (snode *)q_dequeue(shard->ftl->wb_retry_q);
 		if (!wb_entry) {
-			wb_entry = (snode *)q_dequeue(d_member.wb_master_q);
+			wb_entry = (snode *)q_dequeue(shard->ftl->wb_master_q);
 		}
 		if (!wb_entry) continue;
 wb_retry:
 		h_params = (struct hash_params *)wb_entry->hash_params;
 
-		lpa = get_lpa(wb_entry->key, wb_entry->hash_params);
+		lpa = get_lpa(shard->cache, wb_entry->key, wb_entry->hash_params);
 		new_pte.ppa = wb_entry->ppa;
 
 #ifdef STORE_KEY_FP
@@ -586,11 +578,11 @@ wb_retry:
 			}
 		}
 
-		if (d_cache->is_hit(lpa)) {
+		if (shard->cache->is_hit(shard->cache, lpa)) {
             NVMEV_DEBUG("%s hit for LPA %u\n", __func__, lpa);
             if(sample) {
                 start = local_clock();
-                d_cache->touch(lpa);
+                shard->cache->touch(shard->cache, lpa);
                 end = local_clock();
                 touch += end - start;
             }
@@ -598,7 +590,7 @@ wb_retry:
             //printk("%s miss for LPA %u\n", __func__, lpa);
 wb_cache_load:
             start = local_clock();
-			rc = d_cache->wait_if_flying(lpa, NULL, wb_entry);
+			rc = shard->cache->wait_if_flying(lpa, NULL, wb_entry);
             end = local_clock();
             wait += end - start;
 			if (rc) continue; /* pending */
@@ -606,7 +598,7 @@ wb_cache_load:
             //printk("%s passed wait_if_flying for LPA %u\n", __func__, lpa);
             
             start = local_clock();
-			rc = d_cache->load(lpa, NULL, wb_entry, NULL);
+			rc = shard->cache->load(shard, lpa, NULL, wb_entry, NULL);
             end = local_clock();
             load += end - start;
 			if (rc) continue; /* mapping read */
@@ -618,7 +610,8 @@ wb_cache_list_up:
              */
 
             start = local_clock();
-			rc = d_cache->list_up(lpa, NULL, wb_entry, NULL, credits);
+			rc = shard->cache->list_up(shard, lpa, NULL, wb_entry, 
+                                       NULL, credits);
             end = local_clock();
             list_up += end - start;
 			if (rc) continue; /* mapping write */
@@ -629,7 +622,7 @@ wb_cache_list_up:
 wb_data_check:
 		/* get page_table entry which contains {ppa, key_fp} */
 		start = local_clock();
-        pte = d_cache->get_pte(lpa);
+        pte = shard->cache->get_pte(shard->cache, lpa);
         end = local_clock();
         get += end - start;
         //printk("%s passed get_pte for LPA %u\n", __func__, lpa);
@@ -652,7 +645,7 @@ wb_data_check:
 		}
 #endif
 		/* hash_table lookup to filter same wb element */
-		rc = d_htable_find(d_member.hash_table, pte.ppa, lpa);
+		rc = d_htable_find(shard->ftl->hash_table, pte.ppa, lpa);
 		if (rc) {
 			h_params->find = HASH_KEY_DIFF;
 			h_params->cnt++;
@@ -662,14 +655,14 @@ wb_data_check:
         //printk("%s passed hash table check for LPA %u\n", __func__, lpa);
 
 		/* data check is necessary before update */
-		nsecs_completed = read_for_data_check(pte.ppa, wb_entry);
+		nsecs_completed = read_for_data_check(shard, pte.ppa, wb_entry);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		continue;
 #endif
 
 wb_update:
         NVMEV_INFO("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
-		pte = d_cache->get_pte(lpa);
+		pte = shard->cache->get_pte(shard->cache, lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             uint64_t offset = G_OFFSET(pte.ppa);
             uint32_t len = 1;
@@ -680,7 +673,7 @@ wb_update:
             NVMEV_INFO("%s LPA %u old PPA %u overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
-            mark_grain_invalid(ftl, pte.ppa, len);
+            mark_grain_invalid(shard, pte.ppa, len);
 #ifndef GC_STANDARD
             nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), credits);
 #endif
@@ -694,7 +687,7 @@ wb_update:
         }
 wb_direct_update:
         start = local_clock();
-		d_cache->update(lpa, new_pte);
+		shard->cache->update(shard, lpa, new_pte);
         end = local_clock();
         update += end - start;
         NVMEV_DEBUG("2 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
@@ -707,20 +700,21 @@ wb_direct_update:
         //m->ppa = new_pte.ppa;
         //hash_add(mapping_ht, &m->node, lpa);
 
-		d_htable_insert(d_member.hash_table, new_pte.ppa, lpa);
+		d_htable_insert(shard->ftl->hash_table, new_pte.ppa, lpa);
 
 #ifdef HASH_KVSSD
-		d_member.max_try = (h_params->cnt > d_member.max_try) ? h_params->cnt : d_member.max_try;
+		shard->ftl->max_try = (h_params->cnt > shard->ftl->max_try) ? h_params->cnt : shard->ftl->max_try;
 		hash_collision_logging(h_params->cnt, DWRITE);
-		d_set_oob(lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa), wb_entry->len);
+		d_set_oob(shard, lpa, G_IDX(new_pte.ppa), G_OFFSET(new_pte.ppa), 
+                  wb_entry->len);
 #endif
 	}
 
-	if (unlikely(d_member.wb_master_q->size + d_member.wb_retry_q->size > 0)) {
+	if (unlikely(shard->ftl->wb_master_q->size + shard->ftl->wb_retry_q->size > 0)) {
 		//printk("[ERROR] wb_entry still remains in queues, at %s:%d\n", __FILE__, __LINE__);
 		printk("Should have aborted!!!! %s:%d MQ size RQ size %u %u\n", 
-                __FILE__, __LINE__, d_member.wb_master_q->size, d_member.wb_retry_q->size);
-        wb_entry = (snode *)q_dequeue(d_member.wb_master_q);
+                __FILE__, __LINE__, shard->ftl->wb_master_q->size, shard->ftl->wb_retry_q->size);
+        wb_entry = (snode *)q_dequeue(shard->ftl->wb_master_q);
         printk("Last one was LPA %u PPA %u key %s\n", wb_entry->lpa, wb_entry->ppa,
                 wb_entry->key.key);
         BUG_ON(true);
@@ -744,19 +738,20 @@ wb_direct_update:
     return nsecs_latest;
 }
 
-uint64_t _do_wb_flush(skiplist *wb, uint64_t credits) {
-	struct flush_list *fl = d_member.flush_list;
-    struct ssdparams spp = d_member.ssd->sp;
+uint64_t _do_wb_flush(struct demand_shard *shard, skiplist *wb, 
+                      uint64_t credits) {
+	struct flush_list *fl = shard->ftl->flush_list;
+    struct ssdparams spp = shard->ssd->sp;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
 	for (int i = 0; i < fl->size; i++) {
 		ppa_t ppa = fl->list[i].ppa;
 		value_set *value = fl->list[i].value;
-        value->ssd = d_member.ssd;
+        value->shard = shard;
 
 		nsecs_completed = 
         __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
-                           make_algo_req_rw(DATAW, value, NULL, NULL));
+                           make_algo_req_rw(shard, DATAW, value, NULL, NULL));
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         credits += GRAIN_PER_PAGE;
     }
@@ -764,8 +759,8 @@ uint64_t _do_wb_flush(skiplist *wb, uint64_t credits) {
 	fl->size = 0;
 	memset(fl->list, 0, d_env.wb_flush_size * sizeof(struct flush_node));
 
-	d_htable_kfree(d_member.hash_table);
-	d_member.hash_table = d_htable_init(d_env.wb_flush_size * 2);
+	d_htable_kfree(shard->ftl->hash_table);
+	shard->ftl->hash_table = d_htable_init(d_env.wb_flush_size * 2);
 
 	/* wait until device traffic clean */
 	__demand.li->lower_flying_req_wait();
@@ -779,8 +774,8 @@ uint64_t _do_wb_flush(skiplist *wb, uint64_t credits) {
      * with valid grains, but invalid OOBs, or vice versa.
      */
 
-    consume_write_credit(ftl, credits);
-    nsecs_completed = check_and_refill_write_credit(ftl);
+    consume_write_credit(shard, credits);
+    nsecs_completed = check_and_refill_write_credit(shard);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 	return nsecs_latest;
@@ -801,28 +796,30 @@ static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
 	else return 0;
 }
 
-uint64_t __demand_write(request *const req) {
+uint64_t __demand_write(struct demand_shard *shard, request *const req) {
 	uint32_t rc = 0;
     uint64_t nsecs_latest = 0, nsecs_completed = 0;
     uint64_t nsecs_start = req->nsecs_start;
     uint64_t length = req->value->length;
     uint64_t credits = 0;
-	skiplist *wb = d_member.write_buffer;
-    struct ssdparams *spp = &d_member.ssd->sp;
+	skiplist *wb = shard->ftl->write_buffer;
+    struct ssdparams *spp = &shard->ssd->sp;
+
+    BUG_ON(!req);
 
 	/* flush the buffer if full */
 	if (wb_is_full(wb)) {
 		/* assign ppa first */
-        _do_wb_assign_ppa(wb);
+        _do_wb_assign_ppa(shard, wb);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
-		nsecs_completed = _do_wb_mapping_update(wb, &credits);
+		nsecs_completed = _do_wb_mapping_update(shard, wb, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		
 		/* flush the buffer */
-		nsecs_latest = _do_wb_flush(wb, credits);
+		nsecs_latest = _do_wb_flush(shard, wb, credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-        wb = d_member.write_buffer = skiplist_init();
+        wb = shard->ftl->write_buffer = skiplist_init();
     }
 
 	/* default: insert to the buffer */
@@ -837,16 +834,16 @@ uint64_t __demand_write(request *const req) {
 	return nsecs_latest;
 }
 
-uint32_t __demand_remove(request *const req) {
+uint32_t __demand_remove(struct demand_shard *shard, request *const req) {
 	//printk("Hello! remove() is not implemented yet! lol!");
 	return 0;
 }
 
-uint32_t get_vlen(ppa_t ppa, uint64_t offset) {
+uint32_t get_vlen(struct demand_shard *shard, ppa_t ppa, uint64_t offset) {
     NVMEV_DEBUG("Checking PPA %u offset %u\n", ppa, offset);
 
     uint32_t len = 1;
-    while(offset + len < GRAIN_PER_PAGE && oob[ppa][offset + len] == 0) {
+    while(offset + len < GRAIN_PER_PAGE && shard->oob[ppa][offset + len] == 0) {
         len++;
     }
 
@@ -858,8 +855,6 @@ void *demand_end_req(algo_req *a_req) {
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
 	request *req = a_req->parents;
 	snode *wb_entry = d_params->wb_entry;
-
-    //printk("Entered demand_end_req ppa %u\n", a_req->ppa);
 
 	struct hash_params *h_params;
 	struct inflight_params *i_params;
@@ -906,7 +901,7 @@ void *demand_end_req(algo_req *a_req) {
                 a_req->need_retry = false;
 				hash_collision_logging(h_params->cnt, DREAD);
 				kfree(h_params);
-                req->value->length = get_vlen(G_IDX(req->ppa), offset);
+                req->value->length = get_vlen(d_params->shard, G_IDX(req->ppa), offset);
 				req->end_req(req);
 			} else {
                 NVMEV_INFO("Passed cmp 2.\n");
@@ -939,8 +934,7 @@ void *demand_end_req(algo_req *a_req) {
 				i_params = get_iparams(NULL, wb_entry);
 				i_params->jump = GOTO_UPDATE;
 
-                //wb_entry->len = get_vlen(G_IDX(a_req->ppa), offset) / GRAINED_UNIT;
-				q_enqueue((void *)wb_entry, d_member.wb_retry_q);
+				q_enqueue((void *)wb_entry, d_params->shard->ftl->wb_retry_q);
 			} else {
 				/* retry */
 				d_stat.fp_collision_w++;
@@ -948,7 +942,7 @@ void *demand_end_req(algo_req *a_req) {
 				h_params->find = HASH_KEY_DIFF;
 				h_params->cnt++;
 
-				q_enqueue((void *)wb_entry, d_member.wb_master_q);
+				q_enqueue((void *)wb_entry, d_params->shard->ftl->wb_master_q);
 			}
 			inf_free_valueset(d_params->value, FS_MALLOC_R);
 		}
@@ -985,7 +979,7 @@ void *demand_end_req(algo_req *a_req) {
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_read_on_write++;
-			q_enqueue((void *)wb_entry, d_member.wb_retry_q);
+			q_enqueue((void *)wb_entry, req->shard->ftl->wb_retry_q);
             return NULL;
 		}
 		break;
@@ -1002,12 +996,12 @@ void *demand_end_req(algo_req *a_req) {
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_write_on_write++;
-			q_enqueue((void *)wb_entry, d_member.wb_retry_q);
+			q_enqueue((void *)wb_entry, req->shard->ftl->wb_retry_q);
 		}
 		break;
 	case GCDR:
 		d_stat.data_r_dgc++;
-		d_member.nr_valid_read_done++;
+		req->shard->ftl->nr_valid_read_done++;
 		break;
 	case GCDW:
 		d_stat.data_w_dgc++;
@@ -1015,7 +1009,7 @@ void *demand_end_req(algo_req *a_req) {
 		break;
 	case GCMR_DGC:
 		d_stat.trans_r_dgc++;
-		d_member.nr_tpages_read_done++;
+		req->shard->ftl->nr_tpages_read_done++;
 		//inf_free_valueset(d_params->value, FS_MALLOC_R);
 		break;
 	case GCMW_DGC:
@@ -1024,7 +1018,7 @@ void *demand_end_req(algo_req *a_req) {
 		break;
 	case GCMR:
 		d_stat.trans_r_tgc++;
-		d_member.nr_valid_read_done++;
+		req->shard->ftl->nr_valid_read_done++;
 		break;
 	case GCMW:
 		d_stat.trans_w_tgc++;

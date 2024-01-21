@@ -49,21 +49,23 @@ struct cache_stat {
 
 
 struct demand_cache {
-	int (*create) (cache_t c_type, struct demand_cache *);
-	int (*destroy) (void);
+	int (*create) (struct demand_shard*, cache_t c_type);
+	int (*destroy) (struct demand_cache*);
 
-	int (*load) (lpa_t lpa, request *const req, snode *wb_entry, uint64_t *);
-	int (*list_up) (lpa_t lpa, request *const req, snode *wb_entry, uint64_t*, uint64_t*);
+	int (*load) (struct demand_shard*, lpa_t lpa, request *const req, 
+                 snode *wb_entry, uint64_t *);
+	int (*list_up) (struct demand_shard*,lpa_t lpa, request *const req, 
+                    snode *wb_entry, uint64_t*, uint64_t*);
 	int (*wait_if_flying) (lpa_t lpa, request *const req, snode *wb_entry);
 
-	int (*touch) (lpa_t lpa);
-	int (*update) (lpa_t lpa, struct pt_struct pte);
+	int (*touch) (struct demand_cache*, lpa_t lpa);
+	int (*update) (struct demand_shard*, lpa_t lpa, struct pt_struct pte);
 
-	struct pt_struct (*get_pte) (lpa_t lpa);
-	struct cmt_struct *(*get_cmt) (lpa_t lpa);
+	struct pt_struct (*get_pte) (struct demand_cache*, lpa_t lpa);
+	struct cmt_struct *(*get_cmt) (struct demand_cache*, lpa_t lpa);
 
-	bool (*is_hit) (lpa_t lpa);
-	bool (*is_full) (void);
+	bool (*is_hit) (struct demand_cache*, lpa_t lpa);
+	bool (*is_full) (struct demand_cache*);
 
 	struct cache_env env;
 	struct cache_member member;
@@ -71,10 +73,10 @@ struct demand_cache {
 };
 
 /* Functions */
-struct demand_cache *select_cache(cache_t type);
-void clear_cache_stat(void);
-uint32_t get_cache_stat(char* out);
+struct demand_cache *select_cache(struct demand_shard *shard, cache_t type);
+void clear_cache_stat(uint32_t id);
+uint32_t get_cache_stat(uint32_t id, char* out);
 void print_cache_stat(struct cache_stat *_stat);
-struct cache_stat* get_cstat(void);
+struct cache_stat* get_cstat(uint32_t id);
 
 #endif

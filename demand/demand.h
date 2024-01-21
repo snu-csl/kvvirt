@@ -38,26 +38,23 @@ struct lpa_len_ppa {
 #endif
 };
 
-void clear_oob(uint64_t pgidx);
-bool oob_empty(uint64_t pgidx);
-struct ppa get_new_page(struct conv_ftl *conv_ftl, uint32_t io_type);
-ppa_t ppa2pgidx(struct conv_ftl *conv_ftl, struct ppa *ppa);
-bool advance_write_pointer(struct conv_ftl *conv_ftl, uint32_t io_type);
-void mark_page_valid(struct conv_ftl *conv_ftl, struct ppa *ppa);
-void mark_page_invalid(struct conv_ftl *conv_ftl, struct ppa *ppa);
-void mark_grain_valid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
-void mark_grain_invalid(struct conv_ftl *conv_ftl, uint64_t grain, uint32_t len);
-inline void consume_write_credit(struct conv_ftl *conv_ftl, uint32_t len);
-inline uint64_t check_and_refill_write_credit(struct conv_ftl *conv_ftl);
-void clean_one_flashpg(struct conv_ftl *conv_ftl, struct ppa *ppa);
-int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains, 
-                             uint64_t *read_cmts, uint64_t read_cmt_cnt);
-inline struct line *get_line(struct conv_ftl *conv_ftl, struct ppa *ppa);
-inline bool last_pg_in_wordline(struct conv_ftl *conv_ftl, struct ppa *ppa);
+void clear_oob(struct demand_shard *shard, uint64_t pgidx);
+bool oob_empty(struct demand_shard *shard, uint64_t pgidx);
+struct ppa get_new_page(struct demand_shard *demand_shard, uint32_t io_type);
+ppa_t ppa2pgidx(struct demand_shard *demand_shard, struct ppa *ppa);
+bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type);
+void mark_page_valid(struct demand_shard *demand_shard, struct ppa *ppa);
+void mark_page_invalid(struct demand_shard *demand_shard, struct ppa *ppa);
+void mark_grain_valid(struct demand_shard *demand_shard, uint64_t grain, uint32_t len);
+void mark_grain_invalid(struct demand_shard *demand_shard, uint64_t grain, uint32_t len);
+inline void consume_write_credit(struct demand_shard *demand_shard, uint32_t len);
+inline uint64_t check_and_refill_write_credit(struct demand_shard *demand_shard);
+int do_bulk_mapping_update_v(struct demand_shard*, struct lpa_len_ppa*, int, 
+                             uint64_t*, uint64_t);
+inline struct line *get_line(struct demand_shard *demand_shard, struct ppa *ppa);
+inline bool last_pg_in_wordline(struct demand_shard *demand_shard, struct ppa *ppa);
 
 extern struct demand_stat d_stat;
-
-extern bool FAIL_MODE;
 
 /* Structures */
 // Page table entry
@@ -104,6 +101,7 @@ struct hash_params {
 };
 
 struct demand_params{
+    struct demand_shard *shard;
 	value_set *value;
 	snode *wb_entry;
 	//struct cmt_struct *cmt;
@@ -175,7 +173,9 @@ struct demand_member {
 	int max_try;
 #endif
 
-    struct ssd *ssd;
+#ifdef GC_STANDARD
+    bool* grain_bitmap;
+#endif
 };
 
 struct demand_stat {
@@ -236,17 +236,18 @@ struct demand_stat {
 
 /* Functions */
 uint32_t demand_argument_set(int argc, char **argv);
-uint32_t demand_create(lower_info*, blockmanager*, algorithm*, struct ssd*, 
-                       uint64_t size);
-void demand_destroy(lower_info*, algorithm*);
-uint32_t demand_read(request *const);
-uint64_t demand_write(request *const);
-uint32_t demand_remove(request *const);
-uint64_t demand_append(request *const);
+uint32_t demand_create(struct demand_shard *shard, lower_info*, blockmanager*, 
+                       algorithm*, struct ssd*, uint64_t size);
+void demand_destroy(struct demand_shard *shard, lower_info*, algorithm*);
+uint32_t demand_read(struct demand_shard *shard, request *const);
+uint64_t demand_write(void*); // struct demand_shard *shard, request *const);
+uint32_t demand_remove(struct demand_shard *shard, request *const);
+uint64_t demand_append(struct demand_shard *shard, request *const);
 
-uint64_t __demand_read(request *const, bool for_del);
-uint64_t __demand_write(request *const);
-uint32_t __demand_remove(request *const);
+uint64_t __demand_read(struct demand_shard *shard, request *const, 
+                       bool for_del);
+uint64_t __demand_write(struct demand_shard *shard, request *const);
+uint32_t __demand_remove(struct demand_shard *shard, request *const);
 void *demand_end_req(algo_req*);
 
 void clear_demand_stat(void);
@@ -260,6 +261,11 @@ bool range_end_req(request *);
 struct value_set* get_vs(struct ssdparams *spp);
 void put_vs(struct value_set *vs);
 
+extern algorithm __demand;
+extern struct demand_stat d_stat;
+//extern struct demand_member d_member[D_SHARDS];
+//extern struct demand_cache *d_cache[D_SHARDS];
+
 #ifdef DVALUE
 int grain_create(void);
 int is_valid_grain(pga_t);
@@ -269,7 +275,7 @@ int invalidate_grain(blockmanager *, pga_t);
 #endif
 
 #ifdef GC_STANDARD
-void __page_to_pte(value_set*, struct pt_struct*, uint64_t);
+void __page_to_pte(value_set*, struct pt_struct*, uint64_t, struct ssdparams*);
 #else
 void __page_to_ptes_wcmt(value_set *value, struct cmt_struct *cmt);
 void __page_to_ptes(value_set*, uint64_t, bool);

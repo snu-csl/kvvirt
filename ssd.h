@@ -215,8 +215,6 @@ struct ssdparams {
 
 	unsigned long long write_buffer_size;
 
-    unsigned long nr_segs;
-
     /*
      * HASH DFTL.
      */
