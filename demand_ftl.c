@@ -505,10 +505,10 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 {
     struct ssdparams *spp = &ssd->sp;
 
-    uint64_t tt_grains = (spp->tt_pgs * GRAIN_PER_PAGE) / SSD_PARTITIONS; 
+    uint64_t tt_grains = spp->tt_pgs * GRAIN_PER_PAGE; 
 
-    spp->tt_map_pgs = (tt_grains / EPP) / SSD_PARTITIONS;
-    spp->tt_data_pgs = (spp->tt_pgs - spp->tt_map_pgs) / SSD_PARTITIONS;
+    spp->tt_map_pgs = tt_grains / EPP;
+    spp->tt_data_pgs = spp->tt_pgs - spp->tt_map_pgs;
 
 #ifndef GC_STANDARD
     BUG_ON(true);
@@ -569,8 +569,8 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 #ifdef GC_STANDARD
     shard->grain_bitmap = (bool*) kzalloc(tt_grains * sizeof(bool), 
                           GFP_KERNEL);
-    printk("Grain bitmap allocated for %llu grains shard %p.\n", 
-            tt_grains, shard);
+    printk("Grain bitmap (%p) allocated for shard %llu %llu grains shard %p.\n", 
+            shard->grain_bitmap, shard->id, tt_grains, shard);
 #endif
 
     shard->ftl = (struct demand_member*) 
@@ -670,6 +670,7 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 		ssd = kmalloc(sizeof(struct ssd), GFP_KERNEL);
 		ssd_init(ssd, &spp, cpu_nr_dispatcher);
 		conv_init_ftl(&demand_shards[i], &cpp, ssd);
+        demand_shards[i].id = i;
 	}
     
     nvmev_vdev->space_used = 0;
@@ -881,6 +882,8 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
      * A: 1 0 0 0 B: 1 ... -> A is length 4.
      */
 
+    printk("Marking grain %llu valid shard %llu (%p)\n", 
+            grain, shard->id, shard->grain_bitmap);
     NVMEV_ASSERT(shard->grain_bitmap[grain] != 1);
     shard->grain_bitmap[grain] = 1;
 #endif
@@ -2565,27 +2568,29 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     key.key = NULL;
     key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
 
+    memcpy(key.key, cmd->kv_store.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
+
     uint64_t hash = CityHash64(key.key, klen);
     struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
     struct ssdparams *spp = &shard->ssd->sp;
 
-    printk("This write going to partition %llu!\n", hash % SSD_PARTITIONS);
+    //printk("This write %llu going to partition %llu!\n", 
+    //        hash, hash % SSD_PARTITIONS);
 
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
     d_req->ssd = shard->ssd;
     d_req->nsecs_start = req->nsecs_start;
     d_req->hash_params = NULL;
     d_req->cmd = cmd;
+    d_req->key = key;
 
     NVMEV_ASSERT(key.key);
     NVMEV_ASSERT(cmd->kv_store.key);
     NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(vlen > klen);
 
-    memcpy(key.key, cmd->kv_store.key, klen);
-    key.key[klen] = '\0';
-    key.len = klen;
-    d_req->key = key;
 
     NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u cmd %p req %p\n", 
                 *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 

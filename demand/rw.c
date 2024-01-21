@@ -855,6 +855,8 @@ void *demand_end_req(algo_req *a_req) {
 	struct demand_params *d_params = (struct demand_params *)a_req->params;
 	request *req = a_req->parents;
 	snode *wb_entry = d_params->wb_entry;
+    BUG_ON(!d_params->shard);
+    struct demand_shard *shard = d_params->shard;
 
 	struct hash_params *h_params;
 	struct inflight_params *i_params;
@@ -862,7 +864,6 @@ void *demand_end_req(algo_req *a_req) {
 
 	dl_sync *sync_mutex = d_params->sync_mutex;
 
-    BUG_ON(!d_params);
 	int offset = d_params->offset;
 
 	switch (a_req->type) {
@@ -901,7 +902,7 @@ void *demand_end_req(algo_req *a_req) {
                 a_req->need_retry = false;
 				hash_collision_logging(h_params->cnt, DREAD);
 				kfree(h_params);
-                req->value->length = get_vlen(d_params->shard, G_IDX(req->ppa), offset);
+                req->value->length = get_vlen(shard, G_IDX(req->ppa), offset);
 				req->end_req(req);
 			} else {
                 NVMEV_INFO("Passed cmp 2.\n");
@@ -934,7 +935,7 @@ void *demand_end_req(algo_req *a_req) {
 				i_params = get_iparams(NULL, wb_entry);
 				i_params->jump = GOTO_UPDATE;
 
-				q_enqueue((void *)wb_entry, d_params->shard->ftl->wb_retry_q);
+				q_enqueue((void *)wb_entry, shard->ftl->wb_retry_q);
 			} else {
 				/* retry */
 				d_stat.fp_collision_w++;
@@ -942,7 +943,7 @@ void *demand_end_req(algo_req *a_req) {
 				h_params->find = HASH_KEY_DIFF;
 				h_params->cnt++;
 
-				q_enqueue((void *)wb_entry, d_params->shard->ftl->wb_master_q);
+				q_enqueue((void *)wb_entry, shard->ftl->wb_master_q);
 			}
 			inf_free_valueset(d_params->value, FS_MALLOC_R);
 		}
@@ -979,7 +980,7 @@ void *demand_end_req(algo_req *a_req) {
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_read_on_write++;
-			q_enqueue((void *)wb_entry, req->shard->ftl->wb_retry_q);
+			q_enqueue((void *)wb_entry, shard->ftl->wb_retry_q);
             return NULL;
 		}
 		break;
@@ -996,12 +997,12 @@ void *demand_end_req(algo_req *a_req) {
 			//inf_assign_try(req);
 		} else {
 			d_stat.t_write_on_write++;
-			q_enqueue((void *)wb_entry, req->shard->ftl->wb_retry_q);
+			q_enqueue((void *)wb_entry, shard->ftl->wb_retry_q);
 		}
 		break;
 	case GCDR:
 		d_stat.data_r_dgc++;
-		req->shard->ftl->nr_valid_read_done++;
+		shard->ftl->nr_valid_read_done++;
 		break;
 	case GCDW:
 		d_stat.data_w_dgc++;
@@ -1009,7 +1010,7 @@ void *demand_end_req(algo_req *a_req) {
 		break;
 	case GCMR_DGC:
 		d_stat.trans_r_dgc++;
-		req->shard->ftl->nr_tpages_read_done++;
+		shard->ftl->nr_tpages_read_done++;
 		//inf_free_valueset(d_params->value, FS_MALLOC_R);
 		break;
 	case GCMW_DGC:
@@ -1018,7 +1019,7 @@ void *demand_end_req(algo_req *a_req) {
 		break;
 	case GCMR:
 		d_stat.trans_r_tgc++;
-		req->shard->ftl->nr_valid_read_done++;
+		shard->ftl->nr_valid_read_done++;
 		break;
 	case GCMW:
 		d_stat.trans_w_tgc++;
