@@ -202,10 +202,10 @@ int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req,
     }
 
     NVMEV_DEBUG("Bringing in IDX %lu PPA %u in %s.\n", IDX(lpa), cmt->t_ppa, __func__);
+    struct algo_req *a_req = make_algo_req_rw(shard, MAPPINGR, _value_mr, req, wb_entry);
     _value_mr->shard = shard;
-    nsec = __demand.li->read(cmt->t_ppa, spp->pgsz, _value_mr, ASYNC,
-                             make_algo_req_rw(shard, MAPPINGR, _value_mr,
-                             req, wb_entry));
+    nsec = __demand.li->read(cmt->t_ppa, spp->pgsz, _value_mr, ASYNC, a_req);
+    kfree(a_req);
 
     if(nsecs_completed) {
         *nsecs_completed = nsec;

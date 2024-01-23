@@ -18,7 +18,6 @@ struct algo_req *make_algo_req_default(uint8_t type, value_set *value) {
     (struct demand_params *)kzalloc(sizeof(struct demand_params), GFP_KERNEL);
 	d_params->value = value;
 	d_params->wb_entry = NULL;
-	//d_params->cmt = NULL;
 	d_params->sync_mutex = NULL;
 	d_params->offset = 0;
 
