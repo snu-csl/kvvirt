@@ -10,7 +10,6 @@
 #include <linux/sched/clock.h>
 
 extern struct algorithm __demand;
-extern struct demand_env d_env;
 extern struct demand_stat d_stat;
 
 struct demand_cache cgo_cache[SSD_PARTITIONS];
@@ -35,28 +34,29 @@ static struct cache_stat *cstat;
 static void print_cache_env(struct demand_shard const *shard) {
     struct cache_env *const _env = &shard->cache->env;
 
-    printk("\n");
-    printk(" |---------- Demand Cache Log: Coarse-grained Cache\n");
-    printk(" | Total trans pages:        %d\n", _env->nr_valid_tpages);
-    //printk(" | Caching Ratio:            %0.3f%%\n", _env->caching_ratio * 100);
-    printk(" | Caching Ratio:            same as PFTL\n");
-    printk(" |  - Max cached tpages:     %d (%lu pairs)\n",
+    NVMEV_DEBUG("\n");
+    NVMEV_DEBUG(" |---------- Demand Cache Log: Coarse-grained Cache\n");
+    NVMEV_DEBUG(" | Total trans pages:        %d\n", _env->nr_valid_tpages);
+    //NVMEV_DEBUG(" | Caching Ratio:            %0.3f%%\n", _env->caching_ratio * 100);
+    NVMEV_DEBUG(" | Caching Ratio:            same as PFTL\n");
+    NVMEV_DEBUG(" |  - Max cached tpages:     %d (%lu pairs)\n",
             _env->max_cached_tpages, _env->max_cached_tpages * EPP);
-    //printk(" |  (PageFTL cached tpages:  %d)\n", _env->nr_tpages_optimal_caching);
-    printk(" |---------- Demand Cache Log END\n");
-    printk("\n");
+    //NVMEV_DEBUG(" |  (PageFTL cached tpages:  %d)\n", _env->nr_tpages_optimal_caching);
+    NVMEV_DEBUG(" |---------- Demand Cache Log END\n");
+    NVMEV_DEBUG("\n");
 }
 
 static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
                          struct cache_env *const _env) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
+    struct demand_env *d_env = shard->env;
     uint64_t capa, dram;
 
     _env->c_type = c_type;
 
-    _env->nr_tpages_optimal_caching = d_env.nr_pages * 4 / spp->pgsz;
-    _env->nr_valid_tpages = (d_env.nr_pages / EPP) + ((d_env.nr_pages % EPP) ? 1 : 0);
+    _env->nr_tpages_optimal_caching = d_env->nr_pages * 4 / spp->pgsz;
+    _env->nr_valid_tpages = (d_env->nr_pages / EPP) + ((d_env->nr_pages % EPP) ? 1 : 0);
     _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
     capa = spp->tt_pgs * spp->pgsz;
@@ -70,16 +70,21 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tentries *= GRAIN_PER_PAGE / 2;
 #endif
 
+    NVMEV_DEBUG("nr pages %u Valid tpages %u tentries %u\n", 
+            d_env->nr_pages, _env->nr_valid_tpages, _env->nr_valid_tentries);
+
     print_cache_env(shard);
 }
 
-static void cgo_member_init(struct demand_cache *cache) { 
+static void cgo_member_init(struct demand_shard *shard) { 
+    struct demand_cache *cache = shard->cache;
     struct cache_member *_member = &cache->member;
     struct cache_env *cenv = &cache->env;
+    struct demand_env *d_env = shard->env;
     struct cmt_struct **cmt =
     (struct cmt_struct **)vmalloc(cenv->nr_valid_tpages * sizeof(struct cmt_struct *));
 
-    printk("Allocated CMT %p member %p cache %p %u pages\n", 
+    NVMEV_DEBUG("Allocated CMT %p member %p cache %p %u pages\n", 
             cmt, _member, cache, cenv->nr_valid_tpages);
 
     for (int i = 0; i < cenv->nr_valid_tpages; i++) {
@@ -92,8 +97,8 @@ static void cgo_member_init(struct demand_cache *cache) {
         cmt[i]->state = CLEAN;
         cmt[i]->is_flying = false;
 
-        q_init(&cmt[i]->retry_q, d_env.wb_flush_size);
-        q_init(&cmt[i]->wait_q, d_env.wb_flush_size);
+        q_init(&cmt[i]->retry_q, d_env->wb_flush_size);
+        q_init(&cmt[i]->wait_q, d_env->wb_flush_size);
 
         cmt[i]->dirty_cnt = 0;
     }
@@ -126,20 +131,20 @@ int cgo_create(struct demand_shard *shard, cache_t c_type) {
     cstat = &dc->stat;
 
     cgo_env_init(shard, c_type, &dc->env);
-    cgo_member_init(dc);
+    cgo_member_init(shard);
     cgo_stat_init(&dc->stat);
 
     return 0;
 }
 
 static void cgo_print_member(void) {
-    //printk("=====================");
-    //printk(" Cache Finish Status ");
-    //printk("=====================");
+    //NVMEV_DEBUG("=====================");
+    //NVMEV_DEBUG(" Cache Finish Status ");
+    //NVMEV_DEBUG("=====================");
 
-    //printk("Max Cached tpages:     %d\n", cenv->max_cached_tpages);
-    //printk("Current Cached tpages: %d\n", cmbr->nr_cached_tpages);
-    //printk("\n");
+    //NVMEV_DEBUG("Max Cached tpages:     %d\n", cenv->max_cached_tpages);
+    //NVMEV_DEBUG("Current Cached tpages: %d\n", cmbr->nr_cached_tpages);
+    //NVMEV_DEBUG("\n");
 }
 
 static void cgo_member_kfree(struct demand_cache *cache) {
@@ -179,7 +184,7 @@ int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req,
     uint64_t nsec = 0;
 
     if (IS_INITIAL_PPA(cmt->t_ppa)) {
-        NVMEV_ERROR("Tried to load an unmapped PPA in %s.\n", __func__);
+        NVMEV_DEBUG("Tried to load an unmapped PPA in %s.\n", __func__);
         return 0;
     }
 
@@ -196,12 +201,11 @@ int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req,
         wb_entry->mapping_v = _value_mr;
     }
 
-    NVMEV_DEBUG("Reading a mapping PPA %u in %s.\n", cmt->t_ppa, __func__);
+    NVMEV_DEBUG("Bringing in IDX %lu PPA %u in %s.\n", IDX(lpa), cmt->t_ppa, __func__);
     _value_mr->shard = shard;
     nsec = __demand.li->read(cmt->t_ppa, spp->pgsz, _value_mr, ASYNC,
                              make_algo_req_rw(shard, MAPPINGR, _value_mr,
                              req, wb_entry));
-    NVMEV_ERROR("Read returned.\n");
 
     if(nsecs_completed) {
         *nsecs_completed = nsec;
@@ -212,7 +216,7 @@ int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req,
 }
 
 void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx,
-                   struct ssdparams *spp) {
+                   struct ssdparams *spp, uint64_t shard_id) {
     uint64_t start_lpa = idx * EPP;
 
     for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
@@ -223,8 +227,8 @@ void __page_to_pte(value_set *value, struct pt_struct *pt, uint64_t idx,
 #endif
 
         if(ppa != UINT_MAX) {
-            NVMEV_DEBUG("Bringing in LPA %u PPA %u in %s.\n", 
-                         start_lpa + i, ppa, __func__);
+            NVMEV_DEBUG("Bringing in LPA %llu PPA %u shard %llu in %s.\n", 
+                         start_lpa + i, ppa, shard_id, __func__);
         }
     }
 }
@@ -242,8 +246,8 @@ void __cgo_pte_to_page(value_set *value, struct pt_struct *pt, uint64_t idx,
         memcpy(value->value + (i * ENTRY_SIZE) + sizeof(ppa), &fp, sizeof(fp));
 #endif
 
-        if(ppa != UINT_MAX) {
-            NVMEV_DEBUG("LPA %u PPA %u in %s.\n", start_lpa + i, ppa, __func__);
+        if(ppa == 0) {
+            NVMEV_DEBUG("Sending out LPA %llu PPA %u in %s.\n", start_lpa + i, ppa, __func__);
         }
     }
 }
@@ -262,7 +266,7 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     struct cmt_struct *victim = NULL;
 
-    NVMEV_ERROR("Got CMT IDX %u.\n", IDX(lpa));
+    NVMEV_DEBUG("Got CMT IDX %u.\n", IDX(lpa));
 
     struct inflight_params *i_params;
 
@@ -324,7 +328,7 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
                          victim->idx, __func__);
         } else {
             NVMEV_DEBUG("Evicted CLEAN mapping entry IDX %u in %s.\n",
-                    victim->idx, __func__);
+                         victim->idx, __func__);
             cstat->clean_evict++;
         }
 
@@ -341,7 +345,7 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
     cmbr->nr_cached_tpages++;
 
     if (cmt->is_flying) {
-        NVMEV_ERROR("Passed flying check in %s.\n", __func__);
+        NVMEV_DEBUG("Passed flying check in %s.\n", __func__);
         cmt->is_flying = false;
 
         if(!cmt->pt) {
@@ -357,10 +361,8 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
         }
 
         if (req) {
-            NVMEV_ERROR("Entered req branch in %s.\n", __func__);
-
             NVMEV_ASSERT(req->mapping_v);
-            __page_to_pte(req->mapping_v, cmt->pt, cmt->idx, spp);
+            __page_to_pte(req->mapping_v, cmt->pt, cmt->idx, spp, shard->id);
             kfree(req->mapping_v->value);
             kfree(req->mapping_v);
             req->mapping_v = NULL;
@@ -371,15 +373,14 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
 
                 struct inflight_params *i_params = get_iparams(retry_req, NULL);
                 i_params->jump = GOTO_COMPLETE;
-                NVMEV_ERROR("Set i_params to GOTO_COMPLETE in %s.\n", __func__);
                 //i_params->pte = cmt->pt[OFFSET(retry_lpa)];
 
-                //printk("Should have called inf_assign_try in cgo_list_up!\n");
+                //NVMEV_DEBUG("Should have called inf_assign_try in cgo_list_up!\n");
                 //inf_assign_try(retry_req);
             }
         } else if (wb_entry) {
             NVMEV_ASSERT(wb_entry->mapping_v);
-            __page_to_pte(wb_entry->mapping_v, cmt->pt, cmt->idx, spp);
+            __page_to_pte(wb_entry->mapping_v, cmt->pt, cmt->idx, spp, shard->id);
             kfree(wb_entry->mapping_v->value);
             kfree(wb_entry->mapping_v);
             wb_entry->mapping_v = NULL;
@@ -420,7 +421,7 @@ int cgo_update(struct demand_shard *shard, lpa_t lpa, struct pt_struct pte) {
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
 
-    //printk("cgo_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
+    //NVMEV_DEBUG("cgo_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
 
     if (cmt->pt) {
         NVMEV_DEBUG("Setting LPA %u to PPA %u FP %u in update.\n", lpa, pte.ppa, pte.key_fp);
@@ -432,8 +433,8 @@ int cgo_update(struct demand_shard *shard, lpa_t lpa, struct pt_struct pte) {
              * Only safe if assuming battery-backed DRAM.
              */
 
-            NVMEV_ERROR("Marking mapping PPA %u invalid as it was dirtied in memory.\n",
-                    cmt->t_ppa);
+            NVMEV_DEBUG("Marking mapping PPA %u invalid as it was dirtied in memory.\n",
+                         cmt->t_ppa);
             mark_grain_invalid(shard, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
         }
 
@@ -445,8 +446,8 @@ int cgo_update(struct demand_shard *shard, lpa_t lpa, struct pt_struct pte) {
         //cmbr->mem_table[IDX(lpa)][OFFSET(lpa)] = pte;
 
         //static int cnt = 0;
-        //if (++cnt % 10240 == 0) //printk("cgo_update %d\n", cnt);
-        ////printk("cgo_update %d\n", ++cnt);
+        //if (++cnt % 10240 == 0) //NVMEV_DEBUG("cgo_update %d\n", cnt);
+        ////NVMEV_DEBUG("cgo_update %d\n", ++cnt);
     }
     return 0;
 }
@@ -468,12 +469,14 @@ bool cgo_is_full(struct demand_cache* cache) {
     return (cmbr->nr_cached_tpages >= cache->env.max_cached_tpages);
 }
 
-struct pt_struct cgo_get_pte(struct demand_cache *cache, lpa_t lpa) {
+struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
+    struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     if (cmt->pt) {
-        NVMEV_DEBUG("%s returning %u for LPA %u IDX %u\n", 
-                    __func__, cmt->pt[OFFSET(lpa)].ppa, lpa, IDX(lpa));
+        NVMEV_DEBUG("%s returning %u for LPA %u IDX %lu shard %llu cmt %p\n", 
+                    __func__, cmt->pt[OFFSET(lpa)].ppa, lpa, IDX(lpa), shard->id,
+                    cmt);
         return cmt->pt[OFFSET(lpa)];
     } else {
         if(cmt->t_ppa == UINT_MAX) {
@@ -499,7 +502,7 @@ struct pt_struct cgo_get_pte(struct demand_cache *cache, lpa_t lpa) {
         //return cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
     }
     /*      if (unlikely(cmt->pt == NULL)) {
-    //printk("Should have aborted!!!! %s:%d
+    //NVMEV_DEBUG("Should have aborted!!!! %s:%d
     , __FILE__, __LINE__);;
     }
     return cmt->pt[OFFSET(lpa)]; */

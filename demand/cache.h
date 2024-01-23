@@ -61,7 +61,7 @@ struct demand_cache {
 	int (*touch) (struct demand_cache*, lpa_t lpa);
 	int (*update) (struct demand_shard*, lpa_t lpa, struct pt_struct pte);
 
-	struct pt_struct (*get_pte) (struct demand_cache*, lpa_t lpa);
+	struct pt_struct (*get_pte) (struct demand_shard*, lpa_t lpa);
 	struct cmt_struct *(*get_cmt) (struct demand_cache*, lpa_t lpa);
 
 	bool (*is_hit) (struct demand_cache*, lpa_t lpa);

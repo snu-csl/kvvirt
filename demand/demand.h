@@ -275,7 +275,8 @@ int invalidate_grain(blockmanager *, pga_t);
 #endif
 
 #ifdef GC_STANDARD
-void __page_to_pte(value_set*, struct pt_struct*, uint64_t, struct ssdparams*);
+void __page_to_pte(value_set*, struct pt_struct*, uint64_t, struct ssdparams*,
+                   uint64_t shard_id);
 #else
 void __page_to_ptes_wcmt(value_set *value, struct cmt_struct *cmt);
 void __page_to_ptes(value_set*, uint64_t, bool);

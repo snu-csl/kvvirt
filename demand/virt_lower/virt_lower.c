@@ -46,16 +46,16 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, ppa_t ppa_)
     ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
     ppa.g.pg = ppa_ % spp->pgs_per_blk;
 
-    //printk("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //NVMEV_DEBUG("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
     if(ppa_ > spp->tt_pgs) {
-        printk("Tried %u\n", ppa_);
-        printk("Caller is %pS\n", __builtin_return_address(0));
-        printk("Caller is %pS\n", __builtin_return_address(1));
-        printk("Caller is %pS\n", __builtin_return_address(2));
-        printk("Caller is %pS\n", __builtin_return_address(3));
-        printk("Caller is %pS\n", __builtin_return_address(4));
+        NVMEV_DEBUG("Tried %u\n", ppa_);
+        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(0));
+        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(1));
+        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(2));
+        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(3));
+        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(4));
     }
 
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
@@ -103,13 +103,15 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
     struct ppa ppa;
 
-    uint64_t off = (uint64_t) PPA * ssd->sp.pgsz;
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ((uint64_t) PPA * spp->pgsz);
 
     NVMEV_DEBUG("Writing PPA %u (%llu) size %u pagesize %u in virt_push_datas\n", 
                 PPA, off, size, ssd->sp.pgsz);
 
     memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
 
+    ppa = ppa_to_struct(spp, PPA);
     if (last_pg_in_wordline(value->shard, &ppa)) {
         struct nand_cmd swr = {
             .type = USER_IO,
@@ -154,9 +156,10 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
     struct ssd* ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
 
-    uint64_t off = (uint64_t) PPA * ssd->sp.pgsz;
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ((uint64_t) PPA * spp->pgsz);
 
-    NVMEV_DEBUG("Reading PPA %u (%u) size %u sqid %u %s in virt_dev\n", 
+    NVMEV_DEBUG("Reading PPA %u (%llu) size %u sqid %u %s in virt_dev\n", 
             PPA, off, size, nvmev_vdev->sqes[1]->qid, 
             async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
 

@@ -133,7 +133,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
 		if (cache->is_hit(cache, lpa)) {
             NVMEV_DEBUG("%s It was cached.\n", __func__);
-			struct pt_struct pte = cache->get_pte(cache, lpa);
+			struct pt_struct pte = cache->get_pte(shard, lpa);
 			pte.ppa = ppas[i].new_ppa;
 			cache->update(shard, lpa, pte);
 			skip_update[i] = true;
@@ -192,7 +192,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
         struct cmt_struct t_cmt;
         t_cmt.pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-        __page_to_pte(pts[cmts_loaded], t_cmt.pt, t_cmt.idx, spp);
+        __page_to_pte(pts[cmts_loaded], t_cmt.pt, t_cmt.idx, spp, shard->id);
 
         uint64_t offset = OFFSET(ppas[i].lpa);
         t_cmt.pt[offset].ppa = ppas[i].new_ppa;

@@ -567,23 +567,25 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     }
 
 #ifdef GC_STANDARD
-    shard->grain_bitmap = (bool*) kzalloc(tt_grains * sizeof(bool), 
-                          GFP_KERNEL);
+    shard->grain_bitmap = (bool*) vmalloc(tt_grains * sizeof(bool));
+    memset(shard->grain_bitmap, 0x0, tt_grains * sizeof(bool));
     printk("Grain bitmap (%p) allocated for shard %llu %llu grains shard %p.\n", 
             shard->grain_bitmap, shard->id, tt_grains, shard);
 #endif
 
+    shard->env = (struct demand_env*) kzalloc(sizeof(*shard->env), GFP_KERNEL);
     shard->ftl = (struct demand_member*) 
                   kzalloc(sizeof(*shard->ftl), GFP_KERNEL);
     shard->cache = (struct demand_cache*)
                     kzalloc(sizeof(*shard->cache), GFP_KERNEL);
+    demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
+
 #ifdef GC_STANDARD
     cgo_create(shard, OLD_COARSE_GRAINED);
 #else
     NVMEV_ASSERT(false);
 #endif
 
-    demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
     print_demand_stat(&d_stat);
 }
 
@@ -635,6 +637,9 @@ static void conv_init_ftl(uint64_t id, struct demand_shard *demand_shard,
 	init_write_flow_control(demand_shard);
 
     demand_init(demand_shard, ssd->sp.tt_pgs * ssd->sp.pgsz, ssd);
+
+    /* for storing invalid mappings during GC */
+    alloc_gc_mem(demand_shard);
 
 	NVMEV_INFO("Init FTL instance with %d channels (%ld pages)\n", demand_shard->ssd->sp.nchs,
 		        demand_shard->ssd->sp.tt_pgs);
@@ -692,9 +697,6 @@ void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *
 		demand_shards[i].ssd->pcie = demand_shards[0].ssd->pcie;
 		demand_shards[i].ssd->write_buffer = demand_shards[0].ssd->write_buffer;
 	}
-
-    /* for storing invalid mappings during GC */
-    alloc_gc_mem(&demand_shards[0]);
 
 	ns->id = id;
 	ns->csi = NVME_CSI_NVM;
@@ -861,7 +863,7 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
 	pg = get_pg(shard->ssd, &ppa);
 
     if(pg->status != PG_VALID) {
-        NVMEV_ERROR("Page %u was %d\n", page, pg->status);
+        NVMEV_ERROR("Page %llu was %d\n", page, pg->status);
     }
 
 	NVMEV_ASSERT(pg->status == PG_VALID);
@@ -878,8 +880,8 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
     NVMEV_ASSERT(line->vgc >= 0 && line->vgc <= spp->pgs_per_line * GRAIN_PER_PAGE);
     line->vgc += len;
 
-    NVMEV_INFO("Marking grain %llu length %u in PPA %llu line %d valid\n", 
-            grain, len, page, line->id);
+    NVMEV_DEBUG("Marking grain %llu length %u in PPA %llu line %d valid shard %llu\n", 
+                 grain, len, page, line->id, shard->id);
 
 #ifdef GC_STANDARD
     /*
@@ -890,8 +892,8 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
      * A: 1 0 0 0 B: 1 ... -> A is length 4.
      */
 
-    printk("Marking grain %llu valid shard %llu (%p)\n", 
-            grain, shard->id, shard->grain_bitmap);
+    //printk("Marking grain %llu valid shard %llu (%p)\n", 
+    //        grain, shard->id, shard->grain_bitmap);
     NVMEV_ASSERT(shard->grain_bitmap[grain] != 1);
     shard->grain_bitmap[grain] = 1;
 #endif
@@ -949,8 +951,8 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 	/* update corresponding line status */
 	line = get_line(shard, &ppa);
 
-    NVMEV_INFO("Marking grain %llu length %u in PPA %u line %d invalid\n", 
-            grain, len, ppa2pgidx(shard, &ppa), line->id);
+    NVMEV_DEBUG("Marking grain %llu length %u in PPA %u line %d invalid shard %llu\n", 
+                 grain, len, ppa2pgidx(shard, &ppa), line->id, shard->id);
 
 	//NVMEV_ASSERT(line->ipc >= 0 && line->ipc < spp->pgs_per_line);
     NVMEV_ASSERT(line->igc >= 0 && line->igc < spp->pgs_per_line * GRAIN_PER_PAGE);
@@ -1014,7 +1016,7 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 
     if(pg_inv_cnt[page] == spp->pgsz) {
         if(pg_inv_cnt[page] != spp->pgsz) {
-            NVMEV_ERROR("inv was %u v was %u ppa %u\n", 
+            NVMEV_ERROR("inv was %u v was %u ppa %llu\n", 
                          pg_inv_cnt[page], pg_v_cnt[page], page);
         }
 
@@ -1194,7 +1196,7 @@ void clear_oob(struct demand_shard *shard, uint64_t pgidx) {
 bool oob_empty(struct demand_shard *shard, uint64_t pgidx) {
     for(int i = 0; i < GRAIN_PER_PAGE; i++) {
         if(shard->oob[pgidx][i] == 1) {
-            NVMEV_ERROR("Page %u offset %d was %u\n", 
+            NVMEV_ERROR("Page %llu offset %d was %llu\n", 
                          pgidx, i, shard->oob[pgidx][i]);
             return false;
         }
@@ -1687,7 +1689,7 @@ new_ppa:
     }
 
     if(remain != 0) {
-        NVMEV_ERROR("Remain was %u\n", remain);
+        NVMEV_ERROR("Remain was %llu\n", remain);
     }
 
     NVMEV_ASSERT(offset > 0);
@@ -2621,7 +2623,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     args->shard = shard;
     args->req = d_req;
 
-    schedule_internal_operation_cb(req->sq_id, 0,
+    schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
                                    (void*) cmd->kv_store.dptr.prp1, 0,
                                    value->length, (void*) __demand.write, 
                                    (void*) args, false);

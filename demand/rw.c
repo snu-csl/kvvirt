@@ -11,12 +11,11 @@
 #include <linux/sched/clock.h>
 
 extern algorithm __demand;
-extern struct demand_env d_env;
 extern struct demand_stat d_stat;
 
 void d_set_oob(struct demand_shard *shard, lpa_t lpa, ppa_t ppa, 
                uint64_t offset, uint32_t len) {
-    NVMEV_INFO("Setting OOB for PPA %u offset %llu LPA %u len %u\n", 
+    NVMEV_DEBUG("Setting OOB for PPA %u offset %llu LPA %u len %u\n", 
                 ppa, offset, lpa, len);
 
     shard->oob[ppa][offset] = lpa;
@@ -76,7 +75,7 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
     uint64_t line = (uint64_t) l->id;
     uint64_t nsecs_completed = 0;
 
-    NVMEV_INFO("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
+    NVMEV_DEBUG("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
                  lpa, ppa, line, inv_mapping_offs[line]);
 
     BUG_ON(lpa == UINT_MAX);
@@ -98,7 +97,7 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
         mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
     
 		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
-        NVMEV_INFO("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
                     line, inv_mapping_offs[line], w_ppa);
 
         oob[w_ppa][0] = UINT_MAX;
@@ -260,8 +259,9 @@ read_retry:
         if(for_del) {
             do_wb_delete(shard->ftl->write_buffer, req);
         } else {
-            nsecs_completed =
-            ssd_advance_pcie(req->ssd, req->nsecs_start, 1024);
+            NVMEV_ASSERT(false);
+            //nsecs_completed =
+            //ssd_advance_pcie(req->ssd, req->nsecs_start, 1024);
             req->end_req(req);
         }
         free_iparams(req, NULL);
@@ -300,7 +300,7 @@ cache_list_up:
 cache_check_complete:
 	free_iparams(req, NULL);
 
-	pte = shard->cache->get_pte(shard->cache, lpa);
+	pte = shard->cache->get_pte(shard, lpa);
 #ifdef STORE_KEY_FP
 	/* fast fingerprint compare */
 	if (h_params->key_fp != pte.key_fp) {
@@ -311,7 +311,7 @@ cache_check_complete:
 #endif
 data_read:
 	/* 3. read actual data */
-    NVMEV_INFO("Got PPA %u for LPA %u\n", pte.ppa, lpa);
+    NVMEV_DEBUG("Got PPA %u for LPA %u\n", pte.ppa, lpa);
     rc = read_actual_dpage(shard, pte.ppa, req, &nsecs_completed);
     nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : 
                    max(nsecs_latest, nsecs_completed);
@@ -368,7 +368,9 @@ read_ret:
 }
 
 
-static bool wb_is_full(skiplist *wb) { return (wb->size == d_env.wb_flush_size); }
+static bool wb_is_full(struct demand_shard *shard, skiplist *wb) { 
+    return (wb->size == shard->env->wb_flush_size); 
+}
 
 uint32_t cnt = 0;
 static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
@@ -383,11 +385,11 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 #ifdef DVALUE
 	l_bucket *wb_bucket = (l_bucket *)kzalloc(sizeof(l_bucket), GFP_KERNEL);
 	for (int i = 1; i <= GRAIN_PER_PAGE; i++) {
-		wb_bucket->bucket[i] = (snode **)kzalloc(d_env.wb_flush_size * sizeof(snode *), GFP_KERNEL);
+		wb_bucket->bucket[i] = (snode **)kzalloc(shard->env->wb_flush_size * sizeof(snode *), GFP_KERNEL);
 		wb_bucket->idx[i] = 0;
 	}
 
-	for (size_t i = 0; i < d_env.wb_flush_size; i++) {
+	for (size_t i = 0; i < shard->env->wb_flush_size; i++) {
 		wb_entry = skiplist_get_next(iter);
 		int val_len = wb_entry->value->length;
 
@@ -396,7 +398,7 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 	}
 
 	int ordering_done = 0;
-	while (ordering_done < d_env.wb_flush_size) {
+	while (ordering_done < shard->env->wb_flush_size) {
 		struct value_set *new_vs = get_vs(spp);
 
 		PTR page = new_vs->value;
@@ -450,7 +452,7 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
             char tmp[128];
             memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
             tmp[wb_entry->key.len] = '\0';
-            NVMEV_INFO("%s writing %s length %u (%u %llu) to %u (%u)\n", 
+            NVMEV_DEBUG("%s writing %s length %u (%u %llu) to %u (%u)\n", 
                         __func__, tmp, *(uint8_t*) wb_entry->value->value, 
                         wb_entry->value->length, 
                         *(uint64_t*) (wb_entry->value->value + sizeof(uint8_t)),
@@ -471,7 +473,7 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 
         if(remain > 0) {
             NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
-            NVMEV_ERROR("Ordering %s.\n", ordering_done < d_env.wb_flush_size ? "NOT DONE" : "DONE");
+            NVMEV_ERROR("Ordering %s.\n", ordering_done < shard->env->wb_flush_size ? "NOT DONE" : "DONE");
             mark_grain_valid(shard, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(shard, PPA_TO_PGA(ppa, offset), 
@@ -490,7 +492,7 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 	}
 	kfree(wb_bucket);
 #else
-	for (int i = 0; i < d_env.wb_flush_size; i++) {
+	for (int i = 0; i < shard->env->wb_flush_size; i++) {
 		wb_entry = skiplist_get_next(iter);
 		wb_entry->ppa = get_dpage(bm);
 
@@ -534,7 +536,7 @@ static uint64_t _do_wb_mapping_update(struct demand_shard *shard, skiplist *wb,
 
 	/* push all the wb_entries to queue */
 	sk_iter *iter = skiplist_get_iterator(wb);
-	for (int i = 0; i < d_env.wb_flush_size; i++) {
+	for (int i = 0; i < shard->env->wb_flush_size; i++) {
 		wb_entry = skiplist_get_next(iter);
 		q_enqueue((void *)wb_entry, shard->ftl->wb_master_q);
 	}
@@ -542,7 +544,7 @@ static uint64_t _do_wb_mapping_update(struct demand_shard *shard, skiplist *wb,
 
 	/* mapping update */
 	volatile int updated = 0;
-	while (updated < d_env.wb_flush_size) {
+	while (updated < shard->env->wb_flush_size) {
 		wb_entry = (snode *)q_dequeue(shard->ftl->wb_retry_q);
 		if (!wb_entry) {
 			wb_entry = (snode *)q_dequeue(shard->ftl->wb_master_q);
@@ -622,7 +624,7 @@ wb_cache_list_up:
 wb_data_check:
 		/* get page_table entry which contains {ppa, key_fp} */
 		start = local_clock();
-        pte = shard->cache->get_pte(shard->cache, lpa);
+        pte = shard->cache->get_pte(shard, lpa);
         end = local_clock();
         get += end - start;
         //printk("%s passed get_pte for LPA %u\n", __func__, lpa);
@@ -661,8 +663,8 @@ wb_data_check:
 #endif
 
 wb_update:
-        NVMEV_INFO("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
-		pte = shard->cache->get_pte(shard->cache, lpa);
+        NVMEV_DEBUG("1 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
+		pte = shard->cache->get_pte(shard, lpa);
 		if (!IS_INITIAL_PPA(pte.ppa)) {
             uint64_t offset = G_OFFSET(pte.ppa);
             uint32_t len = 1;
@@ -670,7 +672,7 @@ wb_update:
                 len++;
             }
 
-            NVMEV_INFO("%s LPA %u old PPA %u overwrite old len %u.\n", 
+            NVMEV_DEBUG("%s LPA %u old PPA %u overwrite old len %u.\n", 
                         __func__, lpa, pte.ppa, len);
 
             mark_grain_invalid(shard, pte.ppa, len);
@@ -721,7 +723,7 @@ wb_direct_update:
 	}
 
 	iter = skiplist_get_iterator(wb);
-	for (size_t i = 0; i < d_env.wb_flush_size; i++) {
+	for (size_t i = 0; i < shard->env->wb_flush_size; i++) {
 		snode *wb_entry = skiplist_get_next(iter);
         //(*credits) += wb_entry->len;
 		if (wb_entry->hash_params) kfree(wb_entry->hash_params);
@@ -757,10 +759,10 @@ uint64_t _do_wb_flush(struct demand_shard *shard, skiplist *wb,
     }
 
 	fl->size = 0;
-	memset(fl->list, 0, d_env.wb_flush_size * sizeof(struct flush_node));
+	memset(fl->list, 0, shard->env->wb_flush_size * sizeof(struct flush_node));
 
 	d_htable_kfree(shard->ftl->hash_table);
-	shard->ftl->hash_table = d_htable_init(d_env.wb_flush_size * 2);
+	shard->ftl->hash_table = d_htable_init(shard->env->wb_flush_size * 2);
 
 	/* wait until device traffic clean */
 	__demand.li->lower_flying_req_wait();
@@ -782,17 +784,21 @@ uint64_t _do_wb_flush(struct demand_shard *shard, skiplist *wb,
 }
 
 uint64_t pgs_this_flush = 0;
-static uint32_t _do_wb_insert(skiplist *wb, request *const req) {
-	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, req->sqid);
-    //NVMEV_DEBUG("%s K1 %s KLEN %u K2 %s\n", __func__,
-    //        (char*) wb_entry->key.key, *(uint8_t*) (wb_entry->value->value), 
-    //        (char*) (wb_entry->value->value + 1));
+static uint32_t _do_wb_insert(struct demand_shard *shard, skiplist *wb, 
+                              request *const req) {
+    bool ow = false;
+	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, 
+                                      req->sqid, &ow);
 #ifdef HASH_KVSSD
-	wb_entry->hash_params = (void *)req->hash_params;
+    if(!ow) {
+        wb_entry->hash_params = (void *)req->hash_params;
+    } else {
+        kfree(req->hash_params);
+    }
 #endif
 	req->value = NULL;
 
-	if (wb_is_full(wb)) return 1;
+	if (wb_is_full(shard, wb)) return 1;
 	else return 0;
 }
 
@@ -808,7 +814,7 @@ uint64_t __demand_write(struct demand_shard *shard, request *const req) {
     BUG_ON(!req);
 
 	/* flush the buffer if full */
-	if (wb_is_full(wb)) {
+	if (wb_is_full(shard, wb)) {
 		/* assign ppa first */
         _do_wb_assign_ppa(shard, wb);
 
@@ -823,11 +829,9 @@ uint64_t __demand_write(struct demand_shard *shard, request *const req) {
     }
 
 	/* default: insert to the buffer */
-	rc = _do_wb_insert(wb, req); // rc: is the write buffer is full? 1 : 0
+	rc = _do_wb_insert(shard, wb, req); // rc: is the write buffer is full? 1 : 0
    
-    nsecs_completed = nsecs_start + 1;
-    //ssd_advance_write_buffer(req->ssd, nsecs_start, length);
-
+    nsecs_completed = ssd_advance_write_buffer(req->ssd, nsecs_start, length);
     nsecs_latest = max(nsecs_completed, nsecs_latest);
 
 	req->end_req(req);
@@ -905,8 +909,8 @@ void *demand_end_req(algo_req *a_req) {
                 req->value->length = get_vlen(shard, G_IDX(req->ppa), offset);
 				req->end_req(req);
 			} else {
-                NVMEV_INFO("Passed cmp 2.\n");
-                NVMEV_INFO("Mismatch %llu and %llu.\n", 
+                NVMEV_DEBUG("Passed cmp 2.\n");
+                NVMEV_DEBUG("Mismatch %llu and %llu.\n", 
                            *(uint64_t*) check_key.key,
                            *(uint64_t*) (req->key.key));
 				d_stat.fp_collision_r++;
@@ -962,7 +966,7 @@ void *demand_end_req(algo_req *a_req) {
 #endif
 		break;
 	case MAPPINGR:
-        NVMEV_ERROR("In MAPPINGR.\n");
+        NVMEV_DEBUG("In MAPPINGR.\n");
 		d_stat.trans_r++;
 		//inf_free_valueset(d_params->value, FS_MALLOC_R);
 		if (sync_mutex) {

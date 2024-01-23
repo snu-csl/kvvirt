@@ -16,7 +16,7 @@ int cgo_touch(struct demand_cache*, lpa_t);
 int cgo_update(struct demand_shard*, lpa_t, struct pt_struct pte);
 bool cgo_is_hit(struct demand_cache*, lpa_t);
 bool cgo_is_full(struct demand_cache*);
-struct pt_struct cgo_get_pte(struct demand_cache*, lpa_t lpa);
+struct pt_struct cgo_get_pte(struct demand_shard*, lpa_t lpa);
 struct cmt_struct *cgo_get_cmt(struct demand_cache*, lpa_t lpa);
 
 #endif

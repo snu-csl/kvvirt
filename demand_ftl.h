@@ -130,6 +130,7 @@ struct gc_data {
 struct demand_shard {
     uint64_t id;
 
+    struct demand_env *env;
     struct demand_member *ftl;
     struct demand_cache *cache;
 

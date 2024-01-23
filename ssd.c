@@ -339,9 +339,36 @@ void ssd_remove(struct ssd *ssd)
 	kfree(ssd->ch);
 }
 
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+/*
+ * In the DFTLKV FTL, frontend key-value work (mapping, write buffer copies, 
+ * etc) is done in the worker threads, not in the dispatcher thread like in
+ * the conventional FTL. This means that there will be multiple threads
+ * accessing the single PCIe channel at the same time. We protect the channel
+ * with a spinlock, as to not introduce races.
+ *
+ * This gets us around 500K IOPS at most in the case of continually writing
+ * to the write buffer with no other background FTL work, but will likely 
+ * need re-doing for better concurrency when we want to test faster KVSSDs.
+ */
+spinlock_t spin;
+#endif
 uint64_t ssd_advance_pcie(struct ssd *ssd, uint64_t request_time, uint64_t length)
 {
 	struct channel_model *perf_model = ssd->pcie->perf_model;
+
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    while (!spin_trylock(&spin)) {
+		cpu_relax();
+	}
+#endif
+
+    uint64_t ret = chmodel_request(perf_model, request_time, length);
+
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    spin_unlock(&spin);
+#endif
+    return ret;
 	return chmodel_request(perf_model, request_time, length);
 }
 

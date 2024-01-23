@@ -30,7 +30,6 @@ struct algorithm __demand = {
 	.range_query =NULL 
 };
 
-struct demand_env d_env;
 struct demand_stat d_stat;
 
 #ifdef HASH_KVSSD
@@ -135,7 +134,9 @@ static void demand_env_init(struct demand_env *const _env, const struct ssdparam
 	print_demand_env(_env);
 }
 
-static int demand_member_init(struct demand_member *const _member, struct ssd *ssd) {
+static int demand_member_init(struct demand_shard *shard, struct ssd *ssd) {
+    struct demand_env *env = shard->env;
+    struct demand_member *const _member = shard->ftl;
 #ifdef HASH_KVSSD
 	key_max.key = (char *)kzalloc(sizeof(char) * MAXKEYSIZE, GFP_KERNEL);
 	key_max.len = MAXKEYSIZE;
@@ -150,21 +151,22 @@ static int demand_member_init(struct demand_member *const _member, struct ssd *s
 
 	_member->write_buffer = skiplist_init();
 
-	q_init(&_member->flying_q, d_env.wb_flush_size);
-	q_init(&_member->blocked_q, d_env.wb_flush_size);
+	q_init(&_member->flying_q, env->wb_flush_size);
+	q_init(&_member->blocked_q, env->wb_flush_size);
 	//q_init(&_member->wb_cmt_load_q, d_env.wb_flush_size);
-	q_init(&_member->wb_master_q, d_env.wb_flush_size);
-	q_init(&_member->wb_retry_q, d_env.wb_flush_size);
+	q_init(&_member->wb_master_q, env->wb_flush_size);
+	q_init(&_member->wb_retry_q, env->wb_flush_size);
 
 	struct flush_list *fl = (struct flush_list *)kzalloc(sizeof(struct flush_list), GFP_KERNEL);
 	fl->size = 0;
-	fl->list = (struct flush_node *)kzalloc(d_env.wb_flush_size * sizeof(struct flush_node), GFP_KERNEL);
+	fl->list = (struct flush_node *)kzalloc(env->wb_flush_size * 
+                                    sizeof(struct flush_node), GFP_KERNEL);
 	_member->flush_list = fl;
 
 #ifdef HASH_KVSSD
 	_member->max_try = 0;
 #endif
-	_member->hash_table = d_htable_init(d_env.wb_flush_size * 2);
+	_member->hash_table = d_htable_init(env->wb_flush_size * 2);
 
 	return 0;
 }
@@ -181,14 +183,14 @@ uint32_t demand_create(struct demand_shard *shard, lower_info *li,
 	algo->li = li;
 
 	/* init env */
-	demand_env_init(&d_env, &ssd->sp, size);
+	demand_env_init(shard->env, &ssd->sp, size);
 	/* init member */
-	demand_member_init(shard->ftl, ssd);
+	demand_member_init(shard, ssd);
 	/* init stat */
 	demand_stat_init(&d_stat);
 
 #ifdef GC_STANDARD
-    d_env.cache_id = OLD_COARSE_GRAINED;
+    shard->env->cache_id = OLD_COARSE_GRAINED;
 #else
     d_env.cache_id = COARSE_GRAINED;
 #endif

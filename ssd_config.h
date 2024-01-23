@@ -261,8 +261,8 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 //static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define SSD_PARTITIONS (4)
-#define NAND_CHANNELS (8)
-#define LUNS_PER_NAND_CH (8)
+#define NAND_CHANNELS (4)
+#define LUNS_PER_NAND_CH (2)
 #define PLNS_PER_LUN (1)
 #define FLASH_PAGE_SIZE KB(32)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)

@@ -469,7 +469,7 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 	__insert_req_sorted(entry, worker, nsecs_target);
 }
 
-void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
+void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
                                     void* mem, uint64_t ppa, uint64_t len,
                                     uint64_t (*cb)(void*), void *args, bool read)
 {
@@ -485,11 +485,11 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 	w = worker->work_queue + entry;
 
 	NVMEV_DEBUG_VERBOSE("%s/%u, internal sq %d, %llu + %llu\n", worker->thread_name, entry, sqid,
-		    local_clock(), nsecs_target - local_clock());
+		    local_clock(), nsecs_start - local_clock());
 
 	/////////////////////////////////
 	w->sqid = sqid;
-	w->nsecs_start = w->nsecs_enqueue = __get_wallclock();
+	w->nsecs_start = w->nsecs_enqueue = nsecs_start;
 	w->nsecs_target = w->nsecs_start + 1;
 	w->is_completed = false;
 	w->is_copied = false;
@@ -508,7 +508,7 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
 	w->buffs_to_release = 0;
 	mb(); /* IO worker shall see the updated w at once */
 
-	__insert_req_sorted(entry, worker, nsecs_target);
+	__insert_req_sorted(entry, worker, w->nsecs_target);
 }
 
 static void __reclaim_completed_reqs(void)
