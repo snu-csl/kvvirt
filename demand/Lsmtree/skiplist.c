@@ -1,3 +1,4 @@
+#include "../demand.h"
 #include"skiplist.h"
 #include "../include/utils/kvssd.h"
 #ifdef Lsmtree
@@ -539,7 +540,8 @@ snode *skiplist_insert_iter(skiplist *list,KEYT key,ppa_t ppa){
 }
 //extern bool testflag;
 #pragma GCC optimize ("O0")
-snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, uint64_t sqid){
+snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, 
+                       uint64_t sqid, bool *ow) {
 	snode *update[MAX_L+1];
 	snode *x=list->header;
 	for(int i=list->level; i>=1; i--){
@@ -574,6 +576,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         list->data_size-=(x->value->length*PIECE);
         list->data_size+=(value->length*PIECE);
         if(x->value) {
+            put_vs(x->value);
             //kfree(x->value->value);
             //inf_free_valueset(x->value,FS_MALLOC_W);
         }
@@ -581,6 +584,10 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, u
         kfree(key.key);
 #endif
         //	old_req->end_req(old_req);
+
+        if(ow) {
+            *ow = true;
+        }
 
         x->value=value;
         x->isvalid=deletef;
@@ -821,7 +828,7 @@ skiplist *skiplist_copy(skiplist* src){
 	snode *now=src->header->list[1];
 	snode *n_node;
 	while(now!=src->header){
-		n_node=skiplist_insert(des,now->key,now->value,now->isvalid,now->sqid);
+		n_node=skiplist_insert(des,now->key,now->value,now->isvalid,now->sqid,NULL);
 		n_node->ppa=now->ppa;
 		now=now->list[1];
 	}
