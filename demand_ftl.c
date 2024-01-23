@@ -323,7 +323,6 @@ bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type)
 			wpp->ch, wpp->lun, wpp->pl, wpp->blk, wpp->pg);
 
     if(io_type == USER_IO) {
-        user_pgs_this_gc++;
         pgs_this_flush++;
     } else if(io_type == GC_IO ) {
         gc_pgs_this_gc++;
@@ -1422,14 +1421,14 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 continue;
             }
 
-            if(!mapping_line && oob[pgidx][i] != 0 && 
-               oob[pgidx][i] != 2 && oob[pgidx][i] != UINT_MAX) {
-                uint64_t off = pgidx * spp->pgsz + (i * GRAINED_UNIT);
-                uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
-                uint64_t key = *(uint64_t*) (ptr + sizeof(uint8_t));
-                NVMEV_INFO("Checking LPA %llu in PPA %llu key %llu\n", 
-                            oob[pgidx][i], pgidx, key);
-            }
+            //if(!mapping_line && oob[pgidx][i] != 0 && 
+            //   oob[pgidx][i] != 2 && oob[pgidx][i] != UINT_MAX) {
+            //    uint64_t off = pgidx * spp->pgsz + (i * GRAINED_UNIT);
+            //    uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
+            //    uint64_t key = *(uint64_t*) (ptr + sizeof(uint8_t));
+            //    NVMEV_INFO("Checking LPA %llu in PPA %llu key %llu\n", 
+            //                oob[pgidx][i], pgidx, key);
+            //}
 
             if(shard->grain_bitmap[grain] == 1) {
                 if(mapping_line) {
@@ -1480,7 +1479,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
                     i += GRAIN_PER_PAGE;
                 } else if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0) {
-                    NVMEV_INFO("Got regular PPA %llu LPA %llu in GC\n", pgidx, oob[pgidx][i]);
+                    NVMEV_DEBUG("Got regular PPA %llu LPA %llu in GC\n", 
+                                 pgidx, oob[pgidx][i]);
 
                     len = 1;
                     while(i + len < GRAIN_PER_PAGE && oob[pgidx][i + len] == 0) {
@@ -1532,6 +1532,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     struct ppa new_ppa;
     uint32_t offset;
     uint64_t to = 0, from = 0;
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
 
     if(gcd->offset < GRAIN_PER_PAGE) {
         new_ppa = gcd->gc_ppa;
@@ -1575,7 +1576,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             mark_grain_invalid(shard, PPA_TO_PGA(pgidx, offset), 
                     GRAIN_PER_PAGE - offset);
 
-            uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+            uint64_t to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
             memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
                    GRAINED_UNIT);
 
@@ -1618,13 +1619,13 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             NVMEV_ASSERT(length == GRAIN_PER_PAGE);
         }
 
-        to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        from = (G_IDX(old_grain) * spp->pgsz) + 
+        to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+        from = shard_off + (G_IDX(old_grain) * spp->pgsz) + 
                (G_OFFSET(old_grain) * GRAINED_UNIT);
 
-        NVMEV_INFO("LPA/IDX %llu length %u klen %u going from %llu (G%llu) to %llu (G%llu)\n",
-                    lpa, length, *(uint8_t*) (nvmev_vdev->ns[0].mapped + from), 
-                    G_IDX(old_grain), old_grain, pgidx, grain);
+        NVMEV_DEBUG("LPA/IDX %llu length %u klen %u going from %llu (G%llu) to %llu (G%llu)\n",
+                     lpa, length, *(uint8_t*) (nvmev_vdev->ns[0].mapped + from), 
+                     G_IDX(old_grain), old_grain, pgidx, grain);
 
         memcpy(nvmev_vdev->ns[0].mapped + to, 
                nvmev_vdev->ns[0].mapped + from, length * GRAINED_UNIT);
@@ -1639,8 +1640,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
         if(mapping_line) {
             oob[pgidx][offset] = IDX2LPA(lpa);
         } else {
-            NVMEV_INFO("Setting OOB of page %llu offset %u to LPA %llu\n",
-                        pgidx, offset, lpa);
+            NVMEV_DEBUG("Setting OOB of page %llu offset %u to LPA %llu\n",
+                         pgidx, offset, lpa);
             oob[pgidx][offset] = lpa;
         }
 
@@ -1998,7 +1999,7 @@ void clean_one_flashpg(struct demand_shard *demand_shard, struct ppa *ppa)
             mark_grain_invalid(demand_shard, PPA_TO_PGA(pgidx, offset), 
                     GRAIN_PER_PAGE - offset);
 
-            uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+            uint64_t to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
             memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
                    GRAINED_UNIT);
 
@@ -2041,11 +2042,11 @@ void clean_one_flashpg(struct demand_shard *demand_shard, struct ppa *ppa)
             NVMEV_ASSERT(remain >= INV_PAGE_SZ);
         }
 
-        NVMEV_INFO("LPA/IDX %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
-                lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
+        NVMEV_DEBUG("LPA/IDX %llu length %u going from %llu (G%llu) to %llu (G%llu)\n",
+                     lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
 
-        to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        from = (G_IDX(old_grain) * spp->pgsz) + 
+        to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+        from = shard_off + (G_IDX(old_grain) * spp->pgsz) + 
             (G_OFFSET(old_grain) * GRAINED_UNIT);
 
         memcpy(nvmev_vdev->ns[0].mapped + to, 
@@ -2264,7 +2265,8 @@ static uint64_t do_gc(struct demand_shard *shard, bool force)
         NVMEV_DEBUG("Marking %d grains invalid after GC copies pgidx %u.\n", 
                     GRAIN_PER_PAGE - offset, pgidx);
 
-        uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+        uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+        uint64_t to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
         memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
                 GRAINED_UNIT);
 

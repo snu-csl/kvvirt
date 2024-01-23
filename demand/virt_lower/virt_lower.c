@@ -50,12 +50,12 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, ppa_t ppa_)
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
     if(ppa_ > spp->tt_pgs) {
-        NVMEV_DEBUG("Tried %u\n", ppa_);
-        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(0));
-        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(1));
-        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(2));
-        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(3));
-        NVMEV_DEBUG("Caller is %pS\n", __builtin_return_address(4));
+        NVMEV_INFO("Tried %u\n", ppa_);
+        NVMEV_INFO("Caller is %pS\n", __builtin_return_address(0));
+        NVMEV_INFO("Caller is %pS\n", __builtin_return_address(1));
+        NVMEV_INFO("Caller is %pS\n", __builtin_return_address(2));
+        NVMEV_INFO("Caller is %pS\n", __builtin_return_address(3));
+        NVMEV_INFO("Caller is %pS\n", __builtin_return_address(4));
     }
 
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);

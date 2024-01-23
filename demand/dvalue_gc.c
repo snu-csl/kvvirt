@@ -88,6 +88,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
     bool skip_all = true;
     uint64_t **oob = shard->oob;
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
 
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
@@ -151,7 +152,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                 NVMEV_DEBUG("%s skipping read PPA %u as it was read earlier.\n",
                             __func__, cmt->t_ppa);
 
-                uint64_t off = cmt->t_ppa * spp->pgsz;
+                uint64_t off = shard_off + (cmt->t_ppa * spp->pgsz);
                 memcpy(pts[cmts_loaded++]->value, nvmev_vdev->ns[0].mapped + off, spp->pgsz);
             } else {
                 value_set *_value_mr = pts[cmts_loaded++];
@@ -231,11 +232,10 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
         struct cmt_struct *cmt = cache->member.cmt[idx];
         cmt->state = CLEAN;
-        lru_delete(cache->member.lru, cmt->lru_ptr);
-        cmt->lru_ptr = NULL;        
-        //kfree(cmt->pt);
+
+        NVMEV_ASSERT(!cmt->lru_ptr);
+        NVMEV_ASSERT(!cmt->pt);
         cmt->t_ppa = ppa;
-        cmt->pt = NULL;
         cmts_loaded++;
     }
 
@@ -505,7 +505,7 @@ int do_bulk_mapping_update_v(struct lpa_len_ppa *ppas, int nr_valid_grains,
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
-            uint64_t to = ((uint64_t) ppa * spp->pgsz) + (offset * GRAINED_UNIT);
+            uint64_t to = shard_off + ((uint64_t) ppa * spp->pgsz) + (offset * GRAINED_UNIT);
             memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
                     GRAINED_UNIT);
             last_idx = UINT_MAX;
@@ -575,7 +575,7 @@ new_ppa:
         mark_grain_invalid(ftl, PPA_TO_PGA(ppa, offset), 
                 GRAIN_PER_PAGE - offset);
 
-        uint64_t to = ((uint64_t) ppa * spp->pgsz) + (offset * GRAINED_UNIT);
+        uint64_t to = shard_off + ((uint64_t) ppa * spp->pgsz) + (offset * GRAINED_UNIT);
         memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
                 GRAINED_UNIT);
 
