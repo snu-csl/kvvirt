@@ -4,7 +4,7 @@
 #define _CHANNEL_MODEL_H
 
 /* Macros for channel model */
-#define NR_CREDIT_ENTRIES (1024 * 96)
+#define NR_CREDIT_ENTRIES (1024 * 96 * 4)
 #define UNIT_TIME_INTERVAL (4000ULL) //ns
 #define UNIT_XFER_SIZE (128ULL) //bytes
 #define UNIT_XFER_CREDITS (1) //credits needed to transfer data(UNIT_XFER_SIZE)
