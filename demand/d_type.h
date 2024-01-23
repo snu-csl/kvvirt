@@ -21,7 +21,7 @@ typedef uint8_t fp_t;
 
 #elif (FP_SIZE<=16)
 typedef uint16_t fp_t;
-#define FP_MAX UINT16_MAX
+#define FP_MAX U16_MAX
 
 #elif (FP_SIZE<=32) 
 typedef uint32_t fp_t;

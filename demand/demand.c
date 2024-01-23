@@ -796,9 +796,14 @@ static struct hash_params *make_hash_params(request *const req) {
 }
 #endif
 
-uint32_t demand_read(struct demand_shard* shard, request *const req){
+uint32_t demand_read(void *voidargs){
 	uint64_t rc;
     uint64_t local;
+
+    struct d_cb_args *args = (struct d_cb_args*) voidargs;
+    struct demand_shard *shard = args->shard;
+    struct request *req = args->req;
+
 	mutex_lock(&shard->ftl->op_lock);
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
@@ -836,6 +841,7 @@ uint32_t demand_read(struct demand_shard* shard, request *const req){
     put_vs(req->value);
     kfree(req->key.key);
     kfree(req);
+    kfree(args);
 
 	mutex_unlock(&shard->ftl->op_lock);
 	return rc;

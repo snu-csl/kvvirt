@@ -2371,7 +2371,6 @@ bool end_d(struct request *req)
     //return false;
 }
 
-char read_buf[4096];
 static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
@@ -2421,8 +2420,7 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct n
      * KV pair.
      */
 
-    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->value = read_buf;
+    value = get_vs(spp);
     value->shard = demand_shard;
     value->length = spp->pgsz;
     d_req.value = value;
@@ -2475,65 +2473,62 @@ bool end_r(struct request *req)
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
-    struct demand_shard *demand_shard = &demand_shards[0];
-
-    /* wbuf and spp are shared by all instances */
-    struct ssdparams *spp = &demand_shard->ssd->sp;
 
     struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
-    struct nvme_kv_command tmp = *cmd;
 
     uint64_t nsecs_latest;
     uint64_t nsecs_xfer_completed;
 
+    uint8_t klen = cmd_key_length(*cmd);
+    uint32_t vlen = cmd_value_length(*cmd);
+
     struct request *d_req;
     KEYT key;
 
+    key.key = NULL;
+    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
+
+    memcpy(key.key, cmd->kv_retrieve.key, klen);
+    key.key[klen] = '\0';
+    key.len = klen;
+
+    uint64_t hash = CityHash64(key.key, klen);
+    struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
+    struct ssdparams *spp = &shard->ssd->sp;
+
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
-    d_req->ssd = demand_shard->ssd;
+    d_req->ssd = shard->ssd;
     d_req->nsecs_start = req->nsecs_start;
     d_req->hash_params = NULL;
     d_req->cmd = cmd;
-
-    uint8_t klen = cmd_key_length(tmp);
-    uint32_t vlen = cmd_value_length(*cmd);
-
-    key.key = NULL;
-    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
+    d_req->key = key;
 
     NVMEV_ASSERT(key.key);
     NVMEV_ASSERT(cmd->kv_store.key);
     NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(vlen > klen);
 
-    memcpy(key.key, cmd->kv_retrieve.key, klen);
-    key.key[klen] = '\0';
-    key.len = klen;
-    d_req->key = key;
-
     //printk("Read for key %s (%llu) klen %u vlen %u\n", 
     //            key.key, *(uint64_t*) key.key, klen, vlen);
 
-    if(!strncmp(key.key, "LOG", 3)) {
-        uint64_t bid = *(uint64_t*) (key.key + 4);
-        uint16_t log_num = *(uint16_t*) (key.key + 4 + sizeof(bid));
-        NVMEV_INFO("Log key. Bid %llu log num %u\n", bid, log_num);
-    }
-
-    memset(read_buf, 0x0, 4096);
-
     struct value_set *value;
     value = get_vs(spp);
-    value->shard = demand_shard;
+    value->shard = shard;
     value->length = vlen;
     d_req->value = value;
     d_req->end_req = &end_r;
     d_req->sqid = req->sq_id;
+    d_req->ssd = shard->ssd;
 
-    schedule_internal_operation_cb(req->sq_id, 0,
+    struct d_cb_args* args = (struct d_cb_args*) 
+                              kzalloc(sizeof(*args), GFP_KERNEL);
+    args->shard = shard;
+    args->req = d_req;
+
+    schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
                                    (void*) cmd->kv_store.dptr.prp1, 0,
                                    value->length, (void*) __demand.read, 
-                                   (void*) d_req, false);
+                                   (void*) args, false);
 
     cmd->kv_store.rsvd = UINT_MAX;
 	ret->nsecs_target = U64_MAX;
@@ -2541,23 +2536,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 
     return true;
 }
-
-/*
- * In block-device virt, we would get the LBA -> PPA mapping in here and schedule IO
- * on that PPA. The actual data copy is done later in __do_perform_io, where the data
- * itself is either copied to or copied from the slba offset in the allocated kernel memory.
- *
- * The slba offset in kernel memory doesn't change with the PPA changes in here, and thus
- * this fuction doesn't feed back to the IO copy functions to tell them where to copy to
- * and from.
- *
- * With the KVSSD FTL, we don't do IO using an slba, and thus we don't know where to copy
- * to and from kernel memory later.
- *
- * We perform KV FTL functions here which schedule IO on PPAs and return an offset on the disk.
- * That offset then overwrites the slba in the original NVMe command, which is used in
- * __do_perform_io later.
- */
 
 static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req, 
                        struct nvmev_result *ret, bool internal)

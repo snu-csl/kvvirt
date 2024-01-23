@@ -259,9 +259,8 @@ read_retry:
         if(for_del) {
             do_wb_delete(shard->ftl->write_buffer, req);
         } else {
-            NVMEV_ASSERT(false);
-            //nsecs_completed =
-            //ssd_advance_pcie(req->ssd, req->nsecs_start, 1024);
+            nsecs_completed =
+            ssd_advance_pcie(req->ssd, req->nsecs_start, req->value->length);
             req->end_req(req);
         }
         free_iparams(req, NULL);
