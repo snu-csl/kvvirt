@@ -2371,48 +2371,42 @@ bool end_d(struct request *req)
     //return false;
 }
 
-static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, 
+                        struct nvmev_result *ret)
 {
     struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
-    struct demand_shard *demand_shard = &demand_shards[0];
-
-    /* wbuf and spp are shared by all instances */
-    struct ssdparams *spp = &demand_shard->ssd->sp;
-
     struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
 
     uint64_t nsecs_latest;
     uint64_t nsecs_xfer_completed;
 
-    struct request d_req;
-    KEYT key;
-
-    memset(&d_req, 0x0, sizeof(d_req));
-
-    d_req.ssd = demand_shard->ssd;
-    d_req.hash_params = NULL;
-    d_req.nsecs_start = req->nsecs_start;
-
-    key.key = (char*)kzalloc(cmd_key_length(*cmd), GFP_KERNEL);
-
-    NVMEV_ASSERT(key.key);
-    NVMEV_ASSERT(cmd);
-    NVMEV_ASSERT(cmd->kv_delete.key);
-
     uint8_t klen = cmd_key_length(*cmd);
 
+    struct request *d_req;
+    KEYT key;
+
+    key.key = NULL;
     key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
 
     memcpy(key.key, cmd->kv_retrieve.key, klen);
     key.key[klen] = '\0';
     key.len = klen;
-    d_req.key = key;
+
+    uint64_t hash = CityHash64(key.key, klen);
+    struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
+    struct ssdparams *spp = &shard->ssd->sp;
+
+    d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
+    d_req->ssd = shard->ssd;
+    d_req->nsecs_start = req->nsecs_start;
+    d_req->hash_params = NULL;
+    d_req->key = key;
+
+    NVMEV_ASSERT(key.key);
+    NVMEV_ASSERT(cmd->kv_store.key);
+    NVMEV_ASSERT(cmd);
 
     NVMEV_INFO("Delete for key %llu len %u\n", *(uint64_t*) key.key, key.len);
-
-    struct value_set *value;
-    value = (struct value_set*)kzalloc(sizeof(*value), GFP_KERNEL);
-    value->shard = demand_shard;
 
     /*
      * We still provide a read buffer here, because a delete will
@@ -2420,35 +2414,29 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, struct n
      * KV pair.
      */
 
+    struct value_set *value;
     value = get_vs(spp);
-    value->shard = demand_shard;
+    value->shard = shard;
     value->length = spp->pgsz;
-    d_req.value = value;
-    d_req.end_req = &end_d;
-    d_req.cmd = cmd;
-    nsecs_latest = nsecs_xfer_completed = __demand.remove(demand_shard, &d_req);
+    d_req->value = value;
+    d_req->end_req = &end_d;
+    d_req->cmd = cmd;
+    d_req->ssd = shard->ssd;
 
-    ret->nsecs_target = nsecs_latest;
+    struct d_cb_args* args = (struct d_cb_args*) 
+                              kzalloc(sizeof(*args), GFP_KERNEL);
+    args->shard = shard;
+    args->req = d_req;
 
-    if(d_req.ppa == UINT_MAX) {
-        NVMEV_DEBUG("NOT_EXIST delete for key %s len %u\n", key.key, key.len);
-        ret->status = KV_ERR_KEY_NOT_EXIST;
-        cmd->kv_delete.rsvd = d_req.ppa;
-    } else {
-        NVMEV_DEBUG("Delete successful for key %s len %u\n", key.key, key.len);
-        ret->nsecs_target = nsecs_latest;
-        ret->status = NVME_SC_SUCCESS;
+    schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
+                                   NULL, 0, value->length, 
+                                   (void*) __demand.remove, (void*) args, 
+                                   false, req->w);
 
-        /*
-         * Switch back to UINT_MAX to avoid a copy to user in
-         * __do_perform_io_kv in io.c.
-         */
+    cmd->kv_store.rsvd = UINT_MAX;
+	ret->nsecs_target = U64_MAX;
+	ret->status = NVME_SC_SUCCESS;
 
-        cmd->kv_delete.rsvd = UINT_MAX;
-    }
-
-    kfree(value);
-    kfree(key.key);
     return true;
 }
 
@@ -2473,7 +2461,6 @@ bool end_r(struct request *req)
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
-
     struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
 
     uint64_t nsecs_latest;

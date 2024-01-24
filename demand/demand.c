@@ -796,7 +796,7 @@ static struct hash_params *make_hash_params(request *const req) {
 }
 #endif
 
-uint32_t demand_read(void *voidargs, uint64_t* result){
+uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
 	uint64_t rc;
     uint64_t local;
 
@@ -811,11 +811,16 @@ uint32_t demand_read(void *voidargs, uint64_t* result){
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-	rc = __demand_read(shard, req, false);
-	if (req->ppa == UINT_MAX) {
-		req->type = FS_NOTFOUND_T;
-		req->end_req(req);
-	}
+    rc = __demand_read(shard, req, false);
+    if (req->ppa == UINT_MAX) {
+        req->type = FS_NOTFOUND_T;
+        req->end_req(req);
+        if(status) {
+            *status = KV_ERR_KEY_NOT_EXIST;
+        }
+    } else if(status) {
+        *status = 0;
+    }
 
     /*
      * Why put copies within the lock? Later, the plan is to
@@ -851,7 +856,7 @@ uint32_t demand_read(void *voidargs, uint64_t* result){
 	return rc;
 }
 
-uint64_t demand_write(void *voidargs, uint64_t *result) { 
+uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) { 
 	uint64_t rc;
     uint64_t local;
 
@@ -879,6 +884,10 @@ uint64_t demand_write(void *voidargs, uint64_t *result) {
         *result = 0;
     }
 
+    if(status) {
+        *status = 0;
+    }
+
     kfree(req);
     kfree(args);
 
@@ -886,8 +895,14 @@ uint64_t demand_write(void *voidargs, uint64_t *result) {
 	return rc;
 }
 
-uint32_t demand_remove(struct demand_shard* shard, request *const req) {
-    uint32_t rc;
+uint32_t demand_remove(void* voidargs, uint64_t* result, uint64_t *status) {
+    uint64_t rc;
+    uint64_t local;
+
+    struct d_cb_args *args = (struct d_cb_args*) voidargs;
+    struct demand_shard *shard = args->shard;
+    struct request *req = args->req;
+
     mutex_lock(&shard->ftl->op_lock);
 #ifdef HASH_KVSSD
     if (!req->hash_params) {
@@ -896,10 +911,24 @@ uint32_t demand_remove(struct demand_shard* shard, request *const req) {
     }
 #endif
     rc = __demand_read(shard, req, true);
-    if (rc == UINT_MAX) {
+    if (req->ppa == UINT_MAX) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
+        if(status) {
+            *status = KV_ERR_KEY_NOT_EXIST;
+        }
+    } else if(status) {
+        *status = 0;
     }
+
+    local = local_clock();
+    rc = max(rc, local);
+
+    put_vs(req->value);
+    kfree(req->key.key);
+    kfree(req);
+    kfree(args);
+
     mutex_unlock(&shard->ftl->op_lock);
     return rc;
 }

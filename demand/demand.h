@@ -239,9 +239,9 @@ uint32_t demand_argument_set(int argc, char **argv);
 uint32_t demand_create(struct demand_shard *shard, lower_info*, blockmanager*, 
                        algorithm*, struct ssd*, uint64_t size);
 void demand_destroy(struct demand_shard *shard, lower_info*, algorithm*);
-uint32_t demand_read(void*, uint64_t*);
-uint64_t demand_write(void*, uint64_t*); 
-uint32_t demand_remove(struct demand_shard *shard, request *const);
+uint32_t demand_read(void*, uint64_t*, uint64_t*);
+uint64_t demand_write(void*, uint64_t*, uint64_t*); 
+uint32_t demand_remove(void*, uint64_t*, uint64_t*);
 uint64_t demand_append(struct demand_shard *shard, request *const);
 
 uint64_t __demand_read(struct demand_shard *shard, request *const, 
