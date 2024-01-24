@@ -24,6 +24,84 @@ void d_set_oob(struct demand_shard *shard, lpa_t lpa, ppa_t ppa,
     }
 }
 
+static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf, 
+                               uint64_t buf_len)
+{
+	size_t offset;
+	size_t length, remaining;
+	int prp_offs = 0;
+	int prp2_offs = 0;
+	u64 paddr;
+	u64 *paddr_list = NULL;
+	size_t nsid = 0;  // 0-based
+
+    bool read = cmd->common.opcode == nvme_cmd_kv_retrieve;
+
+    nsid = 0;
+
+    if(read) {
+        offset = cmd->kv_retrieve.rsvd;
+        length = buf_len;
+    } else {
+        offset = cmd->kv_store.rsvd;
+        length = cmd->kv_store.value_len << 2;
+    }
+
+	remaining = length;
+	while (remaining) {
+		size_t io_size;
+		void *vaddr;
+		size_t mem_offs = 0;
+
+		prp_offs++;
+		if (prp_offs == 1) {
+            if(read) {
+                paddr = cmd->kv_retrieve.dptr.prp1;
+            } else {
+                paddr = cmd->kv_store.dptr.prp1;
+            }
+		} else if (prp_offs == 2) {
+            if(read) {
+                paddr = cmd->kv_retrieve.dptr.prp2;
+            } else {
+                paddr = cmd->kv_store.dptr.prp2;
+            }
+			if (remaining > PAGE_SIZE) {
+				paddr_list = kmap_atomic_pfn(PRP_PFN(paddr)) +
+					     (paddr & PAGE_OFFSET_MASK);
+				paddr = paddr_list[prp2_offs++];
+			}
+		} else {
+			paddr = paddr_list[prp2_offs++];
+		}
+
+		vaddr = kmap_atomic_pfn(PRP_PFN(paddr));
+		io_size = min_t(size_t, remaining, PAGE_SIZE);
+
+		if (paddr & PAGE_OFFSET_MASK) {
+			mem_offs = paddr & PAGE_OFFSET_MASK;
+			if (io_size + mem_offs > PAGE_SIZE)
+				io_size = PAGE_SIZE - mem_offs;
+		}
+
+		if (!read) {
+			memcpy(buf, vaddr + mem_offs, io_size);
+		} else {
+			memcpy(vaddr + mem_offs, buf, io_size);
+		}
+
+		kunmap_atomic(vaddr);
+
+		remaining -= io_size;
+		offset += io_size;
+	}
+
+	if (paddr_list != NULL)
+		kunmap_atomic(paddr_list);
+
+	return length;
+}
+
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
@@ -33,6 +111,15 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
 #endif
+        //uint32_t vlen = wb_entry->value->length * GRAINED_UNIT;
+        ///*
+        // * Here, req->value->length represents the buffer size provided
+        // * by the user. Later we should handle this by returning a
+        // * BUFFER_TOO_SMALL or similar.
+        // */
+        //NVMEV_ASSERT(req->value->length >= vlen);
+
+        //__buf_copy(req->cmd, wb_entry->value->value, vlen);
         copy_value(req->value, wb_entry->value, wb_entry->value->length * GRAINED_UNIT);
 		req->type_ftl = 0;
 		req->type_lower = 0;
