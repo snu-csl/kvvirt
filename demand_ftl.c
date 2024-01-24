@@ -2528,7 +2528,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
                                    (void*) cmd->kv_store.dptr.prp1, 0,
                                    value->length, (void*) __demand.read, 
-                                   (void*) args, false);
+                                   (void*) args, false, req->w);
 
     cmd->kv_store.rsvd = UINT_MAX;
 	ret->nsecs_target = U64_MAX;
@@ -2581,7 +2581,6 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(vlen > klen);
 
-
     NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u cmd %p req %p\n", 
                 *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
                 klen, vlen, cmd, req);
@@ -2606,7 +2605,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
                                    (void*) cmd->kv_store.dptr.prp1, 0,
                                    value->length, (void*) __demand.write, 
-                                   (void*) args, false);
+                                   (void*) args, false, req->w);
 
     /*
      * This write shouldn't complete until __demand.write has completed,

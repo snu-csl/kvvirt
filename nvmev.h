@@ -195,6 +195,13 @@ struct nvmev_io_work {
     void* args;
 
     /* Internal copy parameters end */
+
+    /*
+     * If this callback is to update the target time of another
+     * work item already in the queue.
+     */
+
+    struct nvmev_io_work *cb_w;
 };
 
 struct nvmev_io_worker {
@@ -269,6 +276,9 @@ struct nvmev_request {
 	struct nvme_command *cmd;
 	uint32_t sq_id;
 	uint64_t nsecs_start;
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    struct nvmev_io_work* w;
+#endif
 };
 
 struct nvmev_result {
@@ -320,5 +330,6 @@ void nvmev_proc_io_cq(int qid, int new_db, int old_db);
 // CALLBACKS
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
                                     void* mem, uint64_t ppa, uint64_t len,
-                                    uint64_t (*cb)(void*), void *args, bool read);
+                                    uint64_t (*cb)(void*), void *args, bool read,
+                                    struct nvmev_io_work *w);
 #endif /* _LIB_NVMEV_H */

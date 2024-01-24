@@ -330,7 +330,7 @@ static unsigned int __do_perform_io_using_dma(int sqid, int sq_entry)
 }
 
 static void __insert_req_sorted(unsigned int entry, struct nvmev_io_worker *worker,
-				unsigned long nsecs_target)
+				                unsigned long nsecs_target)
 {
 	/**
 	 * Requests are placed in @work_queue sorted by their target time.
@@ -398,8 +398,9 @@ static struct nvmev_io_worker *__allocate_work_queue_entry(int sqid, unsigned in
 	return worker;
 }
 
-static void __enqueue_io_req(int sqid, int cqid, int sq_entry, unsigned long long nsecs_start,
-			     struct nvmev_result *ret)
+static struct nvmev_io_work* __enqueue_io_req(int sqid, int cqid, int sq_entry, 
+                                              unsigned long long nsecs_start,
+                                              struct nvmev_result *ret)
 {
 	struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
 	struct nvmev_io_worker *worker;
@@ -408,7 +409,7 @@ static void __enqueue_io_req(int sqid, int cqid, int sq_entry, unsigned long lon
 
 	worker = __allocate_work_queue_entry(sqid, &entry);
 	if (!worker)
-		return;
+		return NULL;
 
 	w = worker->work_queue + entry;
 
@@ -434,6 +435,7 @@ static void __enqueue_io_req(int sqid, int cqid, int sq_entry, unsigned long lon
 	mb(); /* IO worker shall see the updated w at once */
 
 	__insert_req_sorted(entry, worker, ret->nsecs_target);
+    return w;
 }
 
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
@@ -471,7 +473,8 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
                                     void* mem, uint64_t ppa, uint64_t len,
-                                    uint64_t (*cb)(void*), void *args, bool read)
+                                    uint64_t (*cb)(void*), void *args, bool read,
+                                    struct nvmev_io_work *cb_w)
 {
 	struct nvmev_io_worker *worker;
 	struct nvmev_io_work *w;
@@ -497,6 +500,7 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
 	w->next = -1;
     w->cb = cb;
     w->args = args;
+    w->cb_w = cb_w;
 
     w->read = read;
     w->mem = mem;
@@ -580,7 +584,11 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 		.nsecs_start = nsecs_start,
 	};
 	struct nvmev_result ret = {
+#if (BASE_SSD != SAMSUNG_970PRO_HASH_DFTL)
 		.nsecs_target = nsecs_start,
+#else
+        .nsecs_target = U64_MAX,
+#endif
 		.status = NVME_SC_SUCCESS,
 	};
 
@@ -595,6 +603,29 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	static unsigned long long counter = 0;
 #endif
 
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    /*
+     * In the DFTLKV FTL, key-value work (store, retrieve, etc)
+     * is done in the worker threads. When these operations complete,
+     * we need to switch the target time of the work entry to the
+     * finish time of the key-value operation. To do that, we need
+     * the nvmev_io_work item first.
+     *
+     * Note that it doesn't matter that we insert and get the work
+     * here before proc_io_cmd below, because we have already
+     * set the target time of the work to U64_MAX above.
+     */
+
+    bool kv_cmd = false;
+    if(ns->identify_io_cmd(ns, sq_entry(sq_entry))) {
+        struct nvmev_io_work *w = __enqueue_io_req(sqid, sq->cqid, sq_entry, 
+                nsecs_start, &ret);
+        req.w = w;
+        //printk("Enqueued %p\n", w);
+        kv_cmd = true;
+    }
+#endif
+
 	if (!ns->proc_io_cmd(ns, &req, &ret))
 		return false;
 	*io_size = (cmd->rw.length + 1) << 9;
@@ -603,8 +634,13 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	prev_clock2 = local_clock();
 #endif
 
-    BUG_ON(nsecs_start < 1000000);
+#if (BASE_SSD != SAMSUNG_970PRO_HASH_DFTL)
 	__enqueue_io_req(sqid, sq->cqid, sq_entry, nsecs_start, &ret);
+#else
+    if(!kv_cmd) {
+        __enqueue_io_req(sqid, sq->cqid, sq_entry, nsecs_start, &ret);
+    }
+#endif
 
 #ifdef PERF_DEBUG
 	prev_clock3 = local_clock();
@@ -763,7 +799,10 @@ static int nvmev_io_worker(void *data)
 #if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
                     if(w->cb) {
                         NVMEV_ASSERT(w->args);
-                        w->nsecs_target = w->cb(w->args);
+                        NVMEV_ASSERT(w->cb_w);
+                        w->cb_w->nsecs_target = w->cb(w->args);
+                        //printk("Set target of %p to %llu\n",
+                        //        w->cb_w, w->nsecs_target);
                     }
 #endif
 				} else if (io_using_dma) {
@@ -785,7 +824,8 @@ static int nvmev_io_worker(void *data)
 						nvmev_vdev->sqes[w->sqid];
 					ns = &nvmev_vdev->ns[0];
                     if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
-                        w->result0 = w->result1 = __do_perform_io_kv(w->sqid, w->sq_entry);
+                        //w->result0 = w->result1 = __do_perform_io_kv(w->sqid, w->sq_entry);
+                        w->result0 = 0;
                     } else {
                         __do_perform_io(w->sqid, w->sq_entry);
                     }
@@ -812,7 +852,9 @@ static int nvmev_io_worker(void *data)
                     }
 #endif
 				} else {
-					__fill_cq_result(w);
+                    //printk("Completing %p target %llu\n",
+                    //        w, w->nsecs_target);
+                    __fill_cq_result(w);
 				}
 
 				NVMEV_DEBUG_VERBOSE("%s: completed %u, %d %d %d\n", worker->thread_name, curr,
