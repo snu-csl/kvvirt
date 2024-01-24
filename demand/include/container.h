@@ -164,8 +164,8 @@ struct algorithm{
 	uint32_t (*create) (struct demand_shard*, lower_info*, blockmanager *bm, 
                         struct algorithm *, struct ssd*, uint64_t size);
 	void (*destroy) (struct demand_shard*, lower_info*, struct algorithm *);
-	uint32_t (*read)(void*);
-	uint64_t (*write)(void*);
+	uint32_t (*read)(void*, uint64_t*);
+	uint64_t (*write)(void*, uint64_t*);
 	uint32_t (*remove)(struct demand_shard*, request *const);
 #ifdef KVSSD
 	uint32_t (*iter_create)(request *const);

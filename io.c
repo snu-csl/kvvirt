@@ -473,7 +473,8 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 
 void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
                                     void* mem, uint64_t ppa, uint64_t len,
-                                    uint64_t (*cb)(void*), void *args, bool read,
+                                    uint64_t (*cb)(void*, uint64_t*), 
+                                    void *args, bool read,
                                     struct nvmev_io_work *cb_w)
 {
 	struct nvmev_io_worker *worker;
@@ -800,7 +801,10 @@ static int nvmev_io_worker(void *data)
                     if(w->cb) {
                         NVMEV_ASSERT(w->args);
                         NVMEV_ASSERT(w->cb_w);
-                        w->cb_w->nsecs_target = w->cb(w->args);
+
+                        uint64_t result = U64_MAX;
+                        w->cb_w->nsecs_target = w->cb(w->args, &result);
+                        w->cb_w->result0 = w->cb_w->result1 = result;
                         //printk("Set target of %p to %llu\n",
                         //        w->cb_w, w->nsecs_target);
                     }
@@ -825,7 +829,7 @@ static int nvmev_io_worker(void *data)
 					ns = &nvmev_vdev->ns[0];
                     if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
                         //w->result0 = w->result1 = __do_perform_io_kv(w->sqid, w->sq_entry);
-                        w->result0 = 0;
+                        //w->result0 = 0;
                     } else {
                         __do_perform_io(w->sqid, w->sq_entry);
                     }

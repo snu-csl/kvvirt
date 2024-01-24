@@ -796,7 +796,7 @@ static struct hash_params *make_hash_params(request *const req) {
 }
 #endif
 
-uint32_t demand_read(void *voidargs){
+uint32_t demand_read(void *voidargs, uint64_t* result){
 	uint64_t rc;
     uint64_t local;
 
@@ -835,6 +835,10 @@ uint32_t demand_read(void *voidargs){
         __buf_copy(cmd, req->value->value, req->value->length);
     }
 
+    if(result) {
+        *result = req->value->length;
+    }
+
     local = local_clock();
     rc = max(rc, local);
 
@@ -847,7 +851,7 @@ uint32_t demand_read(void *voidargs){
 	return rc;
 }
 
-uint64_t demand_write(void *voidargs) { 
+uint64_t demand_write(void *voidargs, uint64_t *result) { 
 	uint64_t rc;
     uint64_t local;
 
@@ -870,6 +874,10 @@ uint64_t demand_write(void *voidargs) {
 
     local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     rc = max(rc, local);
+
+    if(result) {
+        *result = 0;
+    }
 
     kfree(req);
     kfree(args);
