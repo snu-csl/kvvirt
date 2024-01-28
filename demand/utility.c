@@ -105,11 +105,18 @@ again:
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
                     (cache->env.nr_valid_tentries-1) + 1;
     if(h_params->lpa == 2 || h_params->lpa == 0) {
-        NVMEV_INFO("Got LPA %u for key %s\n", h_params->lpa, key.key);
         h_params->cnt++;
         goto again;
     }
-    //NVMEV_INFO("Got LPA %u key %s cnt %d\n", h_params->lpa, key.key, h_params->cnt);
+    
+    if(key.key[0] == 'L') {
+        NVMEV_DEBUG("Log key bid %llu log num %u gets LPA %u\n", 
+                    *(uint64_t*) (key.key + 4), *(uint16_t*) (key.key + 4 + sizeof(uint64_t)),
+                    h_params->lpa);
+    }
+
+    NVMEV_DEBUG("Got LPA %u key %s cnt %d\n", h_params->lpa, 
+                log_key ? buf : key.key, h_params->cnt);
 	return h_params->lpa;
 #else
 	return key;

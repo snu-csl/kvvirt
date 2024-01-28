@@ -105,8 +105,8 @@ static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf,
 static uint32_t do_wb_check(skiplist *wb, request *const req) {
 	snode *wb_entry = skiplist_find(wb, req->key);
 	if (WB_HIT(wb_entry)) {
-        //NVMEV_INFO("WB hit for key %s! Length %u!\n", 
-        //            req->key.key, wb_entry->value->length);
+        NVMEV_DEBUG("WB hit for key %s! Length %u!\n", 
+                    req->key.key, wb_entry->value->length);
 		d_stat.wb_hit++;
 #ifdef HASH_KVSSD
 		kfree(req->hash_params);
@@ -121,6 +121,7 @@ static uint32_t do_wb_check(skiplist *wb, request *const req) {
 
         //__buf_copy(req->cmd, wb_entry->value->value, vlen);
         copy_value(req->value, wb_entry->value, wb_entry->value->length * GRAINED_UNIT);
+
 		req->type_ftl = 0;
 		req->type_lower = 0;
         req->value->length = wb_entry->value->length * GRAINED_UNIT;
@@ -225,9 +226,6 @@ static uint64_t read_actual_dpage(struct demand_shard *shard, ppa_t ppa,
     uint64_t nsecs = 0;
 
 	if (IS_INITIAL_PPA(ppa)) {
-        //printk("%s IS_INITIAL_PPA failure.\n", __func__);
-		warn_notfound(__FILE__, __LINE__);
-        
         if(nsecs_completed) {
             *nsecs_completed = 0;
         }
@@ -245,6 +243,7 @@ static uint64_t read_actual_dpage(struct demand_shard *shard, ppa_t ppa,
 	ppa = G_IDX(ppa);
 #endif
 
+    req->ssd = shard->ssd;
     req->value->shard = shard;
 	nsecs = __demand.li->read(ppa, spp->pgsz, req->value, false, a_req);
 
@@ -309,6 +308,12 @@ read_retry:
         free_iparams(req, NULL);
         kfree(h_params);
 
+        if(req->key.key[0] == 'L') {
+            NVMEV_DEBUG("3 Log key not found. Bid %llu log num %u\n", 
+                         *(uint64_t*) (req->key.key + 4), 
+                         *(uint16_t*) (req->key.key + 4 + sizeof(uint64_t)));
+        }
+
 		warn_notfound(__FILE__, __LINE__);
 		goto read_ret;
 	}
@@ -370,6 +375,13 @@ cache_load:
             req->ppa = UINT_MAX;
             req->value->length = 0;
 			rc = UINT_MAX;
+
+            if(req->key.key[0] == 'L') {
+                NVMEV_DEBUG("1 Log key not found. Bid %llu log num %u\n", 
+                            *(uint64_t*) (req->key.key + 4), 
+                            *(uint16_t*) (req->key.key + 4 + sizeof(uint64_t)));
+            }
+
 			warn_notfound(__FILE__, __LINE__);
             goto read_ret;
 		}
@@ -403,18 +415,20 @@ data_read:
                    max(nsecs_latest, nsecs_completed);
 
     if(rc == UINT_MAX) {
-        req->ppa = UINT_MAX;
-        req->value->length = 0;
-        kfree(h_params);
-        warn_notfound(__FILE__, __LINE__);
-        goto read_ret;
+        d_stat.fp_collision_r++;
+
+        if(req->key.key[0] == 'L') {
+            NVMEV_DEBUG("2 Log key retry. Bid %llu log num %u\n", 
+                        *(uint64_t*) (req->key.key + 4), 
+                        *(uint16_t*) (req->key.key + 4 + sizeof(uint64_t)));
+        }
+
+        h_params->find = HASH_KEY_DIFF;
+        h_params->cnt++;
+        goto read_retry;
     } else if(rc == 1) {
         NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
         goto read_retry;
-    }
-
-    if(h_params->cnt > 0) {
-        //printk("Eventually finished a retried read cnt %u\n", h_params->cnt);
     }
 
     if(for_del) {
@@ -558,8 +572,8 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 		}
 
         if(remain > 0) {
-            NVMEV_ERROR("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
-            NVMEV_ERROR("Ordering %s.\n", ordering_done < shard->env->wb_flush_size ? "NOT DONE" : "DONE");
+            NVMEV_DEBUG("Had %u bytes leftover PPA %u offset %u.\n", remain, ppa, offset);
+            NVMEV_DEBUG("Ordering %s.\n", ordering_done < shard->env->wb_flush_size ? "NOT DONE" : "DONE");
             mark_grain_valid(shard, PPA_TO_PGA(ppa, offset), 
                     GRAIN_PER_PAGE - offset);
             mark_grain_invalid(shard, PPA_TO_PGA(ppa, offset), 
@@ -979,20 +993,29 @@ void *demand_end_req(algo_req *a_req) {
             //NVMEV_INFO("Passed check 2 %p %p %llu\n", 
             //            req, &(req->key), *(uint64_t*) check_key.key);
 
-            //NVMEV_INFO("Comparing %s (%llu) and %s (%llu)\n", 
-            //            check_key.key, *(uint64_t*) check_key.key,
-            //            req->key.key, *(uint64_t*) req->key.key);
+            if(check_key.key[0] == 'L') {
+                NVMEV_DEBUG("end_req Log key comparing %llu %u and %llu %u\n", 
+                        *(uint64_t*) (check_key.key + 4), 
+                        *(uint16_t*) (check_key.key + 4 + sizeof(uint64_t)),
+                        *(uint64_t*) (req->key.key + 4), 
+                        *(uint16_t*) (req->key.key + 4 + sizeof(uint64_t)));
+            } else {
+                NVMEV_DEBUG("Comparing %s (%llu) and %s (%llu)\n", 
+                        check_key.key, *(uint64_t*) check_key.key,
+                        req->key.key, *(uint64_t*) req->key.key);
+            }
 			if (KEYCMP(req->key, check_key) == 0) {
-                //NVMEV_INFO("Passed cmp.\n");
-                //NVMEV_INFO("Match %llu and %llu.\n", 
-                //           *(uint64_t*) check_key.key, 
-                //           *(uint64_t*) (req->key.key));
+                NVMEV_DEBUG("Match %llu and %llu PPA was %u.\n", 
+                           *(uint64_t*) check_key.key, 
+                           *(uint64_t*) (req->key.key), req->ppa);
 				d_stat.fp_match_r++;
 
                 a_req->need_retry = false;
 				hash_collision_logging(h_params->cnt, DREAD);
 				kfree(h_params);
+
                 req->value->length = get_vlen(shard, G_IDX(req->ppa), offset);
+                req->shard = shard;
 				req->end_req(req);
 			} else {
                 NVMEV_DEBUG("Passed cmp 2.\n");

@@ -131,7 +131,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		}
 
 		vaddr = kmap_atomic_pfn(PRP_PFN(paddr));
-
 		io_size = min_t(size_t, remaining, PAGE_SIZE);
 
 		if (paddr & PAGE_OFFSET_MASK) {
@@ -143,8 +142,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		if (!read) {
 			memcpy(nvmev_vdev->ns[nsid].mapped + offset, vaddr + mem_offs, io_size);
 		} else {
-            NVMEV_DEBUG("Copying from %lu (key is %s)\n", offset, 
-                        (char*) (nvmev_vdev->ns[nsid].mapped + offset + sizeof(uint8_t)));
 			memcpy(vaddr + mem_offs, nvmev_vdev->ns[nsid].mapped + offset, io_size);
 		}
 
@@ -622,7 +619,6 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
         struct nvmev_io_work *w = __enqueue_io_req(sqid, sq->cqid, sq_entry, 
                 nsecs_start, &ret);
         req.w = w;
-        //printk("Enqueued %p\n", w);
         kv_cmd = true;
     }
 #endif
@@ -802,11 +798,13 @@ static int nvmev_io_worker(void *data)
                         NVMEV_ASSERT(w->args);
                         NVMEV_ASSERT(w->cb_w);
 
+                        uint64_t target = U64_MAX;
                         uint64_t result = U64_MAX;
                         uint64_t status = U64_MAX;
-                        w->cb_w->nsecs_target = w->cb(w->args, &result, &status);
+                        target = w->cb(w->args, &result, &status);
                         w->cb_w->result0 = w->cb_w->result1 = result;
                         w->cb_w->status = status;
+                        w->cb_w->nsecs_target = target;
                     }
 #endif
 				} else if (io_using_dma) {
@@ -856,8 +854,6 @@ static int nvmev_io_worker(void *data)
                     }
 #endif
 				} else {
-                    //printk("Completing %p target %llu\n",
-                    //        w, w->nsecs_target);
                     __fill_cq_result(w);
 				}
 

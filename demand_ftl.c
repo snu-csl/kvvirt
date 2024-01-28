@@ -2406,7 +2406,13 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req,
     NVMEV_ASSERT(cmd->kv_store.key);
     NVMEV_ASSERT(cmd);
 
-    NVMEV_INFO("Delete for key %llu len %u\n", *(uint64_t*) key.key, key.len);
+    NVMEV_DEBUG("Delete for key %llu len %u\n", *(uint64_t*) key.key, key.len);
+
+    if(key.key[0] == 'L') {
+        NVMEV_DEBUG("Log key delete. Bid %llu log num %u\n", 
+                     *(uint64_t*) (key.key + 4), 
+                     *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+    }
 
     /*
      * We still provide a read buffer here, because a delete will
@@ -2443,16 +2449,24 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req,
 bool end_r(struct request *req) 
 {
     struct ssdparams *spp = &req->ssd->sp;
-    if(req->ppa == UINT_MAX) {
+    if(req->ppa == UINT_MAX || req->ppa == UINT_MAX - 1) {
         req->cmd->kv_retrieve.rsvd = UINT_MAX;
-        req->ppa = UINT_MAX;
+        req->cmd->kv_retrieve.value_len = req->value->length;
         return false;
     }
 
-    uint64_t ppa = G_IDX(req->ppa);
-    uint16_t off = G_OFFSET(req->ppa);
+    uint64_t ppa = ((uint64_t) G_IDX(req->ppa)) * spp->pgsz;
+    uint64_t g_off = G_OFFSET(req->ppa) * GRAINED_UNIT;
+    uint64_t shard_off = req->shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ppa + g_off;
 
-    req->cmd->kv_retrieve.rsvd = ppa + (off * GRAINED_UNIT);
+    uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
+    uint64_t key = *(uint64_t*) (ptr + sizeof(uint8_t));
+
+    //printk("Got KLEN %u key %llu off %llu ppa %llu g_off %llu\n", 
+    //        *ptr, key, off, ppa, g_off);
+
+    req->cmd->kv_retrieve.rsvd = off;
     req->cmd->kv_retrieve.value_len = req->value->length;
 
     return true;
@@ -2495,8 +2509,15 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(vlen > klen);
 
-    //printk("Read for key %s (%llu) klen %u vlen %u\n", 
-    //            key.key, *(uint64_t*) key.key, klen, vlen);
+    NVMEV_DEBUG("Read for key %llu (%llu) klen %u vlen %u cmd %p req %p dptr %llu\n", 
+               *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+               klen, vlen, cmd, req, cmd->kv_retrieve.dptr.prp1);
+
+    if(key.key[0] == 'L') {
+        NVMEV_DEBUG("Log key read. Bid %llu log num %u\n", 
+                     *(uint64_t*) (key.key + 4), 
+                     *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+    }
 
     struct value_set *value;
     value = get_vs(spp);
@@ -2571,6 +2592,12 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u cmd %p req %p\n", 
                 *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
                 klen, vlen, cmd, req);
+
+    if(key.key[0] == 'L') {
+        NVMEV_DEBUG("Log key write. Bid %llu log num %u\n", 
+                    *(uint64_t*) (key.key + 4), 
+                    *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
+    }
 
     struct value_set *value;
     value = get_vs(spp);
@@ -2658,7 +2685,7 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
     key.len = klen;
     d_req.key = key;
 
-    NVMEV_INFO("Append for key %s (%llu)  klen %u vlen %u\n", 
+    NVMEV_DEBUG("Append for key %s (%llu)  klen %u vlen %u\n", 
                 key.key, *(uint64_t*) key.key, klen, vlen);
 
     struct value_set *value;

@@ -280,10 +280,8 @@ static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf,
     nsid = 0;
 
     if(read) {
-        offset = cmd->kv_retrieve.rsvd;
         length = buf_len;
     } else {
-        offset = cmd->kv_store.rsvd;
         length = cmd->kv_store.value_len << 2;
     }
 
@@ -333,7 +331,6 @@ static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf,
 		kunmap_atomic(vaddr);
 
 		remaining -= io_size;
-		offset += io_size;
 	}
 
 	if (paddr_list != NULL)
@@ -830,14 +827,18 @@ uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
      * isn't modified while we're copying.
      */
 
+    struct nvme_kv_command *cmd = req->cmd;
     if(req->ppa == UINT_MAX - 1) {
         /*
          * Hit in the write buffer. Copy from the allocated DRAM
          * buffer instead of from virt's reserved memory (disk).
          */
 
-        struct nvme_kv_command *cmd = req->cmd;
         __buf_copy(cmd, req->value->value, req->value->length);
+    } else {
+        __buf_copy(cmd, nvmev_vdev->ns[0].mapped + cmd->kv_retrieve.rsvd, 
+                   req->value->length);
+        req->cmd->kv_retrieve.rsvd = UINT_MAX;
     }
 
     if(result) {

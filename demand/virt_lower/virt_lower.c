@@ -160,8 +160,8 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
     uint64_t off = shard_off + ((uint64_t) PPA * spp->pgsz);
 
     NVMEV_DEBUG("Reading PPA %u (%llu) size %u sqid %u %s in virt_dev\n", 
-            PPA, off, size, nvmev_vdev->sqes[1]->qid, 
-            async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
+                 PPA, off, size, nvmev_vdev->sqes[1]->qid, 
+                 async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
 
     ppa = ppa_to_struct(spp, PPA);
     swr.ppa = &ppa;
@@ -171,9 +171,6 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
 
     if(req) {
         req->end_req(req);
-    }
-
-    if(req && !req->need_retry) {
         kfree(req->params);
     }
 
