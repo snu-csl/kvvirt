@@ -1,3 +1,41 @@
+# NOTES
+
+Right now DFTLKV will take away 4GB from memmap\_size. If you want a 1GB drive, use memmap\_size=5G,
+and if you want a 32GB drive, use memmap\_size=37G.
+
+Values above 4K won't work for now, as the DFTLKV implementation is tied to the page size. Would
+really like to change this to be the flash page size (e.g. 32K) instead, so we can have larger
+values.
+
+Since values are written in grains in the DFTLKV implementation, if you write a 520B value it
+will take up 1024B (512B grain size). Keep this in mind when deciding value sizes for the tests,
+because in Dotori we will copy the key length (sizeof(uint8\_t)), actual key (8B or whatever it is), 
+and then the real length of the value written (sizeof(uint32\_t)) to the start of the value. 
+
+The real length of the value is gotten from the returned value when Dotori reads the actual KV pair or log, and we then 
+memmove the real value back to the start of the read buffer (discarding the key length, key,
+and real value length). This isn't as user-friendly as the Samsung SSD right now, and would
+be nice to improve. However, because the DFTLKV implementation requires the key length and key to be
+at the start of the value, not sure if we can make much of a change.
+
+I moved to a sharded design for DFTLKV like in the conventional FTL, but keep it at 1 shard
+for now until I test it further.
+
+As of now, the DFTLKV implementation is slower than Samsung's KVSSD we know. The performance numbers
+aren't so bad in Dotori, actually, but keep it in mind.
+
+DFTKLV might not be able to keep the space on the KVSSD level right now with a really
+big WAL flush period in Dotori (e.g. 327680 like in the paper). I've been using 65536.
+
+Be careful when using outside of a VM. I've had days of perfect VM runs that somehow crash because 
+something isn't zero'd when trying outside of the VM.
+
+The number of worker threads matters in DFTLKV; everything including timings generation 
+is done on the worker threads, not in the dispatcher like in the conventional design.
+
+Ignore the space and write amp calculations in the Dotori bench for now. I can fix them if
+you need to use them.
+
 # Towards Accessible Key-Value SSD Research With NVMeVirt
 
 Welcome to the repository for the work described in the above paper. The KVSSD FTLs in this repository will
