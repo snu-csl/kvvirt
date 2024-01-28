@@ -12,27 +12,7 @@
 
 #include <linux/sort.h>
 
-struct gc_bucket_node {
-	PTR ptr;
-	int32_t lpa;
-	int32_t ppa;
-};
-
-struct gc_bucket {
-	struct gc_bucket_node bucket[PAGESIZE/GRAINED_UNIT+1][_PPS*GRAIN_PER_PAGE];
-	uint32_t idx[PAGESIZE/GRAINED_UNIT+1];
-};
-
 extern struct algo_req *make_algo_req_default(uint8_t, value_set *);
-static int lpa_compare(const void *a, const void *b) {
-	lpa_t a_lpa = (*(struct gc_bucket_node **)a)->lpa;
-	lpa_t b_lpa = (*(struct gc_bucket_node **)b)->lpa;
-
-	if (a_lpa < b_lpa) return -1;
-	else if (a_lpa == b_lpa) return 0;
-	else return 1;
-}
-
 static int lpa_cmp(const void *a, const void *b)
 {
     const struct lpa_len_ppa *da = a, *db = b;

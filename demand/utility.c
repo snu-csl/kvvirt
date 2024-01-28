@@ -124,7 +124,8 @@ again:
 }
 
 lpa_t *get_oob(blockmanager *bm, ppa_t ppa) {
-	return (lpa_t *)bm->get_oob(bm, ppa);
+    NVMEV_ASSERT(false);
+    return NULL;
 }
 
 void set_oob_bulk(blockmanager *bm, lpa_t *lpa_list, ppa_t ppa) {

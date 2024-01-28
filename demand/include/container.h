@@ -20,14 +20,6 @@ typedef struct algo_req algo_req;
 typedef struct request request;
 typedef struct blockmanager blockmanager;
 
-typedef struct upper_request{
-	const FSTYPE type;
-	const KEYT key;
-	uint32_t length;
-	V_PTR value;
-	//anything
-}upper_request;
-
 typedef struct value_set{
     struct demand_shard *shard;
 	PTR value;
@@ -184,90 +176,4 @@ struct algorithm{
 	void *algo_body;
 };
 
-typedef struct __OOBT{
-	char d[NPCINPAGE*4];
-}__OOB;
-
-typedef struct masterblock{
-	uint32_t punit_num;
-	uint32_t block_num;
-	uint16_t now;
-	uint16_t max;
-	uint8_t* bitset;
-	uint16_t invalid_number;
-	int age;
-	uint32_t seg_idx;
-	void *hptr;
-	void *private_data;
-	__OOB oob_list[_PPB];
-}__block;
-
-typedef struct mastersegment{
-	uint32_t seg_idx;
-	__block* blocks[BPS + 1];
-	uint16_t now;
-	uint16_t max;
-	uint32_t used_page_num;
-	uint8_t invalid_blocks;
-	void *private_data;
-}__segment;
-
-typedef struct ghostsegment{ //for gc
-	__block* blocks[BPS];
-	uint16_t now;
-	uint16_t max;
-	uint32_t invalidate_number;
-}__gsegment;
-
-struct blockmanager{
-	uint32_t (*create) (struct blockmanager*,lower_info *);
-	uint32_t (*destroy) (struct blockmanager*);
-	__block* (*get_block) (struct blockmanager*,__segment*);
-	__block *(*pick_block)(struct blockmanager*, uint32_t page_num);
-	__segment* (*get_segment) (struct blockmanager*, bool isreserve);
-	int (*get_page_num)(struct blockmanager*, __segment*);
-	int (*pick_page_num)(struct blockmanager*, __segment*);
-	bool (*check_full)(struct blockmanager*, __segment*, uint8_t type);
-	bool (*is_gc_needed) (struct blockmanager*);
-	__gsegment* (*get_gc_target) (struct blockmanager*);
-	void (*trim_segment) (struct blockmanager*, __gsegment*, struct lower_info*);
-	int (*populate_bit) (struct blockmanager*, ppa_t ppa);
-	int (*unpopulate_bit) (struct blockmanager*, ppa_t ppa);
-	int (*erase_bit)(struct blockmanager*, ppa_t ppa);
-	bool (*is_valid_page) (struct blockmanager*, ppa_t ppa);
-	bool (*is_invalid_page) (struct blockmanager*, ppa_t ppa);
-	void (*set_oob)(struct blockmanager*, char* data, int len, ppa_t ppa);
-	char *(*get_oob)(struct blockmanager*, ppa_t ppa);
-	__segment* (*change_reserve)(struct blockmanager *, __segment *reserve);
-
-	uint32_t (*pt_create) (struct blockmanager*, int part_num, int *each_part_seg_num, lower_info *);
-	uint32_t (*pt_destroy) (struct blockmanager*);
-	__segment* (*pt_get_segment) (struct blockmanager*, int pt_num, bool isreserve);
-	__gsegment* (*pt_get_gc_target) (struct blockmanager*, int pt_num);
-	void (*pt_trim_segment)(struct blockmanager*, int pt_num, __gsegment *, lower_info*);
-	int (*pt_remain_page)(struct blockmanager*, __segment *active,int pt_num);
-	bool (*pt_isgc_needed)(struct blockmanager*, int pt_num);
-	__segment* (*change_pt_reserve)(struct blockmanager *,int pt_num, __segment *reserve);
-	uint32_t (*pt_reserve_to_free)(struct blockmanager*, int pt_num, __segment *reserve);
-
-	lower_info *li;
-	void *private_data;
-};
-
-#define PPAMAKER(bl,idx) ((bl)->punit_num)+(idx<<6)+((bl)->block_num)
-
-#define for_each_block(segs,block,idx)\
-	for(idx=0,block=segs->blocks[idx];idx<BPS; block=(++idx)>BPS?segs->blocks[idx-1]:segs->blocks[idx])
-
-#define for_each_page(blocks,page,idx)\
-	for(idx=0,page=blocks->ppa; idx!=PPB; page++,idx++)
-
-#define for_each_page_in_seg(segs,page,bidx,pidx)\
-	for(pidx=0;pidx<_PPB; pidx++)\
-		for(bidx=0,page=PPAMAKER(segs->blocks[bidx],pidx); bidx<BPS; bidx++,page=PPAMAKER(segs->blocks[(bidx!=BPS?bidx:BPS-1)],pidx))
-
-
-#define for_each_page_in_seg_blocks(segs,block,page,bidx,pidx)\
-	for(pidx=0;pidx<_PPB; pidx++)\
-		for(bidx=0,block=segs->blocks[bidx],page=PPAMAKER(segs->blocks[bidx],pidx); bidx<BPS; bidx++,page=PPAMAKER(segs->blocks[(bidx!=BPS?bidx:BPS-1)],pidx),block=segs->blocks[(bidx!=BPS?bidx:BPS-1)])
 #endif

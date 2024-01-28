@@ -231,10 +231,6 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 
 #define OP 70
 #define PAGESIZE KB(4)
-#define _PPB (256)
-#define BPS (64)
-#define _PPS (_PPB*BPS)
-#define PUNIT (64)
 #define NPCINPAGE (PAGESIZE/PIECE)
 
 /*

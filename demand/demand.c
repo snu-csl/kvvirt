@@ -83,7 +83,6 @@ static void print_demand_env(const struct demand_env *_env) {
 #ifdef DVALUE
 	printk(" |    -Data Grains:        %d\n", _env->nr_dgrains);
 #endif
-	printk(" |  -Page per Segment:     %d\n", _PPS);
 /*	printk(" | Total cache pages:      %d\n", _env->nr_valid_tpages);
 	printk(" |  -Mixed Cache pages:    %d\n", _env->max_cached_tpages);
 	printk(" |  -Cache Percentage:     %0.3f%%\n", _env->caching_ratio * 100); */
