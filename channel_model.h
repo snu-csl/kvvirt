@@ -34,6 +34,8 @@ struct channel_model {
 	uint32_t command_credits;
 	uint32_t xfer_lat; /*XKB NAND CH transfer time in nanoseconds*/
 
+    uint64_t last;
+
 	credit_t avail_credits[NR_CREDIT_ENTRIES];
 };
 

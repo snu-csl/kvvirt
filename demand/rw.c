@@ -903,9 +903,8 @@ static uint32_t _do_wb_insert(struct demand_shard *shard, skiplist *wb,
 }
 
 uint64_t __demand_write(struct demand_shard *shard, request *const req) {
-	uint32_t rc = 0;
-    uint64_t nsecs_latest = 0, nsecs_completed = 0;
-    uint64_t nsecs_start = req->nsecs_start;
+	uint64_t rc = 0;
+    uint64_t nsecs_latest = req->nsecs_start, nsecs_completed = 0;
     uint64_t length = req->value->length;
     uint64_t credits = 0;
 	skiplist *wb = shard->ftl->write_buffer;
@@ -923,17 +922,13 @@ uint64_t __demand_write(struct demand_shard *shard, request *const req) {
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		
 		/* flush the buffer */
-		nsecs_latest = _do_wb_flush(shard, wb, credits);
+		nsecs_completed = _do_wb_flush(shard, wb, credits, nsecs_latest);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = shard->ftl->write_buffer = skiplist_init();
     }
 
 	/* default: insert to the buffer */
 	rc = _do_wb_insert(shard, wb, req); // rc: is the write buffer is full? 1 : 0
-   
-    nsecs_completed = ssd_advance_write_buffer(req->ssd, nsecs_start, length);
-    nsecs_latest = max(nsecs_completed, nsecs_latest);
-
 	req->end_req(req);
 	return nsecs_latest;
 }

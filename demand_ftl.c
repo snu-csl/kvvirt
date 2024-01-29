@@ -2398,7 +2398,7 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req,
 
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
     d_req->ssd = shard->ssd;
-    d_req->nsecs_start = req->nsecs_start;
+    d_req->nsecs_start = U64_MAX;
     d_req->hash_params = NULL;
     d_req->key = key;
 
@@ -2449,6 +2449,7 @@ static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req,
 bool end_r(struct request *req) 
 {
     struct ssdparams *spp = &req->ssd->sp;
+
     if(req->ppa == UINT_MAX || req->ppa == UINT_MAX - 1) {
         req->cmd->kv_retrieve.rsvd = UINT_MAX;
         req->cmd->kv_retrieve.value_len = req->value->length;
@@ -2499,7 +2500,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
     d_req->ssd = shard->ssd;
-    d_req->nsecs_start = req->nsecs_start;
+    d_req->nsecs_start = U64_MAX;
     d_req->hash_params = NULL;
     d_req->cmd = cmd;
     d_req->key = key;
@@ -2579,7 +2580,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 
     d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
     d_req->ssd = shard->ssd;
-    d_req->nsecs_start = req->nsecs_start;
+    d_req->nsecs_start = U64_MAX;
     d_req->hash_params = NULL;
     d_req->cmd = cmd;
     d_req->key = key;
@@ -2666,7 +2667,7 @@ static bool conv_append(struct nvmev_ns *ns, struct nvmev_request *req, struct n
 
     d_req.ssd = demand_shard->ssd;
     d_req.hash_params = NULL;
-    d_req.nsecs_start = req->nsecs_start;
+    d_req.nsecs_start = U64_MAX;
 
     uint8_t klen = cmd_key_length(tmp);
     uint32_t vlen = cmd_value_length(*cmd);

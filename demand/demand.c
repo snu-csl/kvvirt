@@ -856,13 +856,56 @@ uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
 	return rc;
 }
 
+/*
+ * Why do we need the spinlock here?
+ *
+ * In DFTLKV, timings are generated in the worker threads, not the single
+ * dispatcher.
+ *
+ * When multiple worker threads on different shards need to write,
+ * they share the same PCIe channel. Each write will get a start time
+ * in demand_write, then use that start time as the start time for the
+ * PCIe channel request.
+ *
+ * If we don't lock here, different threads will access the same PCIe channel 
+ * structure at the same time, which isn't supported right now.
+ *
+ * However, we can't place the spin in ssd_advance_pcie because of the
+ * following situation:
+ *
+ * Thread 1 shard 0 gets start time 0 in demand_write
+ * Thread 2 shard 1 gets start time 1 in demand_write
+ *
+ * Thread 2 locks the spin in ssd_advance_pcie, and models the request.
+ * This mean the last request time on the PCIe channel is 1.
+ *
+ * Thread 2 unlocks the spin, and thread 1 gets it. It tries to advance
+ * the PCIe channel with a start time of 0, which is less than the
+ * start time of the previous request. The current channel model assumes
+ * requests arrive with a start time equal to or greater than the time of the 
+ * previous request.
+ *
+ * Therefore, we use a spinlock here to ensure that the start times
+ * for write buffer transfers are in order.
+ */
+
+spinlock_t wb_spin;
 uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) { 
 	uint64_t rc;
     uint64_t local;
 
     struct d_cb_args *args = (struct d_cb_args*) voidargs;
     struct demand_shard *shard = args->shard;
+    struct ssd *ssd = shard->ssd;
     struct request *req = args->req;
+    uint32_t length = req->value->length;
+
+    while (!spin_trylock(&wb_spin)) {
+        cpu_relax();
+    }
+    req->nsecs_start = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
+    rc = ssd_advance_write_buffer(ssd, req->nsecs_start, length);
+    spin_unlock(&wb_spin);
 
 	mutex_lock(&shard->ftl->op_lock);
 
@@ -878,6 +921,10 @@ uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) {
 	rc = __demand_write(shard, req);
 
     local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
+    if(local > rc) {
+        pr_warn_once("[%s] CPU time exceeded time for flash IO (%llu %llu)",
+                      __func__, local, rc);
+    }
     rc = max(rc, local);
 
     if(result) {
