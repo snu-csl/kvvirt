@@ -100,8 +100,9 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
     struct demand_shard *shard = value->shard;
     struct ssd* ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0;
     struct ppa ppa;
+    uint64_t local;
 
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
     uint64_t off = shard_off + ((uint64_t) PPA * spp->pgsz);
@@ -109,7 +110,7 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
     NVMEV_DEBUG("Writing PPA %u (%llu) size %u pagesize %u in virt_push_datas\n", 
                 PPA, off, size, ssd->sp.pgsz);
 
-    memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
+    local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 
     ppa = ppa_to_struct(spp, PPA);
     if (last_pg_in_wordline(value->shard, &ppa)) {
@@ -118,15 +119,14 @@ uint64_t virt_push_data(ppa_t PPA, uint32_t size,
             .cmd = NAND_WRITE,
             .interleave_pci_dma = false,
             .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
-            .stime = 0,
+            .stime = local > req->stime ? local : req->stime,
         };
 
-        ppa = ppa_to_struct(spp, PPA);
         swr.ppa = &ppa;
-
         nsecs_completed = ssd_advance_nand(ssd, &swr);
-        nsecs_latest = max(nsecs_completed, nsecs_latest);
     }
+
+    memcpy(nvmev_vdev->ns[0].mapped + off, value->value, size);
 
     if(req) {
         req->end_req(req);
@@ -140,12 +140,14 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
                      algo_req *const req) {	
     uint64_t nsecs_completed, nsecs_latest;
     struct ppa ppa;
+
+    uint64_t now = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     struct nand_cmd swr = {
         .type = USER_IO,
         .cmd = NAND_READ,
         .interleave_pci_dma = true,
         .xfer_size = size,
-        .stime = 0,
+        .stime = req->stime,
     };
 
     BUG_ON(async);

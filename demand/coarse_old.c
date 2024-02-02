@@ -174,7 +174,7 @@ int cgo_destroy(struct demand_cache *cache) {
 }
 
 int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req, 
-             snode *wb_entry, uint64_t *nsecs_completed) {
+             snode *wb_entry, uint64_t *nsecs_completed, uint64_t stime) {
     struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
@@ -203,6 +203,8 @@ int cgo_load(struct demand_shard *shard, lpa_t lpa, request *const req,
 
     NVMEV_DEBUG("Bringing in IDX %lu PPA %u in %s.\n", IDX(lpa), cmt->t_ppa, __func__);
     struct algo_req *a_req = make_algo_req_rw(shard, MAPPINGR, _value_mr, req, wb_entry);
+    a_req->stime = stime; 
+
     _value_mr->shard = shard;
     nsec = __demand.li->read(cmt->t_ppa, spp->pgsz, _value_mr, ASYNC, a_req);
     kfree(a_req);
@@ -253,7 +255,8 @@ void __cgo_pte_to_page(value_set *value, struct pt_struct *pt, uint64_t idx,
 }
 
 int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req, 
-                snode *wb_entry, uint64_t *nsecs_completed, uint64_t *credits) {
+                snode *wb_entry, uint64_t *nsecs_completed, uint64_t *credits,
+                uint64_t stime) {
     int rc = 0;
     blockmanager *bm = __demand.bm;
     uint64_t nsecs_latest = 0, nsecs = 0;
@@ -316,10 +319,13 @@ int cgo_list_up(struct demand_shard *shard, lpa_t lpa, request *const req,
             value_set *_value_mw = inf_get_valueset(NULL, FS_MALLOC_W, PAGESIZE);
             _value_mw->shard = shard;
 
+            struct algo_req *a_req = make_algo_req_rw(shard, MAPPINGW, _value_mw,
+                                     req, wb_entry);
+            a_req->stime = stime;
+
             __cgo_pte_to_page(_value_mw, victim->pt, victim->idx, spp);
             nsecs = __demand.li->write(victim->t_ppa, PAGESIZE, _value_mw, ASYNC,
-                                       make_algo_req_rw(shard, MAPPINGW, _value_mw,
-                                       req, wb_entry));
+                                       a_req);
 
             rc = 1;
             (*credits) += GRAIN_PER_PAGE;
@@ -480,7 +486,8 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
         return cmt->pt[OFFSET(lpa)];
     } else {
         if(cmt->t_ppa == UINT_MAX) {
-            NVMEV_DEBUG("%s CMT was NULL for LPA %u IDX %u\n", 
+            NVMEV_ASSERT(false);
+            printk("%s CMT was NULL for LPA %u IDX %lu\n", 
                         __func__, lpa, IDX(lpa));
             /*
              * Haven't used this CMT entry yet.

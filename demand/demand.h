@@ -59,7 +59,9 @@ extern struct demand_stat d_stat;
 /* Structures */
 // Page table entry
 struct pt_struct {
+#ifndef GC_STANDARD
     lpa_t lpa;
+#endif
 	ppa_t ppa; // Index = lpa
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
@@ -84,6 +86,8 @@ struct cmt_struct {
     bool *is_cached;
 	uint32_t cached_cnt;
 	uint32_t dirty_cnt;
+
+    atomic_t outgoing;
 };
 
 struct hash_params {
@@ -245,8 +249,9 @@ uint32_t demand_remove(void*, uint64_t*, uint64_t*);
 uint64_t demand_append(struct demand_shard *shard, request *const);
 
 uint64_t __demand_read(struct demand_shard *shard, request *const, 
-                       bool for_del);
-uint64_t __demand_write(struct demand_shard *shard, request *const);
+                       bool for_del, uint64_t stime);
+uint64_t __demand_write(struct demand_shard *shard, request *const, 
+                        uint64_t stime);
 uint32_t __demand_remove(struct demand_shard *shard, request *const);
 void *demand_end_req(algo_req*);
 

@@ -13,6 +13,10 @@
 extern algorithm __demand;
 extern struct demand_stat d_stat;
 
+static uint64_t __get_wallclock(void) {
+    return cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
+}
+
 void d_set_oob(struct demand_shard *shard, lpa_t lpa, ppa_t ppa, 
                uint64_t offset, uint32_t len) {
     NVMEV_DEBUG("Setting OOB for PPA %u offset %llu LPA %u len %u\n", 
@@ -219,11 +223,38 @@ static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
 }
 #endif
 
+uint8_t __klen_from_value(uint8_t *ptr) {
+    return *(uint8_t*) ptr;
+}
+
+char* __key_from_value(uint8_t *ptr) {
+    return (char*) (ptr + 1);
+}
+
+uint32_t get_vlen(struct demand_shard *shard, ppa_t ppa, uint64_t offset) {
+    NVMEV_DEBUG("Checking PPA %u offset %u\n", ppa, offset);
+
+    uint32_t len = 1;
+    while(offset + len < GRAIN_PER_PAGE && shard->oob[ppa][offset + len] == 0) {
+        len++;
+    }
+
+    NVMEV_DEBUG("%s returning a vlen of %u\n", __func__, len * GRAINED_UNIT);
+    return len * GRAINED_UNIT;
+}
+
 static uint64_t read_actual_dpage(struct demand_shard *shard, ppa_t ppa, 
-                                  request *const req, uint64_t *nsecs_completed) {
+                                  request *const req, uint64_t *nsecs_completed,
+                                  uint64_t stime) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
+    struct hash_params *h_params = (struct hash_params*) req->hash_params;
     uint64_t nsecs = 0;
+    uint64_t offset;
+    uint64_t local;
+    bool retry;
+
+    NVMEV_ASSERT(nsecs_completed);
 
 	if (IS_INITIAL_PPA(ppa)) {
         if(nsecs_completed) {
@@ -233,60 +264,176 @@ static uint64_t read_actual_dpage(struct demand_shard *shard, ppa_t ppa,
 		return UINT_MAX;
 	}
 
-    struct algo_req *a_req = make_algo_req_rw(shard, DATAR, NULL, req, NULL);
-    a_req->parents = req;
-    a_req->parents->ppa = ppa;
-    //printk("%s ppa %u offset %u\n", 
-            //__func__, ppa, ((struct demand_params *)a_req->params)->offset);
 #ifdef DVALUE
-	((struct demand_params *)a_req->params)->offset = G_OFFSET(ppa);
-	ppa = G_IDX(ppa);
+    offset = G_OFFSET(ppa);
+    ppa = G_IDX(ppa);
 #endif
 
-    req->ssd = shard->ssd;
-    req->value->shard = shard;
-	nsecs = __demand.li->read(ppa, spp->pgsz, req->value, false, a_req);
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ((uint64_t) ppa * spp->pgsz);
 
-    if(nsecs_completed) {
-        *nsecs_completed = nsecs;
+    local = __get_wallclock();
+
+    struct nand_cmd swr = {
+        .type = USER_IO,
+        .cmd = NAND_READ,
+        .interleave_pci_dma = false,
+        .xfer_size = spp->pgsz,
+        .stime = local > stime ? local : stime,
+    };
+
+    struct ppa p = ppa_to_struct(spp, ppa);
+    swr.ppa = &p;
+    *nsecs_completed = ssd_advance_nand(ssd, &swr);
+
+    uint8_t* ptr = nvmev_vdev->ns[0].mapped + off;
+    uint8_t klen = __klen_from_value(ptr);
+    char* key = __key_from_value(ptr);
+
+    KEYT check_key;
+    KEYT actual_key;
+
+    check_key.len = req->key.len;
+    check_key.key = req->key.key;
+
+    actual_key.len = klen;
+    actual_key.key = key;
+
+    if (KEYCMP(actual_key, check_key) == 0) {
+        d_stat.fp_match_r++;
+
+        hash_collision_logging(h_params->cnt, DREAD);
+        kfree(h_params);
+
+        req->value->length = get_vlen(shard, G_IDX(req->ppa), offset);
+        req->shard = shard;
+        req->end_req(req);
+        retry = false;
+    } else {
+        d_stat.fp_collision_r++;
+
+        h_params->find = HASH_KEY_DIFF;
+        h_params->cnt++;
+
+        kfree(check_key.key);
+        retry = true;
     }
 
-    if(a_req->need_retry) {
-        kfree(a_req);
+    if(retry) {
         return 1;
     } else {
-        kfree(a_req);
         return 0;
     }
+
+//    struct algo_req *a_req = make_algo_req_rw(shard, DATAR, NULL, req, NULL);
+//    a_req->parents = req;
+//    a_req->parents->ppa = ppa;
+//    a_req->stime = 0;
+//    //printk("%s ppa %u offset %u\n", 
+//            //__func__, ppa, ((struct demand_params *)a_req->params)->offset);
+//#ifdef DVALUE
+//	((struct demand_params *)a_req->params)->offset = G_OFFSET(ppa);
+//	ppa = G_IDX(ppa);
+//#endif
+//
+//    req->ssd = shard->ssd;
+//    req->value->shard = shard;
+//	nsecs = __demand.li->read(ppa, spp->pgsz, req->value, false, a_req);
+
 }
 
 static uint64_t read_for_data_check(struct demand_shard *shard, 
-                                    ppa_t ppa, snode *wb_entry) {
+                                    ppa_t ppa, snode *wb_entry, 
+                                    uint64_t stime) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
-	value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
-	struct algo_req *a_req = make_algo_req_rw(shard, DATAR, _value_dr_check, NULL, wb_entry);
+    struct hash_params *h_params = (struct hash_params*) wb_entry->hash_params;
+    struct inflight_params *i_params;
+	//value_set *_value_dr_check = inf_get_valueset(NULL, FS_MALLOC_R, spp->pgsz);
+	//struct algo_req *a_req = make_algo_req_rw(shard, DATAR, _value_dr_check, NULL, wb_entry);
     uint64_t nsecs_completed;
+    uint64_t offset;
+    uint64_t local;
 
-    a_req->ppa = ppa;
 #ifdef DVALUE
-	((struct demand_params *)a_req->params)->offset = G_OFFSET(ppa);
+	offset = G_OFFSET(ppa);
 	ppa = G_IDX(ppa);
 #endif
-    _value_dr_check->shard = shard;
-	nsecs_completed = __demand.li->read(ppa, spp->pgsz, _value_dr_check, ASYNC, a_req);
 
-    kfree(a_req);
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ((uint64_t) ppa * spp->pgsz);
+
+    struct ppa p = ppa_to_struct(spp, ppa);
+    //local = __get_wallclock();
+
+    struct nand_cmd swr = {
+        .type = USER_IO,
+        .cmd = NAND_READ,
+        .interleave_pci_dma = false,
+        .xfer_size = spp->pgsz,
+        .stime = stime,
+    };
+
+    swr.ppa = &p;
+    nsecs_completed = ssd_advance_nand(ssd, &swr);
+    printk("Read completed %llu\n", nsecs_completed);
+
+    uint8_t* ptr = nvmev_vdev->ns[0].mapped + off;
+    uint8_t klen = __klen_from_value(ptr);
+    char* key = __key_from_value(ptr);
+
+    KEYT check_key;
+    KEYT actual_key;
+
+    check_key.len = wb_entry->key.len;
+    check_key.key = wb_entry->key.key;
+
+    actual_key.len = klen;
+    actual_key.key = key;
+
+    BUG_ON(!h_params);
+
+    //printk("Got key %llu at offset %llu\n", *(uint64_t*) ptr, off);
+
+    if (KEYCMP(actual_key, check_key) == 0) {
+        //printk("Match in read for writes.\n");
+        /* hash key found -> update */
+        d_stat.fp_match_w++;
+
+        h_params->find = HASH_KEY_SAME;
+        i_params = get_iparams(NULL, wb_entry);
+        BUG_ON(!i_params);
+        i_params->jump = GOTO_UPDATE;
+
+        q_enqueue((void *)wb_entry, shard->ftl->wb_retry_q);
+    } else {
+        /* retry */
+        d_stat.fp_collision_w++;
+
+        h_params->find = HASH_KEY_DIFF;
+        h_params->cnt++;
+
+        q_enqueue((void *)wb_entry, shard->ftl->wb_master_q);
+    }
+
+//    a_req->ppa = ppa;
+//    a_req->stime = stime;
+//    _value_dr_check->shard = shard;
+//	nsecs_completed = __demand.li->read(ppa, spp->pgsz, _value_dr_check, ASYNC, a_req);
+//
+//    kfree(a_req);
 	return nsecs_completed;
 }
 
 uint64_t __demand_read(struct demand_shard *shard,
-                       request *const req, bool for_del) {
+                       request *const req, bool for_del,
+                       uint64_t stime) {
 	uint64_t rc = 0;
-    uint64_t nsecs_completed = 0, nsecs_latest = req->nsecs_start;
+    uint64_t nsecs_completed = 0, nsecs_latest = stime;
     uint64_t credits = 0;
 	struct hash_params *h_params = (struct hash_params *)req->hash_params;
     uint64_t **oob = shard->oob;
+    uint64_t local;
 
 	lpa_t lpa;
 	struct pt_struct pte;
@@ -319,8 +466,6 @@ read_retry:
 	}
 #endif
 
-    nsecs_latest = max(nsecs_completed, nsecs_latest);
-
 	/* inflight request */
 	if (IS_INFLIGHT(req->params)) {
 		struct inflight_params *i_params = (struct inflight_params *)req->params;
@@ -344,6 +489,8 @@ read_retry:
 		}
 	}
 
+    nsecs_latest = max(nsecs_completed, nsecs_latest);
+
 	/* 1. check write buffer first */
 	rc = do_wb_check(shard->ftl->write_buffer, req);
 	if (rc) {
@@ -351,8 +498,8 @@ read_retry:
         if(for_del) {
             do_wb_delete(shard->ftl->write_buffer, req);
         } else {
-            nsecs_completed =
-            ssd_advance_pcie(req->ssd, req->nsecs_start, req->value->length);
+            nsecs_latest =
+            ssd_advance_pcie(req->ssd, nsecs_latest, req->value->length);
             req->end_req(req);
         }
         free_iparams(req, NULL);
@@ -369,7 +516,8 @@ cache_load:
 		if (rc) {
 			goto read_ret;
 		}
-		rc = shard->cache->load(shard, lpa, req, NULL, &nsecs_completed);
+		rc = shard->cache->load(shard, lpa, req, NULL, &nsecs_completed, 
+                                nsecs_latest);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		if (!rc) {
             req->ppa = UINT_MAX;
@@ -387,12 +535,9 @@ cache_load:
 		}
 cache_list_up:
 		rc = shard->cache->list_up(shard, lpa, req, NULL, 
-                                   &nsecs_completed, &credits);
+                                   &nsecs_completed, &credits,
+                                   nsecs_latest);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-		//if (rc) {
-        //    req->value->length = 0;
-		//	goto read_ret;
-		//}
 	}
 
 cache_check_complete:
@@ -410,12 +555,12 @@ cache_check_complete:
 data_read:
 	/* 3. read actual data */
     NVMEV_DEBUG("Got PPA %u for LPA %u\n", pte.ppa, lpa);
-    rc = read_actual_dpage(shard, pte.ppa, req, &nsecs_completed);
-    nsecs_latest = nsecs_latest == UINT_MAX - 1 ? nsecs_completed : 
-                   max(nsecs_latest, nsecs_completed);
 
-    if(rc == UINT_MAX) {
-        d_stat.fp_collision_r++;
+    rc = read_actual_dpage(shard, pte.ppa, req, &nsecs_completed, nsecs_latest);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
+
+    if(rc) {
+        //d_stat.fp_collision_r++;
 
         if(req->key.key[0] == 'L') {
             NVMEV_DEBUG("2 Log key retry. Bid %llu log num %u\n", 
@@ -423,13 +568,14 @@ data_read:
                         *(uint16_t*) (req->key.key + 4 + sizeof(uint64_t)));
         }
 
-        h_params->find = HASH_KEY_DIFF;
-        h_params->cnt++;
-        goto read_retry;
-    } else if(rc == 1) {
-        NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
+        //h_params->find = HASH_KEY_DIFF;
+        //h_params->cnt++;
         goto read_retry;
     }
+    //} else if(rc == 1) {
+    //    NVMEV_DEBUG("Retrying a read for key %s cnt %u\n", req->key.key, h_params->cnt);
+    //    goto read_retry;
+    //}
 
     if(for_del) {
         NVMEV_ASSERT(!IS_INITIAL_PPA(pte.ppa));
@@ -464,6 +610,7 @@ data_read:
     }
 
 read_ret:
+    //printk("Read done. %p\n", shard);
 	return nsecs_latest;
 }
 
@@ -518,8 +665,6 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 
         mark_page_valid(shard, &ppa_s);
 		ppa_t ppa = ppa2pgidx(shard, &ppa_s);
-
-        struct ppa tmp_ppa = ppa_to_struct(&shard->ssd->sp, ppa);
         NVMEV_DEBUG("%s assigning PPA %u (%u)\n", __func__, ppa, cnt++);
 
 		int offset = 0;
@@ -546,17 +691,17 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
                     //wb_entry->key.key, wb_entry->ppa, ppa, offset*GRAINED_UNIT);
 
 			// FIXME: copy only key?
-			memcpy(&page[offset*GRAINED_UNIT], 
-                   wb_entry->value->value, 
-                   wb_entry->value->length * GRAINED_UNIT);
-            char tmp[128];
-            memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
-            tmp[wb_entry->key.len] = '\0';
-            NVMEV_DEBUG("%s writing %s length %u (%u %llu) to %u (%u)\n", 
-                        __func__, tmp, *(uint8_t*) wb_entry->value->value, 
-                        wb_entry->value->length, 
-                        *(uint64_t*) (wb_entry->value->value + sizeof(uint8_t)),
-                        ppa, wb_entry->ppa);
+			//memcpy(&page[offset*GRAINED_UNIT], 
+            //       wb_entry->value->value, 
+            //       wb_entry->value->length * GRAINED_UNIT);
+            //char tmp[128];
+            //memcpy(tmp, wb_entry->value->value + 1, wb_entry->key.len);
+            //tmp[wb_entry->key.len] = '\0';
+            //NVMEV_DEBUG("%s writing %s length %u (%u %llu) to %u (%u)\n", 
+            //            __func__, tmp, *(uint8_t*) wb_entry->value->value, 
+            //            wb_entry->value->length, 
+            //            *(uint64_t*) (wb_entry->value->value + sizeof(uint8_t)),
+            //            ppa, wb_entry->ppa);
 
             put_vs(wb_entry->value);
 			wb_entry->value = NULL;
@@ -611,22 +756,12 @@ static bool _do_wb_assign_ppa(struct demand_shard *shard, skiplist *wb) {
 }
 
 static uint64_t _do_wb_mapping_update(struct demand_shard *shard, skiplist *wb, 
-                                      uint64_t* credits) {
+                                      uint64_t* credits, uint64_t stime) {
 	int rc = 0;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = stime;
 	blockmanager *bm = __demand.bm;
     uint64_t **oob = shard->oob;
-
-    bool sample = false;
-    uint64_t touch = 0, wait = 0, load = 0, list_up = 0, get = 0, update = 0;
-    uint64_t start, end;
-
-    uint32_t rand;
-    get_random_bytes(&rand, sizeof(rand));
-    if(rand % 100 > 75) {
-        start = local_clock();
-        sample = true;
-    }
+    uint64_t local;
 
 	snode *wb_entry;
 	struct hash_params *h_params;
@@ -682,27 +817,17 @@ wb_retry:
 
 		if (shard->cache->is_hit(shard->cache, lpa)) {
             NVMEV_DEBUG("%s hit for LPA %u\n", __func__, lpa);
-            if(sample) {
-                start = local_clock();
-                shard->cache->touch(shard->cache, lpa);
-                end = local_clock();
-                touch += end - start;
-            }
 		} else {
             //printk("%s miss for LPA %u\n", __func__, lpa);
 wb_cache_load:
-            start = local_clock();
 			rc = shard->cache->wait_if_flying(lpa, NULL, wb_entry);
-            end = local_clock();
-            wait += end - start;
 			if (rc) continue; /* pending */
 
             //printk("%s passed wait_if_flying for LPA %u\n", __func__, lpa);
             
-            start = local_clock();
-			rc = shard->cache->load(shard, lpa, NULL, wb_entry, NULL);
-            end = local_clock();
-            load += end - start;
+			rc = shard->cache->load(shard, lpa, NULL, wb_entry, 
+                                    &nsecs_completed, nsecs_latest);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
 			if (rc) continue; /* mapping read */
 
             //printk("%s passed load for LPA %u\n", __func__, lpa);
@@ -711,22 +836,17 @@ wb_cache_list_up:
              * TODO time here.
              */
 
-            start = local_clock();
 			rc = shard->cache->list_up(shard, lpa, NULL, wb_entry, 
-                                       NULL, credits);
-            end = local_clock();
-            list_up += end - start;
+                                       &nsecs_completed, credits, 
+                                       nsecs_latest);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
 			if (rc) continue; /* mapping write */
-
-            //printk("%s passed list_up for LPA %u\n", __func__, lpa);
 		}
 
 wb_data_check:
 		/* get page_table entry which contains {ppa, key_fp} */
-		start = local_clock();
         pte = shard->cache->get_pte(shard, lpa);
-        end = local_clock();
-        get += end - start;
+        NVMEV_DEBUG("Grain %u for LPA %u\n", pte.ppa, lpa);
         //printk("%s passed get_pte for LPA %u\n", __func__, lpa);
 
 #ifdef HASH_KVSSD
@@ -757,7 +877,8 @@ wb_data_check:
         //printk("%s passed hash table check for LPA %u\n", __func__, lpa);
 
 		/* data check is necessary before update */
-		nsecs_completed = read_for_data_check(shard, pte.ppa, wb_entry);
+		nsecs_completed = read_for_data_check(shard, pte.ppa, wb_entry, 
+                                              stime);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		continue;
 #endif
@@ -778,8 +899,8 @@ wb_update:
             mark_grain_invalid(shard, pte.ppa, len);
 #ifndef GC_STANDARD
             nsecs_completed = _record_inv_mapping(lpa, G_IDX(pte.ppa), credits);
-#endif
             nsecs_latest = max(nsecs_latest, nsecs_completed);
+#endif
 
 			static int over_cnt = 0; over_cnt++;
 			if (over_cnt % 100000 == 0) printk("overwrite: %d\n", over_cnt);
@@ -788,20 +909,10 @@ wb_update:
             nvmev_vdev->space_used += wb_entry->len * GRAINED_UNIT;
         }
 wb_direct_update:
-        start = local_clock();
 		shard->cache->update(shard, lpa, new_pte);
-        end = local_clock();
-        update += end - start;
         NVMEV_DEBUG("2 %s LPA %u PPA %u update in cache.\n", __func__, lpa, new_pte.ppa);
 
 		updated++;
-		//inflight--;
-
-        //struct ht_mapping *m = (struct ht_mapping*) kzalloc(sizeof(*m), GFP_KERNEL); 
-        //m->lpa = lpa;
-        //m->ppa = new_pte.ppa;
-        //hash_add(mapping_ht, &m->node, lpa);
-
 		d_htable_insert(shard->ftl->hash_table, new_pte.ppa, lpa);
 
 #ifdef HASH_KVSSD
@@ -831,41 +942,34 @@ wb_direct_update:
 	}
 
 	kfree(iter);
-
-    if(sample) {
-        //NVMEV_INFO("BREAKDOWN: touch %uns wait %uns load %uns list_up %u get %u update %u.\n",
-        //        touch, wait, load, list_up, get, update);
-    }
-
     return nsecs_latest;
 }
 
 uint64_t _do_wb_flush(struct demand_shard *shard, skiplist *wb, 
-                      uint64_t credits) {
+                      uint64_t credits, uint64_t stime) {
 	struct flush_list *fl = shard->ftl->flush_list;
     struct ssdparams spp = shard->ssd->sp;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = stime;
 
-	for (int i = 0; i < fl->size; i++) {
-		ppa_t ppa = fl->list[i].ppa;
-		value_set *value = fl->list[i].value;
-        value->shard = shard;
+	//for (int i = 0; i < fl->size; i++) {
+	//	ppa_t ppa = fl->list[i].ppa;
+	//	value_set *value = fl->list[i].value;
+    //    value->shard = shard;
 
-		nsecs_completed = 
-        __demand.li->write(ppa, spp.pgsz, value, ASYNC, 
-                           make_algo_req_rw(shard, DATAW, value, NULL, NULL));
-        nsecs_latest = max(nsecs_latest, nsecs_completed);
-        credits += GRAIN_PER_PAGE;
-    }
+    //    struct algo_req *a = make_algo_req_rw(shard, DATAW, value, NULL, NULL);
+    //    a->stime = nsecs_latest;
+
+	//	nsecs_completed = 
+    //    __demand.li->write(ppa, spp.pgsz, value, ASYNC, a);
+    //    nsecs_latest = max(nsecs_latest, nsecs_completed);
+    //    credits += GRAIN_PER_PAGE;
+    //}
 
 	fl->size = 0;
 	memset(fl->list, 0, shard->env->wb_flush_size * sizeof(struct flush_node));
 
 	d_htable_kfree(shard->ftl->hash_table);
 	shard->ftl->hash_table = d_htable_init(shard->env->wb_flush_size * 2);
-
-	/* wait until device traffic clean */
-	__demand.li->lower_flying_req_wait();
 
 	skiplist_kfree(wb);
 
@@ -888,7 +992,7 @@ static uint32_t _do_wb_insert(struct demand_shard *shard, skiplist *wb,
                               request *const req) {
     bool ow = false;
 	snode *wb_entry = skiplist_insert(wb, req->key, req->value, true, 
-                                      req->sqid, &ow);
+                                      req->sqid, &ow, req->wb_off);
 #ifdef HASH_KVSSD
     if(!ow) {
         wb_entry->hash_params = (void *)req->hash_params;
@@ -902,27 +1006,29 @@ static uint32_t _do_wb_insert(struct demand_shard *shard, skiplist *wb,
 	else return 0;
 }
 
-uint64_t __demand_write(struct demand_shard *shard, request *const req) {
+uint64_t __demand_write(struct demand_shard *shard, request *const req,
+                        uint64_t stime) {
 	uint64_t rc = 0;
-    uint64_t nsecs_latest = req->nsecs_start, nsecs_completed = 0;
+    uint64_t nsecs_latest = stime, nsecs_completed = 0;
     uint64_t length = req->value->length;
     uint64_t credits = 0;
 	skiplist *wb = shard->ftl->write_buffer;
     struct ssdparams *spp = &shard->ssd->sp;
 
-    BUG_ON(!req);
-
 	/* flush the buffer if full */
 	if (wb_is_full(shard, wb)) {
-		/* assign ppa first */
-        _do_wb_assign_ppa(shard, wb);
+		///* assign ppa first */
+        //_do_wb_assign_ppa(shard, wb);
 
 		/* mapping update [lpa, origin]->[lpa, new] */
-		nsecs_completed = _do_wb_mapping_update(shard, wb, &credits);
+		nsecs_completed = _do_wb_mapping_update(shard, wb, &credits, 
+                                                nsecs_latest);
+        printk("Gap 1 %llu (%llu %llu)\n", nsecs_completed - nsecs_latest, nsecs_completed,
+                nsecs_latest);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 		
 		/* flush the buffer */
-		nsecs_completed = _do_wb_flush(shard, wb, credits, nsecs_latest);
+		_do_wb_flush(shard, wb, credits, nsecs_latest);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
         wb = shard->ftl->write_buffer = skiplist_init();
     }
@@ -936,18 +1042,6 @@ uint64_t __demand_write(struct demand_shard *shard, request *const req) {
 uint32_t __demand_remove(struct demand_shard *shard, request *const req) {
 	//printk("Hello! remove() is not implemented yet! lol!");
 	return 0;
-}
-
-uint32_t get_vlen(struct demand_shard *shard, ppa_t ppa, uint64_t offset) {
-    NVMEV_DEBUG("Checking PPA %u offset %u\n", ppa, offset);
-
-    uint32_t len = 1;
-    while(offset + len < GRAIN_PER_PAGE && shard->oob[ppa][offset + len] == 0) {
-        len++;
-    }
-
-    NVMEV_DEBUG("%s returning a vlen of %u\n", __func__, len * GRAINED_UNIT);
-    return len * GRAINED_UNIT;
 }
 
 void *demand_end_req(algo_req *a_req) {

@@ -248,19 +248,21 @@ static int count_filled_entry(struct demand_cache *cache) {
 struct value_set* get_vs(struct ssdparams *spp) {
     struct value_set* ret = kmem_cache_alloc(vs_cache, GFP_KERNEL);
     if(!ret->value) {
-        ret->value = kmem_cache_alloc(page_cache, GFP_KERNEL);
+        //ret->value = kmem_cache_alloc(page_cache, GFP_KERNEL);
     } else {
         memset(ret->value, 0x0, spp->pgsz);
     }
 
-    NVMEV_ASSERT(ret->value);
+    //NVMEV_ASSERT(ret->value);
     return ret;
 }
 
 void put_vs(struct value_set *vs) {
-    kmem_cache_free(page_cache, vs->value);
-	memset(vs, 0x0, sizeof(*vs));
-    kmem_cache_free(vs_cache, vs);
+    if(vs) {
+        //kmem_cache_free(page_cache, vs->value);
+        memset(vs, 0x0, sizeof(*vs));
+        kmem_cache_free(vs_cache, vs);
+    }
 }
 
 static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf, 
@@ -792,6 +794,7 @@ static struct hash_params *make_hash_params(request *const req) {
 }
 #endif
 
+spinlock_t wb_spin;
 uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
 	uint64_t rc;
     uint64_t local;
@@ -800,14 +803,16 @@ uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
     struct demand_shard *shard = args->shard;
     struct request *req = args->req;
 
+    req->nsecs_start = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 	mutex_lock(&shard->ftl->op_lock);
+
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
 		d_stat.read_req_cnt++;
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-    rc = __demand_read(shard, req, false);
+    rc = __demand_read(shard, req, false, req->nsecs_start);
     if (req->ppa == UINT_MAX) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
@@ -844,7 +849,7 @@ uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
         *result = req->value->length;
     }
 
-    local = local_clock();
+    local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     rc = max(rc, local);
 
     put_vs(req->value);
@@ -889,7 +894,6 @@ uint32_t demand_read(void *voidargs, uint64_t* result, uint64_t *status) {
  * for write buffer transfers are in order.
  */
 
-spinlock_t wb_spin;
 uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) { 
 	uint64_t rc;
     uint64_t local;
@@ -900,17 +904,13 @@ uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) {
     struct request *req = args->req;
     uint32_t length = req->value->length;
 
-    while (!spin_trylock(&wb_spin)) {
-        cpu_relax();
-    }
-    req->nsecs_start = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
-    rc = ssd_advance_write_buffer(ssd, req->nsecs_start, length);
-    spin_unlock(&wb_spin);
+    //while (!spin_trylock(&wb_spin)) {
+    //    cpu_relax();
+    //}
+    //req->nsecs_start = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
+    //spin_unlock(&wb_spin);
 
-	mutex_lock(&shard->ftl->op_lock);
-
-    struct nvme_kv_command *cmd = req->cmd;
-    __buf_copy(cmd, req->value->value, req->value->length);
+	//mutex_lock(&shard->ftl->op_lock);
 
 #ifdef HASH_KVSSD
 	if (!req->hash_params) {
@@ -918,13 +918,9 @@ uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) {
 		req->hash_params = (void *)make_hash_params(req);
 	}
 #endif
-	rc = __demand_write(shard, req);
+	rc = __demand_write(shard, req, req->nsecs_start);
 
     local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
-    if(local > rc) {
-        pr_warn_once("[%s] CPU time exceeded time for flash IO (%llu %llu)",
-                      __func__, local, rc);
-    }
     rc = max(rc, local);
 
     if(result) {
@@ -935,10 +931,10 @@ uint64_t demand_write(void *voidargs, uint64_t *result, uint64_t *status) {
         *status = 0;
     }
 
-    kfree(req);
-    kfree(args);
+    //kfree(req);
+    //kfree(args);
 
-	mutex_unlock(&shard->ftl->op_lock);
+	//mutex_unlock(&shard->ftl->op_lock);
 	return rc;
 }
 
@@ -957,7 +953,8 @@ uint32_t demand_remove(void* voidargs, uint64_t* result, uint64_t *status) {
         req->hash_params = (void *)make_hash_params(req);
     }
 #endif
-    rc = __demand_read(shard, req, true);
+    NVMEV_ASSERT(false);
+    rc = __demand_read(shard, req, true, 0);
     if (req->ppa == UINT_MAX) {
         req->type = FS_NOTFOUND_T;
         req->end_req(req);
@@ -968,7 +965,7 @@ uint32_t demand_remove(void* voidargs, uint64_t* result, uint64_t *status) {
         *status = 0;
     }
 
-    local = local_clock();
+    local = cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
     rc = max(rc, local);
 
     put_vs(req->value);
@@ -997,7 +994,8 @@ uint64_t demand_append(struct demand_shard* shard, request *const req) {
         before = ((struct hash_params*) req->hash_params)->hash;
     }
 #endif
-    rc = __demand_read(shard, req, false);
+    NVMEV_ASSERT(false);
+    rc = __demand_read(shard, req, false, 0);
 
     uint64_t k = *(uint64_t*) (req->target_buf + 1);
     NVMEV_INFO("Attempting to append %u bytes to a value of length %u. Key is %llu\n",
@@ -1028,7 +1026,8 @@ uint64_t demand_append(struct demand_shard* shard, request *const req) {
     after = ((struct hash_params*) req->hash_params)->hash;
     NVMEV_ASSERT(before == after);
 
-    rc = __demand_write(shard, req);
+    NVMEV_ASSERT(false);
+    rc = __demand_write(shard, req, 0);
     NVMEV_INFO("Write in append done.\n");
     mutex_unlock(&shard->ftl->op_lock);
     return rc;

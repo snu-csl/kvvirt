@@ -53,9 +53,9 @@ struct demand_cache {
 	int (*destroy) (struct demand_cache*);
 
 	int (*load) (struct demand_shard*, lpa_t lpa, request *const req, 
-                 snode *wb_entry, uint64_t *);
+                 snode *wb_entry, uint64_t*, uint64_t);
 	int (*list_up) (struct demand_shard*,lpa_t lpa, request *const req, 
-                    snode *wb_entry, uint64_t*, uint64_t*);
+                    snode *wb_entry, uint64_t*, uint64_t*, uint64_t);
 	int (*wait_if_flying) (lpa_t lpa, request *const req, snode *wb_entry);
 
 	int (*touch) (struct demand_cache*, lpa_t lpa);

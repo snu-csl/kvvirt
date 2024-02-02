@@ -116,7 +116,7 @@ again:
     }
 
     NVMEV_DEBUG("Got LPA %u key %s cnt %d\n", h_params->lpa, 
-                log_key ? buf : key.key, h_params->cnt);
+                key.key, h_params->cnt);
 	return h_params->lpa;
 #else
 	return key;

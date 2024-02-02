@@ -69,6 +69,9 @@
 
 #include "ssd_config.h"
 
+extern uint8_t* wb;
+extern uint64_t wb_offs;
+
 struct nvmev_sq_stat {
 	unsigned int nr_dispatched;
 	unsigned int nr_dispatch;

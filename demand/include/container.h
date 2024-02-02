@@ -83,6 +83,7 @@ struct request {
     uint64_t sqid;
     struct nvme_kv_command *cmd;
     value_set *mapping_v;
+    uint64_t wb_off;
 };
 
 struct algo_req {
@@ -102,6 +103,7 @@ struct algo_req {
 
     uint64_t sqid;
     bool need_retry;
+    uint64_t stime;
 };
 
 struct lower_info {

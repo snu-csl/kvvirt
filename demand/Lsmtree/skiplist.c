@@ -539,18 +539,18 @@ snode *skiplist_insert_iter(skiplist *list,KEYT key,ppa_t ppa){
 	return x;
 }
 //extern bool testflag;
-#pragma GCC optimize ("O0")
 snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef, 
-                       uint64_t sqid, bool *ow) {
+                       uint64_t sqid, bool *ow, uint64_t wb_off) {
 	snode *update[MAX_L+1];
 	snode *x=list->header;
 	for(int i=list->level; i>=1; i--){
 #if defined(KVSSD) 
-		while(KEYCMP(x->list[i]->key,key)<0)
+		while(KEYCMP(x->list[i]->key,key)<0) {
 #else
-		while(x->list[i]->key<key)
+		while(x->list[i]->key<key) {
 #endif
 			x=x->list[i];
+        }
 		update[i]=x;
 	}
 	x=x->list[1];
@@ -559,7 +559,7 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef,
         //printk("vlen changed to %u (%u)\n", value->length, PIECE);
 	}
 #if defined(KVSSD)
-	if(KEYTEST(key,x->key))
+	if(KEYTEST(key,x->key)) 
 #else
 	if(key==x->key)
 #endif
@@ -573,10 +573,17 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef,
            if(testflag){
            printk("%d overlap!\n",++cnt);
            }*/
-        list->data_size-=(x->value->length*PIECE);
-        list->data_size+=(value->length*PIECE);
+
         if(x->value) {
-            put_vs(x->value);
+            list->data_size-=(x->value->length*PIECE);
+        }
+
+        if(value) {
+            list->data_size+=(value->length*PIECE);
+        }
+
+        if(x->value) {
+            //put_vs(x->value);
             //kfree(x->value->value);
             //inf_free_valueset(x->value,FS_MALLOC_W);
         }
@@ -592,11 +599,15 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef,
         x->value=value;
         x->isvalid=deletef;
         x->sqid = sqid;
-        x->len = value->length;
+        x->ppa=wb_off;
+
+        if(value) {
+            x->len = value->length;
+        }
+
         return x;
     }
     else{
-        //NVMEV_DEBUG("Skiplist insert for key %s\n", key.key);
         int level=getLevel();
         if(level>list->level){
             for(int i=list->level+1; i<=level; i++){
@@ -615,10 +626,12 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef,
         x->key=key;
         x->isvalid=deletef;
 
-        x->ppa=UINT_MAX;
-        x->value=value;
+        x->ppa=wb_off;
         x->sqid = sqid;
-        x->len = value->length;
+        if(value) {
+            x->value=value;
+            x->len = value->length;
+        }
 
 #ifdef KVSSD
         list->all_length+=KEYLEN(key);
@@ -645,11 +658,13 @@ snode *skiplist_insert(skiplist *list,KEYT key,value_set* value, bool deletef,
 
         x->level=level;
         list->size++;
-        list->data_size+=(value->length*PIECE);
+
+        if(value) {
+            list->data_size+=(value->length*PIECE);
+        }
     }
     return x;
 }
-#pragma GCC reset_options
 
 #ifdef Lsmtree
 //static int make_value_cnt=0;
@@ -800,7 +815,7 @@ void skiplist_clear(skiplist *list){
 	while(now!=list->header){
 
 		if(now->value){
-            kfree(now->value);
+            //kfree(now->value);
 			//inf_free_valueset(now->value,FS_MALLOC_W);//not only length<PAGESIZE also length==PAGESIZE, just free req from inf
 		}
 		kfree(now->key.key);
@@ -824,11 +839,12 @@ void skiplist_clear(skiplist *list){
 #endif
 }
 skiplist *skiplist_copy(skiplist* src){
+    NVMEV_ASSERT(false);
 	skiplist* des=skiplist_init();
 	snode *now=src->header->list[1];
 	snode *n_node;
 	while(now!=src->header){
-		n_node=skiplist_insert(des,now->key,now->value,now->isvalid,now->sqid,NULL);
+		n_node=skiplist_insert(des,now->key,now->value,now->isvalid,now->sqid,NULL,0);
 		n_node->ppa=now->ppa;
 		now=now->list[1];
 	}

@@ -40,12 +40,6 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 	uint32_t units_to_xfer = DIV_ROUND_UP(length, UNIT_XFER_SIZE);
 	uint32_t cur_time_offs, request_time_offs;
 
-    if(request_time < ch->last) {
-        printk("!!! %llu %llu (%llu diff) !!!\n", request_time, ch->last,
-                ch->last - request_time);
-    }
-    ch->last = request_time;
-
 	// Search current time index and move head to it
 	cur_time_offs = (cur_time / UNIT_TIME_INTERVAL) - (ch->cur_time / UNIT_TIME_INTERVAL);
 	cur_time_offs = (cur_time_offs < ch->valid_len) ? cur_time_offs : ch->valid_len;
@@ -64,22 +58,29 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 	ch->valid_len = ch->valid_len - cur_time_offs;
 
 	if (ch->valid_len > NR_CREDIT_ENTRIES) {
-		NVMEV_ERROR("[%s] Invalid valid_len 0x%x\n", __func__, ch->valid_len);
-		NVMEV_ASSERT(0);
-	}
+        NVMEV_ERROR("[%s] Invalid valid_len 0x%x\n", __func__, ch->valid_len);
+        NVMEV_ASSERT(0);
+    }
 
-	if (request_time < cur_time) {
-		NVMEV_DEBUG_VERBOSE("[%s] Reqeust time is before the current time 0x%llx 0x%llx\n",
-			    __func__, request_time, cur_time);
+    if (request_time < cur_time) {
+        printk("[%s] Reqeust time is before the current time %llu %llu (%llu)\n",
+                __func__, request_time, cur_time, cur_time - request_time);
+        printk("Caller is %pS\n", __builtin_return_address(0));
+        //printk("Caller is %pS\n", __builtin_return_address(1));
+        //printk("Caller is %pS\n", __builtin_return_address(2));
+        ch->last = request_time;
         return request_time; // return minimum delay
 	}
+
+    ch->last = request_time;
 
 	//Search request time index
 	request_time_offs = (request_time / UNIT_TIME_INTERVAL) - (cur_time / UNIT_TIME_INTERVAL);
 
 	if (request_time_offs >= NR_CREDIT_ENTRIES) {
-		NVMEV_ERROR("[%s] CH %p need to increase array size 0x%llx 0x%llx 0x%x\n", __func__,
-			    ch, request_time, cur_time, request_time_offs);
+        NVMEV_ERROR("[%s] CH %p need to increase array size %llu %llu %u\n", __func__,
+                ch, request_time, cur_time, request_time_offs);
+        printk("Gap between request_time and cur_time %llu\n", request_time - cur_time);
         return request_time; // return minimum delay
 	}
 

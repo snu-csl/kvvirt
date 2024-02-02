@@ -43,6 +43,7 @@ typedef struct snode{ //skiplist's node
 	uint32_t level;
 	value_set* value;
 	bool isvalid;
+    uint64_t wb_off;
 
 #ifdef HASH_KVSSD
 	lpa_t lpa;
@@ -106,7 +107,7 @@ snode *skiplist_find(skiplist*,KEYT); //find snode having key in skiplist, retur
 snode *skiplist_find_lowerbound(skiplist *,KEYT );
 snode *skiplist_range_search(skiplist *,KEYT);
 snode *skiplist_strict_range_search(skiplist *,KEYT);
-snode *skiplist_insert(skiplist*,KEYT,value_set *,bool,uint64_t,bool*); //insert skiplist, return inserted snode
+snode *skiplist_insert(skiplist*,KEYT,value_set *,bool,uint64_t,bool*,uint64_t); //insert skiplist, return inserted snode
 snode *skiplist_insert_iter(skiplist *,KEYT lpa, ppa_t ppa);
 #ifdef Lsmtree
 skiplist *skiplist_merge(skiplist *src,skiplist *des);
