@@ -94,7 +94,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
     if(offset == UINT_MAX - 1) {
         return length;
-    } else if (offset == UINT_MAX) {
+    } else if (offset == U64_MAX) {
         return 0;
     }
 
