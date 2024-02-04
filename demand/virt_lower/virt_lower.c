@@ -161,7 +161,7 @@ uint64_t virt_pull_data(ppa_t PPA, uint32_t size,
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
     uint64_t off = shard_off + ((uint64_t) PPA * spp->pgsz);
 
-    NVMEV_DEBUG("Reading PPA %u (%llu) size %u sqid %u %s in virt_dev\n", 
+    printk("Reading PPA %u (%llu) size %u sqid %u %s in virt_dev\n", 
                  PPA, off, size, nvmev_vdev->sqes[1]->qid, 
                  async ? "ASYNCHRONOUSLY" : "SYNCHRONOUSLY");
 

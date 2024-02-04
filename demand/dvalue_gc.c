@@ -36,6 +36,25 @@ bool __read_cmt(lpa_t lpa, uint64_t *read_cmts, uint64_t cnt) {
 }
 
 #ifdef GC_STANDARD
+static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
+{
+    struct ppa ppa;
+
+    ppa.ppa = 0;
+    ppa.g.ch = (ppa_ / spp->pgs_per_ch) % spp->pgs_per_ch;
+    ppa.g.lun = (ppa_ % spp->pgs_per_ch) / spp->pgs_per_lun;
+    ppa.g.pl = 0 ; //ppa_ % spp->tt_pls; // (ppa_ / spp->pgs_per_pl) % spp->pls_per_lun;
+    ppa.g.blk = (ppa_ % spp->pgs_per_lun) / spp->pgs_per_blk;
+    ppa.g.pg = ppa_ % spp->pgs_per_blk;
+
+    //printk("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
+    //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
+
+	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
+
+	return ppa;
+}
+
 uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt, 
                        struct ssdparams *spp) {
     struct pt_struct *pt = cmt->pt;
@@ -69,6 +88,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     bool skip_all = true;
     uint64_t **oob = shard->oob;
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0;
 
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
@@ -91,13 +111,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         return 0;
     }
 
-    value_set **pts = (value_set**) kzalloc(sizeof(value_set*) * unique_cmts, GFP_KERNEL);
-    for(int i = 0; i < unique_cmts; i++) {
-        pts[i] = (value_set*) kzalloc(sizeof(value_set), GFP_KERNEL);
-        pts[i]->value = kzalloc(spp->pgsz, GFP_KERNEL);
-        pts[i]->shard = shard;
-    }
-
+    uint8_t** pts = kmalloc(sizeof(uint8_t*) * unique_cmts, GFP_KERNEL);
     uint64_t cmts_loaded = 0;
 	/* read mapping table which needs update */
     volatile int nr_update_tpages = 0;
@@ -127,17 +141,29 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             }
 
             skip_all = false;
+            uint64_t off = shard_off + ((uint64_t) cmt->t_ppa * spp->pgsz);
 
-            if(__read_cmt(ppas[i].lpa, read_cmts, read_cmt_cnt)) {
-                NVMEV_DEBUG("%s skipping read PPA %u as it was read earlier.\n",
-                            __func__, cmt->t_ppa);
-
-                uint64_t off = shard_off + (cmt->t_ppa * spp->pgsz);
-                memcpy(pts[cmts_loaded++]->value, nvmev_vdev->ns[0].mapped + off, spp->pgsz);
+            if(0 && __read_cmt(ppas[i].lpa, read_cmts, read_cmt_cnt)) {
+                //NVMEV_DEBUG("%s skipping read PPA %u as it was read earlier.\n",
+                //            __func__, cmt->t_ppa);
+                //uint64_t off = shard_off + (cmt->t_ppa * spp->pgsz);
+                //memcpy(pts[cmts_loaded++]->value, nvmev_vdev->ns[0].mapped + off, spp->pgsz);
             } else {
-                value_set *_value_mr = pts[cmts_loaded++];
-                _value_mr->shard = shard;
-                __demand.li->read(cmt->t_ppa, PAGESIZE, _value_mr, ASYNC, NULL);
+                NVMEV_DEBUG("Trying to read CMT PPA %u\n", cmt->t_ppa);
+                pts[cmts_loaded++] = ((uint8_t*) nvmev_vdev->ns[0].mapped) + off;
+
+                struct ppa p = ppa_to_struct(spp, cmt->t_ppa);
+                struct nand_cmd swr = {
+                    .type = GC_MAP_IO,
+                    .cmd = NAND_READ,
+                    .interleave_pci_dma = false,
+                    .xfer_size = spp->pgsz,
+                    .stime = 0,
+                };
+
+                swr.ppa = &p;
+                nsecs_completed = ssd_advance_nand(ssd, &swr);
+                nsecs_latest = max(nsecs_latest, nsecs_completed);
 
                 NVMEV_DEBUG("%s marking mapping PPA %u invalid while it was being read during GC.\n",
                         __func__, cmt->t_ppa);
@@ -151,12 +177,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     }
 
     if(skip_all) {
-        for(int i = 0; i < unique_cmts; i++) {
-            kfree(pts[i]->value);
-            kfree(pts[i]);
-        }
         kfree(pts); 
-
         kfree(skip_update);
         return 0;
     }
@@ -172,8 +193,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         lpa_t lpa = ppas[i].lpa;
 
         struct cmt_struct t_cmt;
-        t_cmt.pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-        __page_to_pte(pts[cmts_loaded], t_cmt.pt, t_cmt.idx, spp, shard->id);
+        t_cmt.idx = idx;
+        t_cmt.pt = (struct pt_struct*) pts[cmts_loaded]; 
 
         uint64_t offset = OFFSET(ppas[i].lpa);
         t_cmt.pt[offset].ppa = ppas[i].new_ppa;
@@ -181,9 +202,19 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         NVMEV_DEBUG("%s 1 setting LPA %u to PPA %u\n",
                 __func__, ppas[i].lpa, ppas[i].new_ppa);
 
+        if(G_IDX(ppas[i].new_ppa) > spp->tt_pgs) {
+            printk("Tried to convert PPA %u\n", G_IDX(ppas[i].new_ppa));
+            NVMEV_ASSERT(false);
+        }
+
         while(i + 1 < nr_valid_grains && IDX(ppas[i + 1].lpa) == idx) {
             offset = OFFSET(ppas[i + 1].lpa);
             t_cmt.pt[offset].ppa = ppas[i + 1].new_ppa;
+
+            if(G_IDX(ppas[i].new_ppa) > spp->tt_pgs) {
+                printk("Tried to convert PPA %u\n", G_IDX(ppas[i].new_ppa));
+                NVMEV_ASSERT(false);
+            }
 
             NVMEV_DEBUG("%s 2 setting LPA %u to PPA %u\n",
                          __func__, ppas[i + 1].lpa, ppas[i + 1].new_ppa);
@@ -191,9 +222,6 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             i++;
         }
 
-        __pte_to_page(pts[cmts_loaded], &t_cmt, spp);
-        kfree(t_cmt.pt);
- 
         struct ppa p = get_new_page(shard, GC_MAP_IO);
         ppa_t ppa = ppa2pgidx(shard, &p);
 
@@ -203,10 +231,25 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
         oob[ppa][0] = lpa;
 
-        NVMEV_DEBUG("%s writing CMT IDX %u back to PPA %u\n",
+        NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %u\n",
                     __func__, idx, ppa);
 
-        __demand.li->write(ppa, spp->pgsz, pts[cmts_loaded], ASYNC, NULL);
+        uint64_t off = shard_off + ((uint64_t) ppa * spp->pgsz);
+        uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
+    
+        memcpy(ptr, pts[cmts_loaded], spp->pgsz);
+
+        struct nand_cmd swr = {
+            .type = GC_MAP_IO,
+            .cmd = NAND_WRITE,
+            .interleave_pci_dma = false,
+            .xfer_size = spp->pgsz,
+        };
+
+        swr.stime = nsecs_latest;
+        swr.ppa = &p;
+
+        ssd_advance_nand(ssd, &swr);
 
         d_stat.trans_w_dgc++;
 
@@ -219,12 +262,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         cmts_loaded++;
     }
 
-    for(int i = 0; i < unique_cmts; i++) {
-        kfree(pts[i]->value);
-        kfree(pts[i]);
-    }
     kfree(pts); 
-
 	kfree(skip_update);
 	return 0;
 }

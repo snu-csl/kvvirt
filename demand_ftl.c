@@ -342,9 +342,9 @@ bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type)
     struct nand_block *blk = get_blk(demand_shard->ssd, &p);
     
     //if(wpp->blk == prev_blk && blk->vgc == prev_vgc) {
-    //    printk("Caller is %pS\n", __builtin_return_address(0));
-    //    printk("Caller is %pS\n", __builtin_return_address(1));
-    //    printk("Caller is %pS\n", __builtin_return_address(2));
+    //    printk("caller is %ps\n", __builtin_return_address(0));
+    //    printk("caller is %ps\n", __builtin_return_address(1));
+    //    printk("caller is %ps\n", __builtin_return_address(2));
     //    NVMEV_ERROR("vgc %u prev vgc %u\n", blk->vgc, prev_vgc);
     //}
 
@@ -850,6 +850,9 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
     //printk("%s: For PPA %u we got ch:%d, lun:%d, pl:%d, blk:%d, pg:%d\n", 
     //        __func__, ppa_, ppa.g.ch, ppa.g.lun, ppa.g.pl, ppa.g.blk, ppa.g.pg);
 
+    if(ppa_ > spp->tt_pgs) {
+        printk("Tried to convert PPA %llu\n", ppa_);
+    }
 	NVMEV_ASSERT(ppa_ < spp->tt_pgs);
 
 	return ppa;
@@ -890,7 +893,7 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
     line->vgc += len;
 
     NVMEV_DEBUG("Marking grain %llu length %u in PPA %llu line %d valid shard %llu\n", 
-                 grain, len, page, line->id, shard->id);
+            grain, len, page, line->id, shard->id);
 
 #ifdef GC_STANDARD
     /*
@@ -903,6 +906,11 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
 
     //printk("Marking grain %llu valid shard %llu (%p)\n", 
     //        grain, shard->id, shard->grain_bitmap);
+    
+    if(shard->grain_bitmap[grain] == 1) {
+        printk("!!!! grain %llu page %llu len %u\n", grain, G_IDX(grain), len);
+    }
+
     NVMEV_ASSERT(shard->grain_bitmap[grain] != 1);
     shard->grain_bitmap[grain] = 1;
 #endif
@@ -942,6 +950,14 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 
 	/* update corresponding page status */
 	pg = get_pg(shard->ssd, &ppa);
+
+    if(pg->status != PG_VALID) {
+        printk("PPA %u %lld! Grain %llu len %u\n", pg->status, page, grain, len);
+        printk("Caller is %pS\n", __builtin_return_address(0));
+        printk("Caller is %pS\n", __builtin_return_address(1));
+        printk("Caller is %pS\n", __builtin_return_address(2));
+    }
+
 	NVMEV_ASSERT(pg->status == PG_VALID);
 
 	/* update corresponding block status */
@@ -1392,8 +1408,9 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     struct lpa_len_ppa *lpa_lens;
     uint64_t tt_rewrite = 0;
     bool mapping_line = gcd->map;
-
+    uint64_t idx;
     uint64_t lpa_len_idx = 0;
+
     lpa_lens = (struct lpa_len_ppa*) kzalloc(sizeof(struct lpa_len_ppa) * 
                                              GRAIN_PER_PAGE * 
                                              spp->pgs_per_blk, GFP_KERNEL);
@@ -1403,6 +1420,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 		pg_iter = get_pg(shard->ssd, &ppa_copy);
         pgidx = ppa2pgidx(shard, &ppa_copy);
 		/* there shouldn't be any free page in victim blocks */
+        NVMEV_DEBUG("Checking PPA %llu\n", pgidx);
 		NVMEV_ASSERT(pg_iter->status != PG_FREE);
         nvmev_vdev->space_used -= spp->pgsz;
 		if (pg_iter->status == PG_VALID) {
@@ -1418,7 +1436,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             d_stat.trans_r_tgc++;
         }
 
-        NVMEV_DEBUG("Cleaning PPA %u\n", pgidx);
+        NVMEV_DEBUG("Cleaning %s PPA %llu\n", mapping_line ? "MAP" : "USER", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 
@@ -1431,34 +1449,22 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 continue;
             }
 
-            //if(!mapping_line && oob[pgidx][i] != 0 && 
-            //   oob[pgidx][i] != 2 && oob[pgidx][i] != UINT_MAX) {
-            //    uint64_t off = pgidx * spp->pgsz + (i * GRAINED_UNIT);
-            //    uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
-            //    uint64_t key = *(uint64_t*) (ptr + sizeof(uint8_t));
-            //    NVMEV_INFO("Checking LPA %llu in PPA %llu key %llu\n", 
-            //                oob[pgidx][i], pgidx, key);
-            //}
-
             if(shard->grain_bitmap[grain] == 1) {
                 if(mapping_line) {
-                    NVMEV_DEBUG("Got CMT PPA %u in GC\n", pgidx);
-                    NVMEV_ASSERT(i == 0);
-                    NVMEV_ASSERT(mapping_line);
+                    //printk("Got CMT PPA %llu in GC\n", pgidx);
 
                     lpa_t lpa = oob[pgidx][0];
-                    uint64_t idx = IDX(lpa);
-
-                    if(lpa == 2 || lpa == UINT_MAX) {
-                        NVMEV_DEBUG("WUUUUT %u %d %u\n", pgidx, i, oob[pgidx][0]);
-                    }
+                    idx = IDX(lpa);
                     BUG_ON(lpa == 2);
 
-                    NVMEV_DEBUG("LPA %u for PPA %u off %u\n", lpa, pgidx, i);
+                    NVMEV_DEBUG("IDX %u for PPA %llu off %u\n", lpa, pgidx, i);
 
                     struct cmt_struct *c = cache->get_cmt(cache, lpa);
+                    NVMEV_ASSERT(atomic_read(&c->outgoing) == 0);
+
                     if(c->t_ppa != pgidx) {
-                        NVMEV_DEBUG("!!! IDX %u's CMT changed from %u to %u !!!\n",
+                        NVMEV_ASSERT(false);
+                        NVMEV_INFO("!!! IDX %llu's CMT changed from %llu to %u !!!\n",
                                 idx, pgidx, c->t_ppa);
 
                         /*
@@ -1473,20 +1479,14 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                         continue;
                     }
 
-                    if(c->state == DIRTY) {
-                        NVMEV_DEBUG("CMT IDX %u was dirty in memory. Already invalidated.\n", 
-                                    idx);
-                        i += GRAIN_PER_PAGE;
-                        continue;
-                    }
-
                     lpa_lens[lpa_len_idx++] =
-                        (struct lpa_len_ppa) {idx, GRAIN_PER_PAGE, grain, UINT_MAX - 1};
+                    (struct lpa_len_ppa) {idx, GRAIN_PER_PAGE, grain, 
+                                          UINT_MAX - 1};
 
                     mark_grain_invalid(shard, grain, GRAIN_PER_PAGE);
+
                     cnt++;
                     tt_rewrite += GRAIN_PER_PAGE * GRAINED_UNIT;
-
                     i += GRAIN_PER_PAGE;
                 } else if(oob[pgidx][i] != 2 && oob[pgidx][i] != 0) {
                     NVMEV_DEBUG("Got regular PPA %llu LPA %llu in GC\n", 
@@ -1498,14 +1498,16 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                     }
 
                     lpa_lens[lpa_len_idx++] =
-                        (struct lpa_len_ppa) {oob[pgidx][i], len, grain, UINT_MAX};
+                    (struct lpa_len_ppa) {oob[pgidx][i], len, grain, UINT_MAX};
 
                     mark_grain_invalid(shard, grain, len);
                     cnt++;
                     tt_rewrite += len * GRAINED_UNIT;
 
+                    /*
+                     * i += len?
+                     */
                 }
-
             } 
         }
 
@@ -1533,8 +1535,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 		completed_time = ssd_advance_nand(shard->ssd, &gcr);
 	}
 
-    NVMEV_DEBUG("Copying %d pairs from %d pages.\n",
-                 cnt, page_cnt);
+    //printk("Copying %d pairs from %d pages.\n",
+    //             cnt, page_cnt);
 
     uint64_t grains_rewritten = 0;
     uint64_t remain = tt_rewrite;
@@ -1565,6 +1567,11 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
     NVMEV_ASSERT(remain > 0 && grains_rewritten < cnt);
 
+    /*
+     * We would do well here to have an implementation
+     * that near-optimally packs values into pages.
+     */
+
     while(grains_rewritten < cnt) {
         uint32_t length = lpa_lens[grains_rewritten].len;
         uint64_t lpa = lpa_lens[grains_rewritten].lpa;
@@ -1575,9 +1582,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             /*
              * There's not enough space left in this page.
              * Mark the rest of the page invalid.
-             *
-             * We would do well here to have an implementation
-             * that packs values into pages like in the original work.
              */
 
             NVMEV_ASSERT(offset > 0);
@@ -1621,7 +1625,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
         if(lpa == UINT_MAX) {
             /*
-             * offset == 0 assumes an invalid mapping page is
+             * offset == 0 assumes an invalid mapping page, which is
              * the size of a page.
              */
 
@@ -1633,7 +1637,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
         from = shard_off + (G_IDX(old_grain) * spp->pgsz) + 
                (G_OFFSET(old_grain) * GRAINED_UNIT);
 
-        NVMEV_DEBUG("LPA/IDX %llu length %u klen %u going from %llu (G%llu) to %llu (G%llu)\n",
+        NVMEV_DEBUG("LPA/IDX %llu length %u klen %u going from PPA %llu (G%llu) to PPA %llu (G%llu)\n",
                      lpa, length, *(uint8_t*) (nvmev_vdev->ns[0].mapped + from), 
                      G_IDX(old_grain), old_grain, pgidx, grain);
 
@@ -1666,10 +1670,15 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             struct cmt_struct *c = cache->get_cmt(cache, IDX2LPA(idx));
     
             if(c->t_ppa == G_IDX(old_grain)) {
-                NVMEV_DEBUG("CMT IDX %u moving from PPA %u to PPA %u\n", 
-                            idx, G_IDX(old_grain), pgidx);
+                NVMEV_DEBUG("CMT IDX %llu moving from PPA %llu to PPA %llu\n", 
+                           idx, G_IDX(old_grain), pgidx);
                 c->t_ppa = pgidx;
                 c->grain = offset;
+
+                if(c->pt) {
+                    NVMEV_ASSERT(c->pt == (nvmev_vdev->ns[0].mapped + from));
+                    c->pt = (struct pt_struct*) (nvmev_vdev->ns[0].mapped + to);
+                }
             }
         }
 
@@ -1694,8 +1703,6 @@ new_ppa:
             } else {
                 d_stat.trans_w_tgc++;
             }
-            //NVMEV_ERROR("2 Picked up PPA %u %u remaining grains\n", 
-            //        pgidx, GRAIN_PER_PAGE - offset);
         }
     }
 
@@ -2611,6 +2618,11 @@ static uint64_t read_for_data_check(struct demand_shard *shard,
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
     uint64_t off = shard_off + (ppa * spp->pgsz) + (offset * GRAINED_UNIT);
 
+    if(ppa > spp->tt_pgs) {
+        printk("Tried to convert PPA %llu\n", ppa);
+    }
+	NVMEV_ASSERT(ppa < spp->tt_pgs);
+
     struct ppa p = ppa_to_struct(spp, ppa);
     struct nand_cmd swr = {
         .type = USER_IO,
@@ -2659,6 +2671,7 @@ static uint64_t read_for_data_check(struct demand_shard *shard,
 
 struct pte_e_args {
     uint64_t out_ppa;
+    uint64_t prev_ppa;
     struct cmt_struct *cmt;
     uint64_t idx;
     struct ssdparams *spp;
@@ -2676,6 +2689,10 @@ void __pte_evict_work(void *voidargs, uint64_t*, uint64_t*) {
 
     //printk("In %s %p\n", __func__, &cmt->outgoing);
 
+    /*
+     * TODO shard off.
+     */
+
     uint64_t off = out_ppa * spp->pgsz;
     uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
 
@@ -2688,6 +2705,11 @@ void __pte_evict_work(void *voidargs, uint64_t*, uint64_t*) {
         memcpy(ptr + (i * ENTRY_SIZE) + sizeof(ppa), &fp, sizeof(fp));
 #endif
 
+        if(G_IDX(ppa) > spp->tt_pgs && ppa != UINT_MAX) {
+            NVMEV_INFO("Sending out LPA %llu PPA %u IDX %llu key %llu prev PPA %llu\n", 
+                    start_lpa + i, ppa, idx, *(uint64_t*) (ptr + 1), args->prev_ppa);
+            NVMEV_ASSERT(false);
+        }
         //if(ppa != UINT_MAX) {
         //    printk("Sending out LPA %llu PPA %u in %s.\n", start_lpa + i, ppa, __func__);
         //}
@@ -2697,7 +2719,9 @@ void __pte_evict_work(void *voidargs, uint64_t*, uint64_t*) {
     cmt->pt = NULL;
 
     atomic_dec(&cmt->outgoing);
-    //printk("Decr on %p\n", &cmt->outgoing);
+    kfree(args);
+
+    NVMEV_DEBUG("%s done for IDX %llu old PPA %llu\n", __func__, idx, args->prev_ppa);
     //printk("%s done.\n", __func__);
 }
 
@@ -2709,6 +2733,11 @@ struct pt_struct* __idx_to_memaddr(struct ssdparams *spp, uint64_t ppa) {
 
 void __mark_early(uint64_t grain, uint8_t klen, char* key) {
     uint64_t off = grain * GRAINED_UNIT;
+
+    /*
+     * TODO: shard off.
+     */
+
     memcpy(nvmev_vdev->ns[0].mapped + off, &klen, sizeof(klen));
     memcpy(nvmev_vdev->ns[0].mapped + off + sizeof(klen), key, klen);
 }
@@ -2725,6 +2754,7 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 	struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
 
 	uint64_t nsecs_latest = 0, nsecs_completed = 0, nsecs_xfer_completed = 0;
+    uint64_t credits = 0;
 
     uint8_t klen = cmd_key_length(cmd);
     uint32_t vlen = cmd_value_length(cmd);
@@ -2761,21 +2791,20 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
             //        spp->pgs_per_oneshotpg * spp->pgsz);
         }
 
-        cur_page = get_new_page(shard, USER_IO);
-        advance_write_pointer(shard, USER_IO);
-        mark_page_valid(shard, &cur_page);
-        offset = ((uint64_t) ppa2pgidx(shard, &cur_page)) * spp->pgsz;
-        //printk("New page offset %llu (%u)\n", offset, ppa2pgidx(shard, &cur_page));
-
         /*
-         * Actual writing, wasted grains, and GC.
+         * TODO Wasted grains.
          */
 
+        NVMEV_ASSERT(offset % spp->pgsz == 0);
         //mark_grain_valid(shard, PPA_TO_PGA(ppa, offset), 
         //        GRAIN_PER_PAGE - offset);
         //mark_grain_invalid(shard, PPA_TO_PGA(ppa, offset), 
         //        GRAIN_PER_PAGE - offset);
-        //credits += target_length;
+
+        cur_page = get_new_page(shard, USER_IO);
+        advance_write_pointer(shard, USER_IO);
+        mark_page_valid(shard, &cur_page);
+        offset = ((uint64_t) ppa2pgidx(shard, &cur_page)) * spp->pgsz;
     }
 
     d_req.ssd = shard->ssd;
@@ -2806,17 +2835,16 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     d_req.ssd = shard->ssd;
 
     uint64_t grain = offset / GRAINED_UNIT;
+    uint64_t page = G_IDX(grain);
+    uint64_t g_off = G_OFFSET(grain);
+    uint64_t len = vlen / GRAINED_UNIT;
+
     cmd->kv_store.rsvd = offset;
     d_req.wb_off = grain;
-    mark_grain_valid(shard, grain, vlen / GRAINED_UNIT);
+    mark_grain_valid(shard, grain, len);
+    credits += len;
 
     __mark_early(grain, klen, cmd->kv_store.key);
-
-    //printk("Write for key %llu (%llu) klen %u vlen %u grain %llu\n", 
-    //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-    //            klen, vlen, grain);
-
-    //printk("Placing key at grain %llu\n", grain);
 
     offset += vlen;
 
@@ -2842,6 +2870,7 @@ lpa:
     struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
+    struct cache_stat *cstat = &cache->stat;
 
     if(cmt->t_ppa == UINT_MAX) {
         /*
@@ -2867,18 +2896,24 @@ lpa:
         oob[ppa][0] = cmt->idx * EPP;
         cmt->t_ppa = ppa;
 
+        /*
+         * Will be marked dirty below in update().
+         */
+
+        cmt->state = CLEAN;
+
         first = true;
-        //printk("Assigned a new t_ppa %u to idx %u\n", ppa, cmt->idx);
+        //printk("Assigned a new T PPA %u to IDX %u\n", ppa, cmt->idx);
     }
 
-    //printk("Starting wait on %p\n", &cmt->outgoing);
     while(atomic_read(&cmt->outgoing) == 1) {
         cpu_relax();
     }
-    //printk("Passed wait.\n");
 
 cache:
     if (shard->cache->is_hit(shard->cache, lpa)) {
+        BUG_ON(!cmt->lru_ptr);
+
         struct pt_struct pte = cmt->pt[OFFSET(lpa)];
 
         //printk("Hit for LPA %u, got grain %u\n", lpa, pte.ppa);
@@ -2891,6 +2926,8 @@ cache:
                 goto lpa;
             }
 
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
+
             uint64_t g_off = G_OFFSET(pte.ppa);
             uint32_t len = 1;
             while(g_off + len < GRAIN_PER_PAGE && oob[G_IDX(pte.ppa)][g_off + len] == 0) {
@@ -2899,6 +2936,8 @@ cache:
 
             mark_grain_invalid(shard, pte.ppa, len);
         }
+
+        cstat->cache_hit++;
     } else if(cmt->t_ppa != UINT_MAX) {
         struct cmt_struct *victim;
 
@@ -2909,8 +2948,18 @@ cache:
             //printk("Cache is full. Got victim with IDX %u\n", victim->idx);
 
             if (victim->state == DIRTY) {
+                /*
+                 * The existing page on disk for this mapping table entry.
+                 */
+
+                mark_grain_invalid(shard, PPA_TO_PGA(victim->t_ppa, 0), 
+                                   GRAIN_PER_PAGE);
+
+
                 struct ppa p = get_new_page(shard, MAP_IO);
                 ppa_t ppa = ppa2pgidx(shard, &p);
+
+                BUG_ON(!victim->lru_ptr);
 
                 advance_write_pointer(shard, MAP_IO);
                 mark_page_valid(shard, &p);
@@ -2923,20 +2972,21 @@ cache:
 
                 oob[ppa][0] = victim->idx * EPP;
 
+                uint64_t prev_ppa = victim->t_ppa;
                 victim->t_ppa = ppa;
                 victim->state = CLEAN;
 
-                //printk("Assigned PPA %u to victim at IDX %u in %s.\n",
-                //        ppa, victim->idx, __func__);
+                NVMEV_DEBUG("Assigned PPA %u to victim at IDX %u in %s. Prev PPA %llu\n",
+                        ppa, victim->idx, __func__, prev_ppa);
 
                 struct pte_e_args *args;
                 args = (struct pte_e_args*) kzalloc(sizeof(*args), GFP_KERNEL);
                 args->out_ppa = ppa;
+                args->prev_ppa = prev_ppa;
                 args->cmt = victim;
                 args->idx = victim->idx;
                 args->spp = spp;
 
-                //printk("Incr on %p\n", &victim->outgoing);
                 atomic_inc(&victim->outgoing);
                 schedule_internal_operation_cb(req->sq_id, nsecs_latest,
                                                NULL, 0, 0, 
@@ -2944,15 +2994,16 @@ cache:
                                                (void*) args, 
                                                false, NULL);
 
-                //rc = 1;
-                //(*credits) += GRAIN_PER_PAGE;
-
+                credits += GRAIN_PER_PAGE;
                 //printk("Evicted DIRTY mapping entry IDX %u in %s.\n",
                 //        victim->idx, __func__);
+                cstat->dirty_evict++;
             } else {
                 //printk("Evicted CLEAN mapping entry IDX %u in %s.\n",
                 //        victim->idx, __func__);
-                //cstat->clean_evict++;
+                victim->lru_ptr = NULL;
+                victim->pt = NULL;
+                cstat->clean_evict++;
             }
         }
 
@@ -2965,6 +3016,10 @@ cache:
              * If this wasn't the first access of this mapping
              * table page, we need to read it from disk.
              */
+
+            if(cmt->t_ppa > spp->tt_pgs) {
+                printk("Tried to convert PPA %u\n", cmt->t_ppa);
+            }
 
             struct ppa p = ppa_to_struct(spp, cmt->t_ppa);
             struct nand_cmd srd = {
@@ -2985,23 +3040,26 @@ cache:
             }
         }
 
-        //uint64_t start_lpa = cmt->idx * EPP;
-        //for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        //    if(cmt->pt[i].ppa != UINT_MAX) {
-        //        printk("Brought in LPA %llu PPA %u\n", 
-        //                start_lpa + i, cmt->pt[i].ppa);
-        //    }
-        //}
-
         cmt->lru_ptr = lru_push(cmbr->lru, (void *)cmt);
         cmbr->nr_cached_tpages++;
 
-        //printk("Increased cached tpages.\n");
-
+        cstat->cache_miss++;
         goto cache;
     }
 
+    oob[page][g_off] = lpa;
+    for(int i = 1; i < len; i++) {
+        oob[page][g_off + i] = 0;
+    }
+
+    NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                klen, vlen, grain, page, lpa);
+
     shard->cache->update(shard, lpa, new_pte);
+
+    consume_write_credit(shard, credits);
+    check_and_refill_write_credit(shard);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
 	ret->nsecs_target = nsecs_latest;

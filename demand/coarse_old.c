@@ -432,18 +432,6 @@ int cgo_update(struct demand_shard *shard, lpa_t lpa, struct pt_struct pte) {
     if (cmt->pt) {
         NVMEV_DEBUG("Setting LPA %u to PPA %u FP %u in update.\n", lpa, pte.ppa, pte.key_fp);
         cmt->pt[OFFSET(lpa)] = pte;
-
-        if (!IS_INITIAL_PPA(cmt->t_ppa) && cmt->state == CLEAN) {
-            //invalidate_page(__demand.bm, cmt->t_ppa, MAP);
-            /*
-             * Only safe if assuming battery-backed DRAM.
-             */
-
-            NVMEV_DEBUG("Marking mapping PPA %u invalid as it was dirtied in memory.\n",
-                         cmt->t_ppa);
-            mark_grain_invalid(shard, PPA_TO_PGA(cmt->t_ppa, 0), GRAIN_PER_PAGE);
-        }
-
         cmt->state = DIRTY;
         lru_update(cmbr->lru, cmt->lru_ptr);
     } else {

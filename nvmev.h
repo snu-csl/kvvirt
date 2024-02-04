@@ -6,6 +6,7 @@
 #include <linux/pci.h>
 #include <linux/msi.h>
 #include <asm/apic.h>
+#include <asm/msr.h>
 
 #include "nvme.h"
 
@@ -24,7 +25,7 @@
 #define NVMEV_SUBSYSTEM_ID	0x370d
 #define NVMEV_SUBSYSTEM_VENDOR_ID NVMEV_VENDOR_ID
 
-#define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
+#define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: [cycles: %llu] " string, NVMEV_DRV_NAME, get_cycles(), ##args)
 #define NVMEV_ERROR(string, args...) printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
