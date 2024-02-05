@@ -2872,13 +2872,24 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 
 	uint64_t nsecs_latest = 0, nsecs_completed = 0, nsecs_xfer_completed = 0;
     uint64_t credits = 0;
+    uint32_t allocated_buf_size;
 
     uint8_t klen = cmd_key_length(cmd);
     uint32_t vlen = cmd_value_length(cmd);
+    uint64_t glen = vlen / GRAINED_UNIT;
+
+    if(vlen % GRAINED_UNIT) {
+        glen++;
+    }
 
     uint64_t hash = CityHash64(cmd->kv_store.key, klen);
     struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
     struct ssdparams *spp = &shard->ssd->sp;
+    struct buffer *wbuf = shard->ssd->write_buffer;
+
+    allocated_buf_size = buffer_allocate(wbuf, vlen);
+    if (allocated_buf_size < vlen)
+        return false;
 
     nsecs_xfer_completed = ssd_advance_write_buffer(shard->ssd, req->nsecs_start, 
                                                     vlen);
@@ -2901,11 +2912,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
             swr.stime = nsecs_xfer_completed;
             swr.ppa = &cur_page;
 
-            ssd_advance_nand(shard->ssd, &swr);
-            max(nsecs_completed, nsecs_latest);
+            nsecs_completed = ssd_advance_nand(shard->ssd, &swr);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-            //schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
-            //        spp->pgs_per_oneshotpg * spp->pgsz);
+            schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
+                                        spp->pgs_per_oneshotpg * spp->pgsz);
         }
 
         /*
@@ -2947,12 +2958,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
     uint64_t grain = offset / GRAINED_UNIT;
     uint64_t page = G_IDX(grain);
     uint64_t g_off = G_OFFSET(grain);
-    uint64_t len = vlen / GRAINED_UNIT;
 
     cmd->kv_store.rsvd = offset;
     d_req.wb_off = grain;
-    mark_grain_valid(shard, grain, len);
-    credits += len;
+    mark_grain_valid(shard, grain, glen);
+    credits += glen;
 
     __mark_early(grain, klen, cmd->kv_store.key);
 
@@ -3155,7 +3165,7 @@ cache:
     }
 
     oob[page][g_off] = lpa;
-    for(int i = 1; i < len; i++) {
+    for(int i = 1; i < glen; i++) {
         oob[page][g_off + i] = 0;
     }
 
