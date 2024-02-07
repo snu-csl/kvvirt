@@ -72,6 +72,10 @@ struct demand_cache {
 	struct cache_stat stat;
 };
 
+extern struct demand_cache cg_cache;
+extern struct demand_cache *cgo_cache[SSD_PARTITIONS];
+extern struct demand_cache fg_cache;
+
 /* Functions */
 struct demand_cache *select_cache(struct demand_shard *shard, cache_t type);
 void clear_cache_stat(uint32_t id);

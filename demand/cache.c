@@ -5,9 +5,6 @@
 #include "cache.h"
 
 /* Declare cache structure first */
-extern struct demand_cache cg_cache;
-extern struct demand_cache cgo_cache[SSD_PARTITIONS];
-extern struct demand_cache fg_cache;
 //extern struct demand_cache pt_cache;
 
 struct demand_cache *select_cache(struct demand_shard *shard, cache_t type) {
@@ -24,7 +21,7 @@ struct demand_cache *select_cache(struct demand_shard *shard, cache_t type) {
 		break;
 	case OLD_COARSE_GRAINED:
         printk("Trying ID %llu\n", shard->id);
-		shard->cache = &cgo_cache[shard->id];
+		//shard->cache = &cgo_cache[shard->id];
 		break;
 	case FINE_GRAINED:
         BUG_ON(true);
@@ -49,19 +46,19 @@ struct demand_cache *select_cache(struct demand_shard *shard, cache_t type) {
 
 struct cache_stat* get_cstat(uint32_t id) {
 #ifdef GC_STANDARD
-    return &(cgo_cache[id].stat);
+    return &cgo_cache[id]->stat;
 #else
-    return &(cg_cache[id].stat);
+    return cg_cache[id]->stat;
 #endif
 }
 
 void clear_cache_stat(uint32_t id) {
 #ifdef GC_STANDARD
-    cgo_cache[id].stat.cache_hit = 0;
-    cgo_cache[id].stat.cache_miss = 0;
-    cgo_cache[id].stat.clean_evict = 0;
-    cgo_cache[id].stat.dirty_evict = 0;
-    cgo_cache[id].stat.blocked_miss = 0;
+    cgo_cache[id]->stat.cache_hit = 0;
+    cgo_cache[id]->stat.cache_miss = 0;
+    cgo_cache[id]->stat.clean_evict = 0;
+    cgo_cache[id]->stat.dirty_evict = 0;
+    cgo_cache[id]->stat.blocked_miss = 0;
 #else
     cg_cache[id].stat.cache_hit = 0;
     cg_cache[id].stat.cache_miss = 0;

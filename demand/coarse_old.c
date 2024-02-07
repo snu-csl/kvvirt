@@ -12,7 +12,7 @@
 extern struct algorithm __demand;
 extern struct demand_stat d_stat;
 
-struct demand_cache cgo_cache[SSD_PARTITIONS];
+struct demand_cache *cgo_cache[SSD_PARTITIONS];
 //struct demand_cache cgo_cache = {
 //    .create = cgo_create,
 //    .destroy = cgo_destroy,
@@ -450,10 +450,8 @@ bool cgo_is_hit(struct demand_cache *cache, lpa_t lpa) {
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
     if (cmt->pt != NULL) {
-        cstat->cache_hit++;
         return 1;
     } else {
-        cstat->cache_miss++;
         return 0;
     }
 }
@@ -467,6 +465,11 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
     struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
+
+    while(atomic_read(&cmt->outgoing) > 0) {
+        cpu_relax();
+    }
+
     if (cmt->pt) {
         NVMEV_DEBUG("%s returning %u for LPA %u IDX %lu shard %llu cmt %p\n", 
                     __func__, cmt->pt[OFFSET(lpa)].ppa, lpa, IDX(lpa), shard->id,
@@ -491,6 +494,7 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
 
             return cmt->pt[OFFSET(lpa)];
         } else {
+            NVMEV_INFO("Failing for LPA %u IDX %lu\n", lpa, IDX(lpa));
             BUG_ON(true);
         }
         /* FIXME: to handle later update after evict */

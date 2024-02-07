@@ -126,15 +126,21 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         NVMEV_DEBUG("%s updating mapping of LPA %u IDX %u to PPA %u\n", 
                 __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
+        struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
+        while(atomic_read(&cmt->outgoing) > 0) {
+            cpu_relax();
+        }
+
 		if (cache->is_hit(cache, lpa)) {
-            NVMEV_DEBUG("%s It was cached.\n", __func__);
+            NVMEV_DEBUG("LPA %u PPA %u cached update in %s.\n", 
+                        lpa, ppas[i].new_ppa, __func__);
 			struct pt_struct pte = cache->get_pte(shard, lpa);
 			pte.ppa = ppas[i].new_ppa;
 			cache->update(shard, lpa, pte);
 			skip_update[i] = true;
 		} else {
-            NVMEV_DEBUG("%s It wasn't cached.\n", __func__);
-            struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
+            NVMEV_DEBUG("LPA %u PPA %u not cached update in %s.\n", 
+                        lpa, ppas[i].new_ppa, __func__);
             if (cmt->t_ppa == UINT_MAX) {
                 NVMEV_DEBUG("%s But the CMT had already been read here.\n", __func__);
                 continue;
@@ -200,7 +206,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         t_cmt.pt[offset].ppa = ppas[i].new_ppa;
 
         NVMEV_DEBUG("%s 1 setting LPA %u to PPA %u\n",
-                __func__, ppas[i].lpa, ppas[i].new_ppa);
+                     __func__, ppas[i].lpa, ppas[i].new_ppa);
 
         if(G_IDX(ppas[i].new_ppa) > spp->tt_pgs) {
             printk("Tried to convert PPA %u\n", G_IDX(ppas[i].new_ppa));

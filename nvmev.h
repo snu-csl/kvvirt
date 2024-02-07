@@ -68,6 +68,12 @@
 #define BITMASK64_ALL (0xFFFFFFFFFFFFFFFF)
 #define ASSERT(X)
 
+#define TIMER_START() ktime_t start, end; start = ktime_get()
+#define TIMER_STOP_MICROSECONDS(msg) \
+        do { \
+                    end = ktime_get(); \
+                    printk(KERN_INFO "%s: %llu microseconds\n", (msg), ktime_to_ns(ktime_sub(end, start)) / 1000
+
 #include "ssd_config.h"
 
 extern uint8_t* wb;

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/highmem.h>
 #include <linux/kthread.h>
 #include <linux/ktime.h>
-#include <linux/highmem.h>
+#include <linux/random.h>
 #include <linux/sched/clock.h>
 
 #include "demand/d_type.h"
@@ -476,6 +477,12 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
 	struct nvmev_io_worker *worker;
 	struct nvmev_io_work *w;
 	unsigned int entry;
+
+    if(sqid == INT_MAX) {
+        uint16_t sqid_r;
+        get_random_bytes(&sqid_r, sizeof(sqid_r));
+        sqid = sqid_r % nvmev_vdev->config.nr_io_workers;
+    }
 
 	worker = __allocate_work_queue_entry(sqid, &entry);
     BUG_ON(!worker);
