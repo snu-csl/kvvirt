@@ -36,6 +36,85 @@ bool __read_cmt(lpa_t lpa, uint64_t *read_cmts, uint64_t cnt) {
 }
 
 #ifdef GC_STANDARD
+static void __reclaim_completed_reqs(void)
+{
+	unsigned int turn;
+
+	for (turn = 0; turn < nvmev_vdev->config.nr_io_workers; turn++) {
+		struct nvmev_io_worker *worker;
+		struct nvmev_io_work *w;
+
+		unsigned int first_entry = -1;
+		unsigned int last_entry = -1;
+		unsigned int curr;
+		int nr_reclaimed = 0;
+
+		worker = &nvmev_vdev->io_workers[turn];
+
+		first_entry = worker->io_seq;
+		curr = first_entry;
+
+		while (curr != -1) {
+			w = &worker->work_queue[curr];
+			if (w->is_completed == true && w->is_copied == true &&
+			    w->nsecs_target <= worker->latest_nsecs) {
+				last_entry = curr;
+				curr = w->next;
+				nr_reclaimed++;
+			} else {
+				break;
+			}
+		}
+
+		if (last_entry != -1) {
+			w = &worker->work_queue[last_entry];
+			worker->io_seq = w->next;
+			if (w->next != -1) {
+				worker->work_queue[w->next].prev = -1;
+			}
+			w->next = -1;
+
+			w = &worker->work_queue[first_entry];
+			w->prev = worker->free_seq_end;
+
+			w = &worker->work_queue[worker->free_seq_end];
+			w->next = first_entry;
+
+			worker->free_seq_end = last_entry;
+			NVMEV_DEBUG_VERBOSE("%s: %u -- %u, %d\n", __func__,
+					first_entry, last_entry, nr_reclaimed);
+		}
+	}
+}
+
+struct copy_args {
+    struct ssdparams *spp;
+    uint32_t idx;
+    uint8_t *src;
+    uint8_t *dst;
+    atomic_t *rem;
+};
+
+void __copy_work(void *voidargs, uint64_t*, uint64_t*) {
+    struct copy_args *args = (struct copy_args*) voidargs;
+    struct ssdparams *spp;
+    uint8_t *src;
+    uint8_t *dst;
+    atomic_t *rem;
+
+    spp = args->spp;
+    dst = args->dst;
+    src = args->src;
+    rem = args->rem;
+
+    memcpy(dst, src, spp->pgsz);
+
+    NVMEV_DEBUG("%s IDX %u\n", __func__, args->idx);
+
+    atomic_dec(rem);
+    kfree(args);
+}
+
 static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 {
     struct ppa ppa;
@@ -55,27 +134,9 @@ static struct ppa ppa_to_struct(const struct ssdparams *spp, uint64_t ppa_)
 	return ppa;
 }
 
-uint64_t __pte_to_page(value_set *value, struct cmt_struct *cmt, 
-                       struct ssdparams *spp) {
-    struct pt_struct *pt = cmt->pt;
-    uint64_t ret = 0;
-    uint64_t step = ENTRY_SIZE;
-    uint64_t first_lpa = cmt->idx * EPP;
-
-    for(int i = 0; i < spp->pgsz / step; i++) {
-        ppa_t ppa = pt[i].ppa;
-
-        if(ppa != UINT_MAX) {
-            NVMEV_DEBUG("LPA %u PPA %u IDX %u to %u in the memcpy ret %u.\n",
-                    first_lpa + i, ppa, cmt->idx, i, ret);
-        }
-
-        memcpy(value->value + (i * step), &ppa, sizeof(ppa));
-        ret += step;
-    }
-
-    NVMEV_ASSERT(ret <= spp->pgsz);
-    return ret;
+static inline unsigned long long __get_wallclock(void)
+{
+	return cpu_clock(nvmev_vdev->config.cpu_nr_dispatcher);
 }
 
 int do_bulk_mapping_update_v(struct demand_shard *shard, 
@@ -103,7 +164,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         }
     }
 
-    NVMEV_DEBUG("There are %u unique CMTs to update with %u pairs. Read %u already.\n", 
+    NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
@@ -127,20 +188,16 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                 __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
         struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
-        while(atomic_read(&cmt->outgoing) > 0) {
-            cpu_relax();
-        }
-
 		if (cache->is_hit(cache, lpa)) {
-            NVMEV_DEBUG("LPA %u PPA %u cached update in %s.\n", 
-                        lpa, ppas[i].new_ppa, __func__);
+            //NVMEV_INFO("LPA %u PPA %u IDX %u cached update in %s.\n", 
+            //            lpa, ppas[i].new_ppa, cmt->idx, __func__);
 			struct pt_struct pte = cache->get_pte(shard, lpa);
 			pte.ppa = ppas[i].new_ppa;
 			cache->update(shard, lpa, pte);
 			skip_update[i] = true;
 		} else {
-            NVMEV_DEBUG("LPA %u PPA %u not cached update in %s.\n", 
-                        lpa, ppas[i].new_ppa, __func__);
+            //NVMEV_INFO("LPA %u PPA %u IDX %u not cached update in %s.\n", 
+            //            lpa, ppas[i].new_ppa, cmt->idx, __func__);
             if (cmt->t_ppa == UINT_MAX) {
                 NVMEV_DEBUG("%s But the CMT had already been read here.\n", __func__);
                 continue;
@@ -188,6 +245,9 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         return 0;
     }
 
+    atomic_t rem;
+    atomic_set(&rem, cmts_loaded);
+
     cmts_loaded = 0;
     /* write */
 	for (int i = 0; i < nr_valid_grains; i++) {
@@ -228,12 +288,20 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             i++;
         }
 
-        struct ppa p = get_new_page(shard, GC_MAP_IO);
-        ppa_t ppa = ppa2pgidx(shard, &p);
+        struct ppa p;
+        ppa_t ppa;
+again:
+        p = get_new_page(shard, GC_MAP_IO);
+        ppa = ppa2pgidx(shard, &p);
 
         advance_write_pointer(shard, GC_MAP_IO);
         mark_page_valid(shard, &p);
         mark_grain_valid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+
+        if(ppa == 0) {
+            mark_grain_invalid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+            goto again;
+        }
 
         oob[ppa][0] = lpa;
 
@@ -243,7 +311,25 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         uint64_t off = shard_off + ((uint64_t) ppa * spp->pgsz);
         uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
     
-        memcpy(ptr, pts[cmts_loaded], spp->pgsz);
+        struct copy_args *args = 
+        (struct copy_args*) kzalloc(sizeof(*args), GFP_KERNEL);
+        
+        args->spp = spp;
+        args->idx = idx;
+        args->dst = ptr;
+        args->src = pts[cmts_loaded];
+        args->rem = &rem;
+
+        schedule_internal_operation_cb(INT_MAX, __get_wallclock(),
+                                       NULL, 0, 0, 
+                                       (void*) __copy_work, 
+                                       (void*) args, 
+                                       false, NULL);
+        //memcpy(ptr, pts[cmts_loaded], spp->pgsz);
+
+        /*
+         * TODO one shot programming.
+         */
 
         struct nand_cmd swr = {
             .type = GC_MAP_IO,
@@ -260,13 +346,25 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         d_stat.trans_w_dgc++;
 
         struct cmt_struct *cmt = cache->member.cmt[idx];
+        NVMEV_ASSERT(atomic_read(&cmt->outgoing) == 0);
+
         cmt->state = CLEAN;
 
         NVMEV_ASSERT(!cmt->lru_ptr);
         NVMEV_ASSERT(!cmt->pt);
         cmt->t_ppa = ppa;
         cmts_loaded++;
+
+        if(cmts_loaded % 4096 == 0) {
+            __reclaim_completed_reqs();
+        }
     }
+
+    while(atomic_read(&rem) > 0) {
+        cpu_relax();
+    }
+
+    //NVMEV_ASSERT(atomic_read(&rem) == 0);
 
     kfree(pts); 
 	kfree(skip_update);

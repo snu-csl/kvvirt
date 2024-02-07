@@ -509,5 +509,11 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
 
 struct cmt_struct *cgo_get_cmt(struct demand_cache *cache, lpa_t lpa) {
     struct cache_member *cmbr = &cache->member;
-    return cmbr->cmt[IDX(lpa)];
+
+    struct cmt_struct *c = cmbr->cmt[IDX(lpa)];
+    while(atomic_read(&c->outgoing) > 0) {
+        cpu_relax();
+    }
+
+    return c;
 }
