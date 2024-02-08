@@ -327,21 +327,23 @@ again:
                                        false, NULL);
         //memcpy(ptr, pts[cmts_loaded], spp->pgsz);
 
-        /*
-         * TODO one shot programming.
-         */
+        if (last_pg_in_wordline(shard, &p)) {
+            struct nand_cmd swr = {
+                .type = GC_MAP_IO,
+                .cmd = NAND_WRITE,
+                .interleave_pci_dma = false,
+                .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
+            };
 
-        struct nand_cmd swr = {
-            .type = GC_MAP_IO,
-            .cmd = NAND_WRITE,
-            .interleave_pci_dma = false,
-            .xfer_size = spp->pgsz,
-        };
+            swr.stime = 0 ; // __get_wallclock();
+            swr.ppa = &p;
 
-        swr.stime = nsecs_latest;
-        swr.ppa = &p;
+            nsecs_completed = ssd_advance_nand(shard->ssd, &swr);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-        ssd_advance_nand(ssd, &swr);
+            //schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
+            //        spp->pgs_per_oneshotpg * spp->pgsz);
+        }
 
         d_stat.trans_w_dgc++;
 
@@ -363,8 +365,6 @@ again:
     while(atomic_read(&rem) > 0) {
         cpu_relax();
     }
-
-    //NVMEV_ASSERT(atomic_read(&rem) == 0);
 
     kfree(pts); 
 	kfree(skip_update);

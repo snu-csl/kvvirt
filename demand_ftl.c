@@ -1700,23 +1700,6 @@ again:
                 shard->grain_bitmap[PPA_TO_PGA(pgidx, i)] = 0;
             }
 
-            if (cpp->enable_gc_delay) {
-                struct nand_cmd gcw = {
-                    .type = GC_IO,
-                    .cmd = NAND_NOP,
-                    .stime = 0,
-                    .interleave_pci_dma = false,
-                    .ppa = &new_ppa,
-                };
-
-                if (last_pg_in_wordline(shard, &new_ppa)) {
-                    gcw.cmd = NAND_WRITE;
-                    gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
-                }
-
-                ssd_advance_nand(shard->ssd, &gcw);
-            }
-
             nvmev_vdev->space_used += (GRAIN_PER_PAGE - offset) * GRAINED_UNIT;
             goto new_ppa;
         }
@@ -1821,7 +1804,25 @@ again:
 
         if(offset == GRAIN_PER_PAGE && grains_rewritten < cnt) {
             NVMEV_ASSERT(remain > 0);
+
 new_ppa:
+            if (cpp->enable_gc_delay) {
+                struct nand_cmd gcw = {
+                    .type = GC_IO,
+                    .cmd = NAND_NOP,
+                    .stime = 0,
+                    .interleave_pci_dma = false,
+                    .ppa = &new_ppa,
+                };
+
+                if (last_pg_in_wordline(shard, &new_ppa)) {
+                    gcw.cmd = NAND_WRITE;
+                    gcw.xfer_size = spp->pgsz * spp->pgs_per_oneshotpg;
+                }
+
+                ssd_advance_nand(shard->ssd, &gcw);
+            }
+
             new_ppa = get_new_page(shard, mapping_line ? GC_MAP_IO : GC_IO);
             offset = 0;
             pgidx = ppa2pgidx(shard, &new_ppa);
