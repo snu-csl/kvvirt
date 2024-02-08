@@ -1595,9 +1595,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                     cnt++;
                     tt_rewrite += len * GRAINED_UNIT;
 
-                    /*
-                     * i += len?
-                     */
+                    i += len;
                 }
             } 
         }
