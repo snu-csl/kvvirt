@@ -149,7 +149,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     bool skip_all = true;
     uint64_t **oob = shard->oob;
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = 0, reads_done = 0;
 
     sort(ppas, nr_valid_grains, sizeof(struct lpa_len_ppa), &lpa_cmp, NULL);
 
@@ -245,6 +245,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         return 0;
     }
 
+    reads_done = nsecs_latest;
+
     atomic_t rem;
     atomic_set(&rem, cmts_loaded);
 
@@ -320,7 +322,7 @@ again:
         args->src = pts[cmts_loaded];
         args->rem = &rem;
 
-        schedule_internal_operation_cb(INT_MAX, __get_wallclock(),
+        schedule_internal_operation_cb(INT_MAX, 0,
                                        NULL, 0, 0, 
                                        (void*) __copy_work, 
                                        (void*) args, 
@@ -335,12 +337,10 @@ again:
                 .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
             };
 
-            swr.stime = 0 ; // __get_wallclock();
+            swr.stime = reads_done; // __get_wallclock();
             swr.ppa = &p;
 
-            nsecs_completed = ssd_advance_nand(shard->ssd, &swr);
-            nsecs_latest = max(nsecs_latest, nsecs_completed);
-
+            ssd_advance_nand(shard->ssd, &swr);
             //schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
             //        spp->pgs_per_oneshotpg * spp->pgsz);
         }

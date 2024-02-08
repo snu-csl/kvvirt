@@ -1508,7 +1508,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     struct gc_data *gcd = &shard->gcd;
 	struct nand_page *pg_iter = NULL;
 	int page_cnt = 0, cnt = 0, i = 0, len = 0;
-	uint64_t completed_time = 0, pgidx = 0;
+	uint64_t reads_done = 0, pgidx = 0;
 	struct ppa ppa_copy = *ppa;
     struct line* l = get_line(shard, ppa); 
     uint64_t **oob = shard->oob;
@@ -1623,7 +1623,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 			.interleave_pci_dma = false,
 			.ppa = &ppa_copy,
 		};
-		completed_time = ssd_advance_nand(shard->ssd, &gcr);
+		reads_done = ssd_advance_nand(shard->ssd, &gcr);
 	}
 
     //printk("Copying %d pairs from %d pages.\n",
@@ -1750,7 +1750,7 @@ again:
             uint64_t tgt = __get_wallclock();
             //NVMEV_INFO("Queueing gc work for IDX %llu %llu target.\n", 
             //            IDX(lpa), tgt);
-            schedule_internal_operation_cb(INT_MAX, tgt,
+            schedule_internal_operation_cb(INT_MAX, reads_done,
                     NULL, 0, 0, 
                     (void*) __gc_copy_work, 
                     (void*) args, 
@@ -2926,8 +2926,6 @@ cache:
                 args->spp = spp;
 
                 atomic_inc(&victim->outgoing);
-                //NVMEV_INFO("Queueing PTE evict work for IDX %u tgt %llu\n", 
-                //            victim->idx, nsecs_latest);
                 schedule_internal_operation_cb(req->sq_id, nsecs_latest,
                         NULL, 0, 0, 
                         (void*) __pte_evict_work, 
@@ -3293,8 +3291,6 @@ again:
                 args->spp = spp;
 
                 atomic_inc(&victim->outgoing);
-                //NVMEV_INFO("Queueing PTE evict work for IDX %u tgt %llu\n", 
-                //            victim->idx, nsecs_latest);
                 schedule_internal_operation_cb(req->sq_id, nsecs_latest,
                                                NULL, 0, 0, 
                                                (void*) __pte_evict_work, 
@@ -3316,7 +3312,6 @@ again:
 
         uint64_t off = ((uint64_t) cmt->t_ppa) * spp->pgsz;
         uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
-        NVMEV_ASSERT(atomic_read(&cmt->outgoing) == 0);
         cmt->pt = (struct pt_struct*) ptr;
 
         if(!first) {
