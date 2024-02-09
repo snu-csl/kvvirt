@@ -72,6 +72,8 @@ static unsigned int write_trailing = 0;
 static unsigned int nr_io_units = 8;
 static unsigned int io_unit_shift = 12;
 
+static unsigned int cache_dram_mb = 1;
+
 static char *cpus;
 static unsigned int debug = 0;
 
@@ -112,6 +114,8 @@ MODULE_PARM_DESC(io_unit_shift, "Size of each I/O unit (2^)");
 module_param(cpus, charp, 0444);
 MODULE_PARM_DESC(cpus, "CPU list for process, completion(int.) threads, Seperated by Comma(,)");
 module_param(debug, uint, 0644);
+module_param(cache_dram_mb, uint, 0644);
+MODULE_PARM_DESC(cache_dram_mb, "How much DRAM to use for the DFTLKV mapping cache.");
 
 static void nvmev_proc_dbs(void)
 {
@@ -506,6 +510,11 @@ static bool __load_configs(struct nvmev_config *config)
 	config->write_trailing = write_trailing;
 	config->nr_io_units = nr_io_units;
 	config->io_unit_shift = io_unit_shift;
+
+    /*
+     * DFTLKV.
+     */
+    config->cache_dram_mb = cache_dram_mb;
 
 	config->nr_io_workers = 0;
 	config->cpu_nr_dispatcher = -1;

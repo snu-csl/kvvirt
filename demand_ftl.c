@@ -584,6 +584,8 @@ void demand_init(struct demand_shard *shard, uint64_t size,
                     kzalloc(sizeof(*shard->cache), GFP_KERNEL);
     demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
 
+    shard->dram  = ((uint64_t) nvmev_vdev->config.cache_dram_mb) << 20;
+
 #ifdef GC_STANDARD
     cgo_create(shard, OLD_COARSE_GRAINED);
     cgo_cache[shard->id] = shard->cache;
@@ -3009,6 +3011,69 @@ static struct hash_params *make_hash_params(request *const req, uint64_t hash) {
 
 	return h_params;
 }
+
+#ifndef GC_STANDARD
+static uint64_t _record_inv_mapping(lpa_t lpa, ppa_t ppa, uint64_t *credits) {
+    struct ssdparams spp = shard->ssd->sp;
+    struct gc_data *gcd = &ftl->gcd;
+    struct ppa p = ppa_to_struct(&spp, ppa);
+    struct line* l = get_line(ftl, &p); 
+    uint64_t line = (uint64_t) l->id;
+    uint64_t nsecs_completed = 0;
+
+    NVMEV_DEBUG("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
+                 lpa, ppa, line, inv_mapping_offs[line]);
+
+    if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
+        /*
+         * Anything bigger complicates implementation. Keep to pgsz for now.
+         */
+
+        NVMEV_ASSERT(INV_PAGE_SZ == spp.pgsz);
+
+        struct ppa n_p = get_new_page(ftl, MAP_IO);
+        uint64_t pgidx = ppa2pgidx(ftl, &n_p);
+
+        NVMEV_ASSERT(pg_inv_cnt[pgidx] == 0);
+        NVMEV_ASSERT(advance_write_pointer(ftl, MAP_IO));
+        mark_page_valid(ftl, &n_p);
+        mark_grain_valid(ftl, PPA_TO_PGA(ppa2pgidx(ftl, &n_p), 0), GRAIN_PER_PAGE);
+    
+		ppa_t w_ppa = ppa2pgidx(ftl, &n_p);
+        NVMEV_DEBUG("Flushing an invalid mapping page for line %llu off %llu to PPA %u\n", 
+                    line, inv_mapping_offs[line], w_ppa);
+
+        oob[w_ppa][0] = UINT_MAX;
+        oob[w_ppa][1] = (line << 32) | (w_ppa);
+
+        struct value_set value;
+        value.value = inv_mapping_bufs[line];
+        value.ssd = shard->ssd;
+        value.length = INV_PAGE_SZ;
+
+        nsecs_completed = 
+        __demand.li->write(w_ppa, INV_PAGE_SZ, &value, ASYNC, NULL);
+        nvmev_vdev->space_used += INV_PAGE_SZ;
+
+        NVMEV_DEBUG("Added %u (%u %u) to XA.\n", (line << 32) | w_ppa, line, w_ppa);
+        xa_store(&gcd->inv_mapping_xa, (line << 32) | w_ppa, xa_mk_value(w_ppa), GFP_KERNEL);
+        
+        memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
+        inv_mapping_offs[line] = 0;
+
+        (*credits) += GRAIN_PER_PAGE;
+        d_stat.inv_w++;
+    }
+
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &lpa, sizeof(lpa));
+    inv_mapping_offs[line] += sizeof(lpa);
+    memcpy(inv_mapping_bufs[line] + inv_mapping_offs[line], &ppa, sizeof(ppa));
+    inv_mapping_offs[line] += sizeof(ppa);
+
+    return nsecs_completed;
+}
+#endif
+
 
 struct pt_struct* __idx_to_memaddr(struct ssdparams *spp, uint64_t ppa) {
     uint64_t off = ppa * spp->pgsz;

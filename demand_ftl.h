@@ -149,6 +149,8 @@ struct demand_shard {
 
     uint64_t **oob;
     bool *grain_bitmap;
+
+    uint64_t dram; /* in bytes */
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
