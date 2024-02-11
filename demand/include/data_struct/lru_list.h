@@ -21,6 +21,7 @@ void lru_kfree(LRU*);
 NODE* lru_push(LRU*, void*);
 void* lru_pop(LRU*);
 void* lru_peek(LRU*);
+void* lru_prev(LRU*, NODE*);
 void lru_update(LRU*, NODE*);
 void lru_delete(LRU*, NODE*);
 void* lru_it(LRU*, NODE**, bool*);

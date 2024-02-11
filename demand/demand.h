@@ -11,7 +11,6 @@
 
 #include "d_type.h"
 #include "d_param.h"
-#include "d_htable.h"
 #include "./interface/queue.h"
 #include "./include/container.h"
 #include "./include/dl_sync.h"
@@ -74,18 +73,14 @@ struct cmt_struct {
 	struct pt_struct *pt;
 	NODE *lru_ptr;
 	ppa_t t_ppa;
-    uint64_t grain;
-    uint8_t len_on_disk;
 
 	cmt_state_t state;
-	bool is_flying;
 
-	queue *retry_q;
-	queue *wait_q;
-
-    bool *is_cached;
+    uint64_t g_off;
+    uint16_t len_on_disk;
+#ifndef GC_STANDARD
 	uint32_t cached_cnt;
-	uint32_t dirty_cnt;
+#endif
 
     atomic_t outgoing;
 };

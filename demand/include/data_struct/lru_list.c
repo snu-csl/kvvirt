@@ -99,6 +99,17 @@ void* lru_pop(LRU* lru){
 	return re;
 }
 
+void* lru_prev(LRU* lru, NODE* now){
+	if(now == NULL){
+		return NULL;
+	}
+	if(now == lru->head){
+		return NULL;
+	}
+
+    return now->prev->DATA;
+}
+
 void lru_update(LRU* lru, NODE* now){
     //return;
 	if(now == NULL){

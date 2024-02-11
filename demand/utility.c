@@ -5,58 +5,6 @@
 #include "utility.h"
 #include "cache.h"
 
-struct algo_req *make_algo_req_default(uint8_t type, value_set *value) {
-	struct algo_req *a_req = (struct algo_req *)kzalloc(sizeof(struct algo_req), GFP_KERNEL);
-	a_req->parents = NULL;
-	a_req->type = type;
-	a_req->type_lower = 0;
-	a_req->rapid = false;
-	a_req->end_req = demand_end_req;
-    a_req->need_retry = false;
-
-	struct demand_params *d_params = 
-    (struct demand_params *)kzalloc(sizeof(struct demand_params), GFP_KERNEL);
-	d_params->value = value;
-	d_params->wb_entry = NULL;
-	d_params->sync_mutex = NULL;
-	d_params->offset = 0;
-
-	a_req->params = (void *)d_params;
-
-	return a_req;
-}
-
-struct algo_req *make_algo_req_rw(struct demand_shard *shard, uint8_t type, 
-                                  value_set *value, request *req, 
-                                  snode *wb_entry) {
-	struct algo_req *a_req = make_algo_req_default(type, value);
-	a_req->parents = req;
-	a_req->rapid = true;
-
-	struct demand_params *d_params = (struct demand_params *)a_req->params;
-    d_params->shard = shard;
-	d_params->wb_entry = wb_entry;
-
-	return a_req;
-}
-
-struct algo_req *make_algo_req_sync(uint8_t type, value_set *value) {
-	struct algo_req *a_req = make_algo_req_default(type, value);
-	a_req->rapid = true;
-    a_req->sqid = UINT_MAX;
-
-	struct demand_params *d_params = (struct demand_params *)a_req->params;
-	d_params->sync_mutex = (dl_sync *)kzalloc(sizeof(dl_sync), GFP_KERNEL);
-	dl_sync_init(d_params->sync_mutex, 1);
-
-	return a_req;
-}
-
-void free_algo_req(struct algo_req *a_req) {
-	kfree(a_req->params);
-	kfree(a_req);
-}
-
 #ifdef HASH_KVSSD
 void copy_key_from_key(KEYT *dst, KEYT *src) {
 	dst->len = src->len;
@@ -104,7 +52,12 @@ lpa_t get_lpa(struct demand_cache *cache, KEYT key, void *_h_params) {
 again:
 	h_params->lpa = PROBING_FUNC(h_params->hash, h_params->cnt) % 
                     (cache->env.nr_valid_tentries-1) + 1;
-    if(h_params->lpa == 2 || h_params->lpa == 0) {
+
+    /*
+     * Skip anything in mapping table entry 0 for now, as it complicates
+     * things like OOB checking where 0 can be meaningful or not.
+     */
+    if(h_params->lpa <= EPP) {
         h_params->cnt++;
         goto again;
     }

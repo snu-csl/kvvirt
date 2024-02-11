@@ -163,6 +163,7 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
 void demand_warmup(struct nvmev_ns *ns);
 
 #ifndef GC_STANDARD
+#define INITIAL_SZ (sizeof(lpa_t) + sizeof(ppa_t)) * 2
 extern uint64_t *pg_inv_cnt;
 extern uint64_t *pg_v_cnt;
 #define INV_PAGE_SZ 4096

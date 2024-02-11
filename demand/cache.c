@@ -45,27 +45,15 @@ struct demand_cache *select_cache(struct demand_shard *shard, cache_t type) {
 }
 
 struct cache_stat* get_cstat(uint32_t id) {
-#ifdef GC_STANDARD
     return &cgo_cache[id]->stat;
-#else
-    return cg_cache[id]->stat;
-#endif
 }
 
 void clear_cache_stat(uint32_t id) {
-#ifdef GC_STANDARD
     cgo_cache[id]->stat.cache_hit = 0;
     cgo_cache[id]->stat.cache_miss = 0;
     cgo_cache[id]->stat.clean_evict = 0;
     cgo_cache[id]->stat.dirty_evict = 0;
     cgo_cache[id]->stat.blocked_miss = 0;
-#else
-    cg_cache[id].stat.cache_hit = 0;
-    cg_cache[id].stat.cache_miss = 0;
-    cg_cache[id].stat.clean_evict = 0;
-    cg_cache[id].stat.dirty_evict = 0;
-    cg_cache[id].stat.blocked_miss = 0;
-#endif
 }
 
 uint32_t get_cache_stat(uint32_t id, char* out) {

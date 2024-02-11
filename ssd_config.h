@@ -237,7 +237,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#define GC_STANDARD
+//#define GC_STANDARD
 
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)
