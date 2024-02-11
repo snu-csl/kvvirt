@@ -6,7 +6,6 @@
 #include <linux/sort.h>
 #include <linux/xarray.h>
 
-#include "cache.h"
 #include "city.h"
 #include "nvmev.h"
 #include "demand_ftl.h"
@@ -16,11 +15,6 @@
 #include "demand/d_param.h"
 #include "demand/demand.h"
 #include "demand/utility.h"
-
-/*
- * LPA -> PPA mapping cache.
- */
-struct cache* mcache;
 
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 				 struct buffer *write_buffer, unsigned int buffs_to_release);
@@ -588,8 +582,6 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
 
     shard->dram  = ((uint64_t) nvmev_vdev->config.cache_dram_mb) << 20;
-
-    mcache = init_cache(10000000);
 
     cgo_create(shard, OLD_COARSE_GRAINED);
     cgo_cache[shard->id] = shard->cache;
@@ -2701,6 +2693,18 @@ void __pte_evict_work(void *voidargs, uint64_t*, uint64_t*) {
                  __func__, idx, out_ppa, args->prev_ppa);
 }
 
+static inline uint32_t __entries_to_grains(uint32_t cnt) {
+    uint32_t ret = (cnt * ENTRY_SIZE) / GRAINED_UNIT;
+    if((cnt * ENTRY_SIZE) % GRAINED_UNIT) {
+        ret++;
+    }
+    return ret;
+}
+
+static inline uint32_t __need_expand(struct cmt_struct *cmt) {
+    return (cmt->cached_cnt * ENTRY_SIZE) % GRAINED_UNIT == 0;
+}
+
 /*
  * This function basically just assigns a new physical page
  * to the mapping entry. Some space is wasted if the mapping
@@ -2776,7 +2780,7 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
     }
 
     if(!found) {
-        if(cmt->cached_cnt > 0 && (cmt->cached_cnt % INITIAL_SZ == 0)) {
+        if(cmt->cached_cnt > 0 && __need_expand(cmt)) {
             __expand_map_entry(shard, cmt);
         }
 
@@ -2834,14 +2838,6 @@ struct pt_struct __lpa_to_pte(struct cmt_struct *cmt, lpa_t lpa) {
 
     return pte;
 #endif
-}
-
-static inline uint32_t __entries_to_grains(uint32_t cnt) {
-    uint32_t ret = (cnt * ENTRY_SIZE) / GRAINED_UNIT;
-    if((cnt * ENTRY_SIZE) % GRAINED_UNIT) {
-        ret++;
-    }
-    return ret;
 }
 
 #define MAX_SEARCH 256
@@ -3371,8 +3367,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
 lpa:
     lpa_t lpa = get_lpa(shard->cache, key, &h);
     h.lpa = lpa;
-
-    NVMEV_ASSERT(cache_get(mcache, lpa) != U64_MAX);
 
     struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
