@@ -104,6 +104,7 @@ void* lru_prev(LRU* lru, NODE* now){
 		return NULL;
 	}
 	if(now == lru->head){
+        printk("At head.\n");
 		return NULL;
 	}
 
@@ -155,6 +156,6 @@ void lru_delete(LRU* lru, NODE* now){
 		now->next->prev = now->prev;
 	}	
 	lru->size--;
-    //printk("LRU size %u\n", lru->size);
+    //printk("LRU size from delete %u\n", lru->size);
 	kfree(now);
 }

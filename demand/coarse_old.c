@@ -43,8 +43,8 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tpages = (d_env->nr_pages / EPP) + ((d_env->nr_pages % EPP) ? 1 : 0);
     _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
-    _env->max_cached_tpages = 10; //shard->dram / spp->pgsz;
-    _env->max_cached_tentries = 0;
+    _env->max_cached_tpages = shard->dram / spp->pgsz;
+    _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
 
 #ifdef DVALUE
     _env->nr_valid_tpages *= GRAIN_PER_PAGE / 2;
@@ -187,9 +187,10 @@ bool cgo_is_hit(struct demand_cache *cache, lpa_t lpa) {
 bool cgo_is_full(struct demand_cache* cache) {
     struct cache_member *cmbr = &cache->member;
 
-    printk("CMT %u cached %u max\n", 
-            cmbr->nr_cached_tpages, cache->env.max_cached_tpages);
+    //NVMEV_INFO("CMT %u cached %u max\n", 
+    //            cmbr->nr_cached_tentries, cache->env.max_cached_tentries);
 
+    return (cmbr->nr_cached_tentries >= cache->env.max_cached_tentries);
     return (cmbr->nr_cached_tpages >= cache->env.max_cached_tpages);
 }
 
