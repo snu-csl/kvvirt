@@ -63,9 +63,9 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
     }
 
     if (request_time < cur_time) {
-        printk("[%s] Reqeust time is before the current time %llu %llu (%llu)\n",
-                __func__, request_time, cur_time, cur_time - request_time);
-        printk("Caller is %pS\n", __builtin_return_address(0));
+        //printk("[%s] Reqeust time is before the current time %llu %llu (%llu)\n",
+        //        __func__, request_time, cur_time, cur_time - request_time);
+        //printk("Caller is %pS\n", __builtin_return_address(0));
         //printk("Caller is %pS\n", __builtin_return_address(1));
         //printk("Caller is %pS\n", __builtin_return_address(2));
         ch->last = request_time;
