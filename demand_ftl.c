@@ -928,8 +928,8 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 
     uint64_t page = G_IDX(grain);
 
-    NVMEV_INFO("Marking grain %llu length %u in PPA %llu invalid shard %llu\n", 
-                grain, len, page, shard->id);
+    NVMEV_DEBUG("Marking grain %llu length %u in PPA %llu invalid shard %llu\n", 
+                 grain, len, page, shard->id);
 
     struct ppa ppa = ppa_to_struct(spp, page);
 
@@ -1229,7 +1229,7 @@ static void mark_block_free(struct demand_shard *shard, struct ppa *ppa)
 		/* reset page status */
 		pg = &blk->pg[i];
 		NVMEV_ASSERT(pg->nsecs == spp->secs_per_pg);
-        NVMEV_INFO("Marking PPA %u free\n", ppa2pgidx(shard, &ppa_copy) + i);
+        NVMEV_DEBUG("Marking PPA %u free\n", ppa2pgidx(shard, &ppa_copy) + i);
 		pg->status = PG_FREE;
 
 #ifndef GC_STANDARD
@@ -2056,7 +2056,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 
-            NVMEV_INFO("Grain %llu (%d)\n", grain, i);
+            NVMEV_DEBUG("Grain %llu (%d)\n", grain, i);
 
             if(i == 0 && oob[pgidx][i] == UINT_MAX) {
 #ifdef GC_STANDARD
@@ -2073,8 +2073,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  */
 
                 unsigned long key = oob[pgidx][1];
-                NVMEV_INFO("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
-                            pgidx, key, key >> 32);
+                NVMEV_DEBUG("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
+                             pgidx, key, key >> 32);
                 NVMEV_ASSERT(i == 0);
                 NVMEV_ASSERT(mapping_line);
 
@@ -2120,19 +2120,19 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 }
 
                 if(cmt->state == DIRTY) {
-                    NVMEV_INFO("CMT IDX %u was dirty in memory. Already invalidated.\n", 
-                                idx);
+                    NVMEV_DEBUG("CMT IDX %u was dirty in memory. Already invalidated.\n", 
+                                 idx);
                     continue;
                 }
 
                 if(cmt->t_ppa != pgidx) {
-                    NVMEV_INFO("CMT IDX %u moved from PPA %llu to PPA %u\n", 
-                                idx, pgidx, cmt->t_ppa);
+                    NVMEV_DEBUG("CMT IDX %u moved from PPA %llu to PPA %u\n", 
+                                 idx, pgidx, cmt->t_ppa);
                     continue;
                 }
 
-                NVMEV_INFO("CMT IDX %u was %u grains in size from grain %llu PPA %llu\n", 
-                            idx, g_len, grain, G_IDX(grain + i));
+                NVMEV_DEBUG("CMT IDX %u was %u grains in size from grain %llu PPA %llu\n", 
+                             idx, g_len, grain, G_IDX(grain + i));
                 mark_grain_invalid(shard, grain + i, g_len);
 
                 lpa_lens[lpa_len_idx++] = (struct lpa_len_ppa) {idx, g_len, 
@@ -2143,8 +2143,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 cnt++;
             } else if(oob[pgidx][i] != UINT_MAX && oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
                __valid_mapping(shard, oob[pgidx][i], grain)) {
-                NVMEV_INFO("Got regular PPA %llu grain %llu LPA %llu in GC grain %u\n", 
-                        pgidx, grain, oob[pgidx][i], i);
+                NVMEV_DEBUG("Got regular PPA %llu grain %llu LPA %llu in GC grain %u\n", 
+                             pgidx, grain, oob[pgidx][i], i);
                 NVMEV_ASSERT(pg_inv_cnt[pgidx] <= spp->pgsz);
                 NVMEV_ASSERT(!mapping_line);
                 
@@ -2175,7 +2175,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 	ppa_copy = *ppa;
 
 	if (cnt <= 0) {
-        NVMEV_INFO("Returning with no copies.\n");
+        NVMEV_DEBUG("Returning with no copies.\n");
         kfree(lpa_lens);
 		return;
     }
@@ -2297,8 +2297,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             NVMEV_ASSERT(remain >= INV_PAGE_SZ);
         }
 
-        NVMEV_INFO("LPA/IDX %llu length %u going from PPA %llu (G%llu) to PPA %llu (G%llu)\n",
-                    lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
+        NVMEV_DEBUG("LPA/IDX %llu length %u going from PPA %llu (G%llu) to PPA %llu (G%llu)\n",
+                     lpa, length, G_IDX(old_grain), old_grain, pgidx, grain);
 
         to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
         from = shard_off + (G_IDX(old_grain) * spp->pgsz) + 
@@ -2762,8 +2762,8 @@ void __pte_evict_work(void *voidargs, uint64_t*, uint64_t*) {
     uint64_t off = (out_ppa * spp->pgsz) + (grain * GRAINED_UNIT);
     uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
 
-    NVMEV_INFO("IDX %llu copying %u grains to PPA %llu grain %u to off %llu\n", 
-                idx, args->len, out_ppa, grain, off);
+    NVMEV_DEBUG("IDX %llu copying %u grains to PPA %llu grain %u to off %llu\n", 
+                 idx, args->len, out_ppa, grain, off);
 
     for(int i = 0; i < len / ENTRY_SIZE; i++) {
 #ifndef GC_STANDARD
@@ -3196,8 +3196,8 @@ skip:
                 (*credits) += GRAIN_PER_PAGE;
             }
 
-            NVMEV_INFO("Assigned PPA %u to victim at IDX %u in %s. Prev PPA %llu\n",
-                        ppa, victim->idx, __func__, prev_ppa);
+            NVMEV_DEBUG("Assigned PPA %u to victim at IDX %u in %s. Prev PPA %llu\n",
+                         ppa, victim->idx, __func__, prev_ppa);
 
             got_ppa = true;
 
@@ -3404,7 +3404,7 @@ uint64_t __get_one(struct demand_shard *shard, struct cmt_struct *cmt,
 
             if(lpa_at_oob != UINT_MAX && lpa_at_oob != 0 && lpa_at_oob != 2 && 
                idx_at_oob != cmt->idx) {
-                NVMEV_INFO("Trying to bring in IDX %u LPA %u\n", 
+                NVMEV_DEBUG("Trying to bring in IDX %u LPA %u\n", 
                             idx_at_oob, lpa_at_oob);
                 //found_cmt = cmbr->cmt[idx_at_oob];
                 found_cmt = cache->get_cmt(cache, IDX2LPA(idx_at_oob));

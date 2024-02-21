@@ -130,8 +130,8 @@ void __copy_work(void *voidargs, uint64_t*, uint64_t*) {
 
     memcpy(dst, src, g_len * GRAINED_UNIT);
 
-    NVMEV_INFO("%s Copying IDX %u grain length %u\n", 
-                __func__, args->idx, g_len);
+    NVMEV_DEBUG("%s Copying IDX %u grain length %u\n", 
+                 __func__, args->idx, g_len);
 
     atomic_dec(rem);
     kfree(args);
@@ -409,8 +409,8 @@ void __update_pt(struct demand_shard *shard, struct cmt_struct *cmt,
     struct ssdparams *spp = &ssd->sp;
     uint64_t entry_sz = ENTRY_SIZE;
 
-    NVMEV_INFO("Trying to update IDX %u LPA %u PPA %u\n",
-                cmt->idx, lpa, ppa);
+    NVMEV_DEBUG("Trying to update IDX %u LPA %u PPA %u\n",
+                 cmt->idx, lpa, ppa);
 
     for(int i = 0; i < cmt->cached_cnt; i++) {
         if(cmt->pt[i].lpa == lpa) {
@@ -463,7 +463,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         }
     }
 
-    NVMEV_INFO("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
+    NVMEV_DEBUG("There are %llu unique CMTs to update with %u pairs. Read %llu already.\n", 
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
@@ -487,13 +487,13 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             continue;
         }
 
-        NVMEV_INFO("%s updating mapping of LPA %u IDX %lu to PPA %u\n", 
-                __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
+        NVMEV_DEBUG("%s updating mapping of LPA %u IDX %lu to PPA %u\n", 
+                     __func__, lpa, IDX(ppas[i].lpa), ppas[i].new_ppa);
 
         struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
 		if (cache->is_hit(cache, lpa)) {
-            NVMEV_INFO("LPA %u PPA %u IDX %u cached update in %s.\n", 
-                        lpa, ppas[i].new_ppa, cmt->idx, __func__);
+            NVMEV_DEBUG("LPA %u PPA %u IDX %u cached update in %s.\n", 
+                         lpa, ppas[i].new_ppa, cmt->idx, __func__);
 			//struct pt_struct pte = cache->get_pte(shard, lpa);
 			//pte.ppa = ppas[i].new_ppa;
             __update_pt(shard, cmt, lpa, ppas[i].new_ppa);
@@ -510,7 +510,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
             prev = __already_read(read_ppas, read_ppa_cnt, cmt->t_ppa);
             if (cmt->t_ppa == UINT_MAX) {
-                NVMEV_INFO("%s But the CMT had already been read here.\n", __func__);
+                NVMEV_DEBUG("%s But the CMT had already been read here.\n", __func__);
                 continue;
             } else if(prev != UINT_MAX) {
 #ifdef GC_STANDARD
@@ -520,8 +520,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                  */
                 NVMEV_ASSERT(false);
 #endif
-                NVMEV_INFO("%s IDX %u PPA %u grain %llu had already been read here.\n", 
-                            __func__, cmt->idx, cmt->t_ppa, cmt->g_off);
+                NVMEV_DEBUG("%s IDX %u PPA %u grain %llu had already been read here.\n", 
+                             __func__, cmt->idx, cmt->t_ppa, cmt->g_off);
                 off = shard_off + ((uint64_t) cmt->t_ppa * spp->pgsz) + g_off;
                 pts[cmts_loaded++] = ((uint8_t*) nvmev_vdev->ns[0].mapped) + off;
 
@@ -564,8 +564,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             nsecs_completed = ssd_advance_nand(ssd, &swr);
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-            NVMEV_INFO("%s marking PPA %u grain %llu invalid while it was being read during GC.\n",
-                    __func__, cmt->t_ppa, cmt->g_off);
+            NVMEV_DEBUG("%s marking PPA %u grain %llu invalid while it was being read during GC.\n",
+                         __func__, cmt->t_ppa, cmt->g_off);
             mark_grain_invalid(shard, PPA_TO_PGA(cmt->t_ppa, cmt->g_off), 
                                cmt->len_on_disk);
             cmt->t_ppa = UINT_MAX;
@@ -639,7 +639,7 @@ again:
         //uint64_t offset = OFFSET(ppas[i].lpa);
         //t_cmt.pt[offset].ppa = ppas[i].new_ppa;
 
-        NVMEV_INFO("%s 1 setting LPA %u to PPA %u\n",
+        NVMEV_DEBUG("%s 1 setting LPA %u to PPA %u\n",
                      __func__, ppas[i].lpa, ppas[i].new_ppa);
 
         if(G_IDX(ppas[i].new_ppa) > spp->tt_pgs) {
@@ -657,7 +657,7 @@ again:
                 NVMEV_ASSERT(false);
             }
 
-            NVMEV_INFO("%s 2 setting LPA %u to PPA %u\n",
+            NVMEV_DEBUG("%s 2 setting LPA %u to PPA %u\n",
                          __func__, ppas[i + 1].lpa, ppas[i + 1].new_ppa);
 
             i++;
@@ -684,7 +684,7 @@ again:
                        (g_off * GRAINED_UNIT);
         uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
 
-        NVMEV_INFO("%s writing CMT IDX %llu back to PPA %llu grain %u len %u off %llu\n",
+        NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu grain %u len %u off %llu\n",
                     __func__, idx, ppa, g_off, t_cmt.len_on_disk, off);
     
         struct copy_args *args = 
