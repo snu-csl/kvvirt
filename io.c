@@ -843,9 +843,7 @@ static int nvmev_io_worker(void *data)
 						nvmev_vdev->sqes[w->sqid];
 					ns = &nvmev_vdev->ns[0];
                     if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
-                        if(!__do_perform_io_kv(w->sqid, w->sq_entry)) {
-                            //w->nsecs_target = U64_MAX;
-                        }
+                        w->result0 = __do_perform_io_kv(w->sqid, w->sq_entry);
                     } else {
                         __do_perform_io(w->sqid, w->sq_entry);
                     }

@@ -2882,7 +2882,6 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
                 NVMEV_ASSERT(cmt->pt[i].lpa == UINT_MAX || 
                              IDX(cmt->pt[i].lpa) == cmt->idx);
                 cmt->pt[i] = pte;
-
                 break;
             }
         }
@@ -3537,9 +3536,9 @@ cache:
     if(__cache_hit(cache, lpa)) { 
         struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
-        NVMEV_DEBUG("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
-                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                lpa, pte.ppa);
+        NVMEV_INFO("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
+                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                    lpa, pte.ppa);
 
         if (!IS_INITIAL_PPA(pte.ppa)) {
             if(__read_and_compare(shard, pte.ppa, &h, &key, 
@@ -3555,7 +3554,7 @@ cache:
             if(!for_del) {
                 len = __get_glen(shard, pte.ppa); 
                 cmd->kv_retrieve.value_len = len * GRAINED_UNIT;
-                cmd->kv_retrieve.rsvd = pte.ppa * GRAINED_UNIT;
+                cmd->kv_retrieve.rsvd = ((uint64_t) pte.ppa) * GRAINED_UNIT;
             } else {
                 cmd->kv_retrieve.rsvd = U64_MAX;
                 mark_grain_invalid(shard, pte.ppa, len);
@@ -3593,12 +3592,21 @@ out:
     check_and_refill_write_credit(shard);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-    NVMEV_DEBUG("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
-            " count %u\n", 
-            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-            lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-            cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-            cmd->kv_retrieve.value_len, h.cnt);
+    if(status != KV_ERR_KEY_NOT_EXIST) {
+        NVMEV_INFO("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
+                " count %u\n", 
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+                cmd->kv_retrieve.value_len, h.cnt);
+    } else {
+        NVMEV_INFO("Read for key %llu (%llu) FAILS with LPA %u PPA %llu vlen %u"
+                " count %u\n", 
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+                cmd->kv_retrieve.value_len, h.cnt);
+    }
 
     ret->nsecs_target = nsecs_latest;
     ret->status = status;
@@ -3713,11 +3721,21 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
          * TODO Wasted grains.
          */
 
-        NVMEV_ASSERT(offset % spp->pgsz == 0);
-        //mark_grain_valid(shard, PPA_TO_PGA(ppa, offset), 
-        //        GRAIN_PER_PAGE - offset);
-        //mark_grain_invalid(shard, PPA_TO_PGA(ppa, offset), 
-        //        GRAIN_PER_PAGE - offset);
+        if(offset % spp->pgsz) {
+            uint64_t ppa = ppa2pgidx(shard, &cur_page);
+            uint64_t g = offset / GRAINED_UNIT;
+
+            NVMEV_INFO("Offset was %llu g %llu\n", offset, g);
+
+            NVMEV_ASSERT(offset % GRAINED_UNIT == 0);
+
+            if(offset < GRAIN_PER_PAGE - 1) {
+                mark_grain_valid(shard, PPA_TO_PGA(ppa, g), 
+                        GRAIN_PER_PAGE - g);
+                mark_grain_invalid(shard, PPA_TO_PGA(ppa, g), 
+                        GRAIN_PER_PAGE - g);
+            }
+        }
 
         cur_page = get_new_page(shard, USER_IO);
         advance_write_pointer(shard, USER_IO);
@@ -3756,7 +3774,11 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
 
     __mark_early(grain, klen, cmd->kv_store.key);
 
-    offset += vlen;
+    offset += (vlen / GRAINED_UNIT) * GRAINED_UNIT;
+
+    if(vlen % GRAINED_UNIT) {
+        offset += GRAINED_UNIT;
+    }
 
 	struct hash_params h; 
     h.hash = hash;
@@ -3905,7 +3927,7 @@ cache:
     shard->ftl->max_try = (h.cnt > shard->ftl->max_try) ? h.cnt : 
                            shard->ftl->max_try;
 
-    NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
+    NVMEV_INFO("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
                  *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
                  klen, vlen, grain, page, lpa);
 
