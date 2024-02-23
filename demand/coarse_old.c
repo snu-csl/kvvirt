@@ -44,7 +44,7 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
     _env->max_cached_tpages = shard->dram / spp->pgsz;
-    _env->max_cached_tentries = 10;//shard->dram / GRAINED_UNIT;
+    _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
 
 #ifdef DVALUE
     _env->nr_valid_tpages *= GRAIN_PER_PAGE / 2;
