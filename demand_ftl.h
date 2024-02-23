@@ -166,7 +166,7 @@ void demand_warmup(struct nvmev_ns *ns);
 #define INITIAL_SZ (sizeof(lpa_t) + sizeof(ppa_t)) * 2
 extern uint64_t *pg_inv_cnt;
 extern uint64_t *pg_v_cnt;
-#define INV_PAGE_SZ 4096
+#define INV_PAGE_SZ PAGESIZE
 #define INV_ENTRY_SZ (sizeof(lpa_t) + sizeof(ppa_t))
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;

@@ -2855,13 +2855,13 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
 #else
     bool found = false;
 
-    NVMEV_INFO("Trying to update LPA %u with PPA %u CMT PPA %u\n", 
-                lpa, pte.ppa, cmt->t_ppa);
+    NVMEV_DEBUG("Trying to update LPA %u with PPA %u CMT PPA %u\n", 
+                 lpa, pte.ppa, cmt->t_ppa);
 
     if(cmt->cached_cnt > 0) {
         for(int i = 0; i < cmt->cached_cnt; i++) {
-            NVMEV_INFO("Checking entry %d in PPA %u. Has LPA %u\n", i, cmt->t_ppa,
-                    cmt->pt[i].lpa);
+            NVMEV_DEBUG("Checking entry %d in PPA %u. Has LPA %u\n", i, cmt->t_ppa,
+                         cmt->pt[i].lpa);
 
             if(cmt->pt[i].lpa == UINT_MAX || cmt->pt[i].lpa == lpa) {
                 if(cmt->pt[i].lpa == lpa && cmt->pt[i].ppa != UINT_MAX) {
@@ -2873,7 +2873,7 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
                     found = true;
                 }
 
-                NVMEV_INFO("Found LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
+                NVMEV_DEBUG("Found LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
                 if(cmt->pt[i].lpa != UINT_MAX && IDX(cmt->pt[i].lpa) != cmt->idx) {
                     NVMEV_INFO("LPA %u was in CMT IDX %u PPA %u\n", 
                                 cmt->pt[i].lpa, cmt->idx, cmt->t_ppa);
@@ -2895,8 +2895,6 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
         cmt->pt[0].ppa = pte.ppa;
 
         NVMEV_ASSERT(IDX(cmt->pt[0].lpa) == cmt->idx);
-
-        NVMEV_INFO("Set 0 to LPA %u PPA %u\n", lpa, pte.ppa);
     }
 
     if(!found) {
@@ -3536,7 +3534,7 @@ cache:
     if(__cache_hit(cache, lpa)) { 
         struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
-        NVMEV_INFO("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
+        NVMEV_DEBUG("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
                     *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
                     lpa, pte.ppa);
 
@@ -3593,19 +3591,20 @@ out:
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
     if(status != KV_ERR_KEY_NOT_EXIST) {
-        NVMEV_INFO("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
-                " count %u\n", 
-                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-                cmd->kv_retrieve.value_len, h.cnt);
+        NVMEV_DEBUG("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
+                    " count %u\n", 
+                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                    lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+                    cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+                    cmd->kv_retrieve.value_len, h.cnt);
     } else {
-        NVMEV_INFO("Read for key %llu (%llu) FAILS with LPA %u PPA %llu vlen %u"
-                " count %u\n", 
-                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-                cmd->kv_retrieve.value_len, h.cnt);
+        NVMEV_DEBUG("Read for %s key %llu (%llu) FAILS with LPA %u PPA %llu vlen %u"
+                    " count %u\n", 
+                    key.key[0] == 'L' ? "log" : "regular",
+                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                    lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+                    cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+                    cmd->kv_retrieve.value_len, h.cnt);
     }
 
     ret->nsecs_target = nsecs_latest;
@@ -3724,8 +3723,6 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
         if(offset % spp->pgsz) {
             uint64_t ppa = ppa2pgidx(shard, &cur_page);
             uint64_t g = offset / GRAINED_UNIT;
-
-            NVMEV_INFO("Offset was %llu g %llu\n", offset, g);
 
             NVMEV_ASSERT(offset % GRAINED_UNIT == 0);
 
@@ -3876,7 +3873,7 @@ cache:
     if(__cache_hit(cache, lpa)) {
         struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
-        NVMEV_INFO("Hit for LPA %u IDX %lu, got grain %u\n", lpa, IDX(lpa), pte.ppa);
+        NVMEV_DEBUG("Hit for LPA %u IDX %lu, got grain %u\n", lpa, IDX(lpa), pte.ppa);
 
         if(!IS_INITIAL_PPA(pte.ppa)) {
             if(__read_and_compare(shard, pte.ppa, &h, &key, 
@@ -3927,7 +3924,7 @@ cache:
     shard->ftl->max_try = (h.cnt > shard->ftl->max_try) ? h.cnt : 
                            shard->ftl->max_try;
 
-    NVMEV_INFO("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
+    NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
                  *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
                  klen, vlen, grain, page, lpa);
 

@@ -230,7 +230,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NR_NAMESPACES 1
 
 #define OP 70
-#define PAGESIZE KB(4)
+#define PAGESIZE KB(32)
 #define NPCINPAGE (PAGESIZE/PIECE)
 
 /*
