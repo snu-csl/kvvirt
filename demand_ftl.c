@@ -2629,6 +2629,14 @@ bool end_w(struct request *req)
     return true;
 }
 
+uint32_t __get_glen(struct demand_shard *shard, uint64_t grain) {
+    uint32_t ret = 1, i = G_OFFSET(grain);
+    while(i + ret < GRAIN_PER_PAGE && shard->oob[G_IDX(grain)][i + ret] == 0) {
+        ret++;
+    }
+    return ret;
+}
+
 uint32_t __get_vlen(struct demand_shard *shard, uint64_t grain) {
     uint32_t ret = 1, i = G_OFFSET(grain);
     while(i + ret < GRAIN_PER_PAGE && shard->oob[G_IDX(grain)][i + ret] == 0) {
@@ -2639,89 +2647,6 @@ uint32_t __get_vlen(struct demand_shard *shard, uint64_t grain) {
 
 bool end_d(struct request *req) 
 {
-    return true;
-    //if(req->ppa == UINT_MAX) {
-    //    NVMEV_DEBUG("Delete succeeded for key %s\n", req->cmd->kv_retrieve.key);
-    //    req->ppa = UINT_MAX;
-    //    return true;
-    //}
-
-    //NVMEV_DEBUG("Delete failed for key %s\n", req->cmd->kv_retrieve.key);
-    //return false;
-}
-
-static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, 
-                        struct nvmev_result *ret)
-{
-    struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
-    struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
-
-    uint64_t nsecs_latest;
-    uint64_t nsecs_xfer_completed;
-
-    uint8_t klen = cmd_key_length(cmd);
-
-    struct request *d_req;
-    KEYT key;
-
-    key.key = NULL;
-    key.key = (char*)kzalloc(klen + 1, GFP_KERNEL);
-
-    memcpy(key.key, cmd->kv_retrieve.key, klen);
-    key.key[klen] = '\0';
-    key.len = klen;
-
-    uint64_t hash = CityHash64(key.key, klen);
-    struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
-    struct ssdparams *spp = &shard->ssd->sp;
-
-    d_req = (struct request*) kzalloc(sizeof(*d_req), GFP_KERNEL);
-    d_req->ssd = shard->ssd;
-    d_req->nsecs_start = U64_MAX;
-    d_req->hash_params = NULL;
-    d_req->key = key;
-
-    NVMEV_ASSERT(key.key);
-    NVMEV_ASSERT(cmd->kv_store.key);
-    NVMEV_ASSERT(cmd);
-
-    NVMEV_DEBUG("Delete for key %llu len %u\n", *(uint64_t*) key.key, key.len);
-
-    if(key.key[0] == 'L') {
-        NVMEV_DEBUG("Log key delete. Bid %llu log num %u\n", 
-                     *(uint64_t*) (key.key + 4), 
-                     *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
-    }
-
-    /*
-     * We still provide a read buffer here, because a delete will
-     * read pages from disk to confirm its deleting the right
-     * KV pair.
-     */
-
-    struct value_set *value;
-    value = get_vs(spp);
-    value->shard = shard;
-    value->length = spp->pgsz;
-    d_req->value = value;
-    d_req->end_req = &end_d;
-    d_req->cmd = cmd;
-    d_req->ssd = shard->ssd;
-
-    struct d_cb_args* args = (struct d_cb_args*) 
-                              kzalloc(sizeof(*args), GFP_KERNEL);
-    args->shard = shard;
-    args->req = d_req;
-
-    schedule_internal_operation_cb(req->sq_id, req->nsecs_start,
-                                   NULL, 0, value->length, 
-                                   (void*) __demand.remove, (void*) args, 
-                                   false, req->w);
-
-    cmd->kv_store.rsvd = UINT_MAX;
-	ret->nsecs_target = U64_MAX;
-	ret->status = NVME_SC_SUCCESS;
-
     return true;
 }
 
@@ -2930,21 +2855,25 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
 #else
     bool found = false;
 
-    //NVMEV_INFO("Trying to update LPA %u with PPA %u CMT PPA %u\n", 
-    //            lpa, pte.ppa, cmt->t_ppa);
+    NVMEV_INFO("Trying to update LPA %u with PPA %u CMT PPA %u\n", 
+                lpa, pte.ppa, cmt->t_ppa);
 
     if(cmt->cached_cnt > 0) {
         for(int i = 0; i < cmt->cached_cnt; i++) {
-            //NVMEV_INFO("Checking entry %d in PPA %u. Has LPA %u\n", i, cmt->t_ppa,
-            //        cmt->pt[i].lpa);
+            NVMEV_INFO("Checking entry %d in PPA %u. Has LPA %u\n", i, cmt->t_ppa,
+                    cmt->pt[i].lpa);
 
             if(cmt->pt[i].lpa == UINT_MAX || cmt->pt[i].lpa == lpa) {
-                if(cmt->pt[i].lpa == lpa) {
+                if(cmt->pt[i].lpa == lpa && cmt->pt[i].ppa != UINT_MAX) {
+                    /*
+                     * The PPA can be UINT_MAX here if it was previously
+                     * deleted.
+                     */
                     __record_inv_mapping(shard, lpa, cmt->pt[i].ppa, NULL);
                     found = true;
                 }
 
-                //NVMEV_INFO("Found LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
+                NVMEV_INFO("Found LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
                 if(cmt->pt[i].lpa != UINT_MAX && IDX(cmt->pt[i].lpa) != cmt->idx) {
                     NVMEV_INFO("LPA %u was in CMT IDX %u PPA %u\n", 
                                 cmt->pt[i].lpa, cmt->idx, cmt->t_ppa);
@@ -2955,13 +2884,6 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
                 cmt->pt[i] = pte;
 
                 break;
-                //if(cmt->pt[i].lpa == lpa) {
-                //    __record_inv_mapping(shard, lpa, 
-                //                         ppa_t ppa, uint64_t *credits)
-
-                //    found = true;
-                //    break;
-                //}
             }
         }
     } else {
@@ -2975,7 +2897,7 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
 
         NVMEV_ASSERT(IDX(cmt->pt[0].lpa) == cmt->idx);
 
-        //NVMEV_INFO("Set 0 to LPA %u PPA %u\n", lpa, pte.ppa);
+        NVMEV_INFO("Set 0 to LPA %u PPA %u\n", lpa, pte.ppa);
     }
 
     if(!found) {
@@ -3519,9 +3441,8 @@ static uint64_t __read_and_compare(struct demand_shard *shard,
     }
 }
 
-char kbuf[255];
-static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
-{
+static bool __read(struct nvmev_ns *ns, struct nvmev_request *req, 
+                   struct nvmev_result *ret, bool for_del) {
     struct demand_shard *demand_shards = (struct demand_shard *)ns->ftls;
     struct nvme_kv_command *cmd = (struct nvme_kv_command*) req->cmd;
 
@@ -3553,7 +3474,6 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     NVMEV_ASSERT(key.key);
     NVMEV_ASSERT(cmd->kv_store.key);
     NVMEV_ASSERT(cmd);
-    NVMEV_ASSERT(vlen > klen);
     NVMEV_ASSERT(vlen <= spp->pgsz);
     NVMEV_ASSERT(klen <= 16);
 
@@ -3563,6 +3483,7 @@ static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvm
     //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
     //}
 
+    uint32_t len;
     bool missed = false;
     struct hash_params h; 
     h.hash = hash;
@@ -3587,13 +3508,13 @@ lpa:
          * LPA.
          */
         cmd->kv_retrieve.rsvd = U64_MAX;
-        
+
         if(nsecs_latest == nsecs_start) {
             nsecs_latest = local_clock();
         }
 
         NVMEV_INFO("Key %s (%llu) not found.\n", 
-                    (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
+                (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
 
         status = KV_ERR_KEY_NOT_EXIST;
         goto out;
@@ -3601,9 +3522,9 @@ lpa:
 
     if(cmt->t_ppa == UINT_MAX) {
         NVMEV_INFO("Key %s (%llu) tried to read missing CMT entry.\n", 
-                    (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
+                (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
         h.cnt++;
-        
+
         missed = false;
         goto lpa;
     }
@@ -3617,8 +3538,8 @@ cache:
         struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
         NVMEV_DEBUG("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
-                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                    lpa, pte.ppa);
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                lpa, pte.ppa);
 
         if (!IS_INITIAL_PPA(pte.ppa)) {
             if(__read_and_compare(shard, pte.ppa, &h, &key, 
@@ -3630,13 +3551,26 @@ cache:
             }
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
+
+            if(!for_del) {
+                len = __get_glen(shard, pte.ppa); 
+                cmd->kv_retrieve.value_len = len * GRAINED_UNIT;
+                cmd->kv_retrieve.rsvd = pte.ppa * GRAINED_UNIT;
+            } else {
+                cmd->kv_retrieve.rsvd = U64_MAX;
+                mark_grain_invalid(shard, pte.ppa, len);
+
+                pte.ppa = UINT_MAX;
+                __update_map(shard, cmt, lpa, pte);
+            }
+
+            status = NVME_SC_SUCCESS;
+        } else {
+            cmd->kv_retrieve.rsvd = U64_MAX;
+            status = KV_ERR_KEY_NOT_EXIST;
         }
 
         shard->cache->touch(shard->cache, lpa);
-
-        cmd->kv_retrieve.value_len = __get_vlen(shard, pte.ppa); 
-        cmd->kv_retrieve.rsvd = pte.ppa * GRAINED_UNIT;
-        status = NVME_SC_SUCCESS;
 
         if(!missed) {
             cstat->cache_hit++;
@@ -3660,15 +3594,27 @@ out:
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
     NVMEV_DEBUG("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
-               " count %u\n", 
-                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-                cmd->kv_retrieve.value_len, h.cnt);
+            " count %u\n", 
+            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+            lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+            cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+            cmd->kv_retrieve.value_len, h.cnt);
 
     ret->nsecs_target = nsecs_latest;
     ret->status = status;
     return true;
+}
+
+char kbuf[255];
+static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
+{
+    return __read(ns, req, ret, false);
+}
+
+static bool conv_delete(struct nvmev_ns *ns, struct nvmev_request *req, 
+                        struct nvmev_result *ret)
+{
+    return __read(ns, req, ret, true);
 }
 
 uint64_t offset = 0;
@@ -3908,7 +3854,7 @@ cache:
     if(__cache_hit(cache, lpa)) {
         struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
-        //NVMEV_INFO("Hit for LPA %u IDX %lu, got grain %u\n", lpa, IDX(lpa), pte.ppa);
+        NVMEV_INFO("Hit for LPA %u IDX %lu, got grain %u\n", lpa, IDX(lpa), pte.ppa);
 
         if(!IS_INITIAL_PPA(pte.ppa)) {
             if(__read_and_compare(shard, pte.ppa, &h, &key, 
