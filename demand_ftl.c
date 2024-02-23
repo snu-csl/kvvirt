@@ -2056,7 +2056,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             d_stat.trans_r_tgc++;
         }
 
-        NVMEV_INFO("Cleaning PPA %llu\n", pgidx);
+        NVMEV_DEBUG("Cleaning PPA %llu\n", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 
@@ -2076,8 +2076,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  */
 
                 unsigned long key = oob[pgidx][1];
-                NVMEV_INFO("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
-                            pgidx, key, key >> 32);
+                NVMEV_DEBUG("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
+                             pgidx, key, key >> 32);
                 NVMEV_ASSERT(i == 0);
                 NVMEV_ASSERT(mapping_line);
 
@@ -2133,12 +2133,12 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 //}
 
                 if(cmt->t_ppa != pgidx || cmt->g_off != i) {
-                    NVMEV_INFO("CMT IDX %u moved from PPA %llu to PPA %u\n", 
+                    NVMEV_DEBUG("CMT IDX %u moved from PPA %llu to PPA %u\n", 
                                 idx, pgidx, cmt->t_ppa);
                     continue;
                 }
 
-                NVMEV_INFO("CMT IDX %u was %u grains in size from grain %llu PPA %llu (%u)\n", 
+                NVMEV_DEBUG("CMT IDX %u was %u grains in size from grain %llu PPA %llu (%u)\n", 
                             idx, g_len, grain, G_IDX(grain + i), cmt->t_ppa);
                 mark_grain_invalid(shard, grain, g_len);
 
@@ -2150,7 +2150,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 cnt++;
             } else if(oob[pgidx][i] != UINT_MAX && oob[pgidx][i] != 2 && oob[pgidx][i] != 0 && 
                __valid_mapping(shard, oob[pgidx][i], grain)) {
-                NVMEV_INFO("Got regular PPA %llu grain %llu LPA %llu in GC grain %u\n", 
+                NVMEV_DEBUG("Got regular PPA %llu grain %llu LPA %llu in GC grain %u\n", 
                             pgidx, grain, oob[pgidx][i], i);
                 NVMEV_ASSERT(pg_inv_cnt[pgidx] <= spp->pgsz);
                 NVMEV_ASSERT(!mapping_line);
@@ -2339,7 +2339,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             struct cmt_struct *cmt = cache->get_cmt(cache, IDX2LPA(lpa));
     
             if(cmt->t_ppa == G_IDX(old_grain)) {
-                NVMEV_INFO("CMT IDX %llu moving from PPA %llu to PPA %llu\n", 
+                NVMEV_DEBUG("CMT IDX %llu moving from PPA %llu to PPA %llu\n", 
                             idx, G_IDX(old_grain), pgidx);
                 cmt->t_ppa = pgidx;
                 cmt->g_off = offset;
@@ -2873,8 +2873,8 @@ skip:
         goto skip;
     }
 
-    NVMEV_INFO("Expanded IDX %u from PPA %u to PPA %llu\n", 
-                cmt->idx, cmt->t_ppa, ppa);
+    NVMEV_DEBUG("Expanded IDX %u from PPA %u to PPA %llu\n", 
+                 cmt->idx, cmt->t_ppa, ppa);
     //NVMEV_INFO("Inside (old PPA %u new PPA %llu): \n", cmt->t_ppa, ppa);
     //int count = 0;
     //for(int i = 0; i < cmt->cached_cnt; i++) {
@@ -3614,7 +3614,7 @@ lpa:
 
 cache:
     if(__cache_hit(cache, lpa)) { 
-        struct pt_struct pte = cmt->pt[OFFSET(lpa)];
+        struct pt_struct pte = __lpa_to_pte(cmt, lpa);
 
         NVMEV_DEBUG("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
                     *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
@@ -3959,9 +3959,9 @@ cache:
     shard->ftl->max_try = (h.cnt > shard->ftl->max_try) ? h.cnt : 
                            shard->ftl->max_try;
 
-    //NVMEV_INFO("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
-    //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-    //            klen, vlen, grain, page, lpa);
+    NVMEV_DEBUG("Write for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n", 
+                 *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
+                 klen, vlen, grain, page, lpa);
 
     __update_map(shard, cmt, lpa, new_pte);
 
