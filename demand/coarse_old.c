@@ -187,11 +187,10 @@ bool cgo_is_hit(struct demand_cache *cache, lpa_t lpa) {
 bool cgo_is_full(struct demand_cache* cache) {
     struct cache_member *cmbr = &cache->member;
 
-    //NVMEV_INFO("CMT %u cached %u max\n", 
-    //            cmbr->nr_cached_tentries, cache->env.max_cached_tentries);
+    NVMEV_INFO("CMT %u cached %u max\n", 
+                cmbr->nr_cached_tentries, cache->env.max_cached_tentries);
 
     return (cmbr->nr_cached_tentries >= cache->env.max_cached_tentries);
-    return (cmbr->nr_cached_tpages >= cache->env.max_cached_tpages);
 }
 
 struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {

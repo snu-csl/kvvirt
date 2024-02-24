@@ -32,9 +32,7 @@ struct lpa_len_ppa {
     uint32_t len; /* the length of the key-value pair. */
     ppa_t prev_ppa; /* to copy from during GC */
     ppa_t new_ppa; /* the new ppa we're writing this key-value pair to. */
-#ifndef GC_STANDARD
     ppa_t cmt_ppa; /* which CMT ppa does this item belong to? */
-#endif
 };
 
 void clear_oob(struct demand_shard *shard, uint64_t pgidx);
