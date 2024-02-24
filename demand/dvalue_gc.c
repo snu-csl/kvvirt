@@ -240,8 +240,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             __update_pt(shard, cmt, lpa, ppas[i].new_ppa);
 			skip_update[i] = true;
 		} else {
-            //NVMEV_INFO("LPA %u PPA %u IDX %u not cached update in %s.\n", 
-            //            lpa, ppas[i].new_ppa, cmt->idx, __func__);
+            NVMEV_DEBUG("LPA %u PPA %u IDX %u not cached update in %s.\n", 
+                         lpa, ppas[i].new_ppa, cmt->idx, __func__);
 
             uint64_t off, g_off;
             g_off = cmt->g_off * GRAINED_UNIT;
@@ -282,7 +282,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             skip_all = false;
             off = shard_off + ((uint64_t) cmt->t_ppa * spp->pgsz) + g_off;
 
-            NVMEV_DEBUG("Trying to read CMT PPA %u\n", cmt->t_ppa);
+            NVMEV_DEBUG("Trying to read CMT PPA %u IDX %u grain %llu\n", 
+                         cmt->t_ppa, cmt->idx, cmt->g_off);
             pts[cmts_loaded++] = ((uint8_t*) nvmev_vdev->ns[0].mapped) + off;
 
             struct ppa p = ppa_to_struct(spp, cmt->t_ppa);
@@ -410,7 +411,6 @@ again:
         }
 
         if(g_off + t_cmt.len_on_disk > GRAIN_PER_PAGE) {
-            NVMEV_DEBUG("g_off %u len %u\n", g_off, t_cmt.len_on_disk);
             if(g_off % GRAIN_PER_PAGE) {
                 for(int i = g_off; i < GRAIN_PER_PAGE; i++) {
                     oob[ppa][i] = UINT_MAX;
@@ -443,7 +443,7 @@ again:
         uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
 
         NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu grain %u len %u off %llu\n",
-                    __func__, idx, ppa, g_off, t_cmt.len_on_disk, off);
+                     __func__, idx, ppa, g_off, t_cmt.len_on_disk, off);
     
         struct copy_args *args = 
         (struct copy_args*) kzalloc(sizeof(*args), GFP_KERNEL);
