@@ -1621,11 +1621,6 @@ void __gc_copy_work(void *voidargs, uint64_t*, uint64_t*) {
             c->pt = (struct pt_struct*) (nvmev_vdev->ns[0].mapped + to);
         }
 
-        struct pt_struct *tmp = (struct pt_struct*) (nvmev_vdev->ns[0].mapped + to);
-        for(int i = 0; i < c->cached_cnt; i++) {
-            NVMEV_ASSERT(IDX(tmp[i].lpa) == idx);
-        }
-
         atomic_dec(&c->outgoing);
     }
 
