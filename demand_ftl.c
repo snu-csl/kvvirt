@@ -559,6 +559,7 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     for(int i = 0; i < spp->tt_pgs; i++) {
         shard->oob[i] =  (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), 
                                             GFP_KERNEL);
+        NVMEV_ASSERT(shard->oob[i]);
         for(int j = 0; j < GRAIN_PER_PAGE; j++) {
             shard->oob[i][j] = 2;
         }
@@ -2827,16 +2828,22 @@ skip:
         cmt->pt[i].ppa = old[i].ppa;
     }
 
-    oob[ppa][0] = cmt->idx * EPP;
-
-    for(int i = 1; i < GRAIN_PER_PAGE; i++) {
-        oob[ppa][i] = 0;
-    }
-
     cmt->t_ppa = ppa;
     cmt->g_off = 0;
     cmt->len_on_disk++;
     cmbr->nr_cached_tentries++;
+
+    oob[ppa][0] = cmt->idx * EPP;
+    for(int i = 1; i < cmt->len_on_disk; i++) {
+        oob[ppa][i] = 0;
+    }
+
+    for(int i = cmt->len_on_disk; i < GRAIN_PER_PAGE; i++) {
+        oob[ppa][i] = UINT_MAX;
+    }
+
+    NVMEV_INFO("Expanded IDX %u from PPA %u to PPA %llu new len %u\n", 
+                cmt->idx, cmt->t_ppa, ppa, cmt->len_on_disk);
 
     if(GRAIN_PER_PAGE - cmt->len_on_disk > 0) {
         mark_grain_invalid(shard, PPA_TO_PGA(ppa, cmt->len_on_disk), 
