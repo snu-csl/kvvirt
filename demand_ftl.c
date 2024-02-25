@@ -2488,19 +2488,8 @@ skip:
         goto skip;
     }
 
-    //NVMEV_INFO("Inside (old PPA %u new PPA %llu): \n", cmt->t_ppa, ppa);
-    //int count = 0;
-    //for(int i = 0; i < cmt->cached_cnt; i++) {
-    //    if(cmt->pt[i].lpa != UINT_MAX) {
-    //        NVMEV_INFO("%u %u | ", cmt->pt[i].lpa, cmt->pt[i].ppa);
-    //        NVMEV_ASSERT(IDX(cmt->pt[i].lpa) == cmt->idx);
-    //        count++;
-    //    }
-    //}
-    //NVMEV_ASSERT(count == cmt->cached_cnt);
-    //NVMEV_INFO("\n");
-
-    uint64_t off = ((uint64_t) ppa * spp->pgsz);
+    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
+    uint64_t off = shard_off + ((uint64_t) ppa * spp->pgsz);
     uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
 
     /*
@@ -2512,13 +2501,20 @@ skip:
                  cmt->idx, cmt->t_ppa, cmt->g_off, ppa, cmt->len_on_disk + 1);
 
     struct pt_struct *old = cmt->pt;
+    uint32_t g_off = cmt->len_on_disk * GRAINED_UNIT;
+
     cmt->pt = (struct pt_struct*) ptr;
-    for(int i = 0; i < (cmt->len_on_disk * GRAINED_UNIT) / ENTRY_SIZE; i++) {
+    for(int i = 0; i < g_off / ENTRY_SIZE; i++) {
         if(old[i].lpa != UINT_MAX) {
             NVMEV_ASSERT(IDX(old[i].lpa) == cmt->idx);
         }
         cmt->pt[i].lpa = old[i].lpa;
         cmt->pt[i].ppa = old[i].ppa;
+    }
+
+    for(int i = g_off / ENTRY_SIZE; i < spp->pgsz / ENTRY_SIZE; i++) {
+        cmt->pt[i].lpa = UINT_MAX;
+        cmt->pt[i].ppa = UINT_MAX;
     }
 
     cmt->t_ppa = ppa;
@@ -3378,10 +3374,6 @@ static bool conv_write(struct nvmev_ns *ns, struct nvmev_request *req,
             schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
                                         spp->pgs_per_oneshotpg * spp->pgsz);
         }
-
-        /*
-         * TODO Wasted grains.
-         */
 
         if(offset % spp->pgsz) {
             uint64_t ppa = ppa2pgidx(shard, &cur_page);
