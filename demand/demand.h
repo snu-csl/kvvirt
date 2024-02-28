@@ -81,6 +81,7 @@ struct cmt_struct {
 #endif
 
     atomic_t outgoing;
+    struct xarray map;
 };
 
 struct hash_params {
@@ -188,6 +189,8 @@ struct demand_stat {
 	uint64_t trans_w_dgc;
 	uint64_t trans_r_tgc;
 	uint64_t trans_w_tgc;
+    uint64_t inv_m_r;
+    uint64_t inv_m_w;
 
 	/* gc trigger count */
 	uint64_t dgc_cnt;
@@ -216,7 +219,6 @@ struct demand_stat {
     uint64_t gc_invm_copy;
     uint64_t gc_cmt_copy;
 
-#ifdef HASH_KVSSD
 	uint64_t w_hash_collision_cnt[MAX_HASH_COLLISION];
 	uint64_t r_hash_collision_cnt[MAX_HASH_COLLISION];
 
@@ -224,11 +226,6 @@ struct demand_stat {
 	uint64_t fp_match_w;
 	uint64_t fp_collision_r;
 	uint64_t fp_collision_w;
-
-    uint64_t inv_w;
-    uint64_t inv_r;
-#endif
-
 };
 
 /* Functions */

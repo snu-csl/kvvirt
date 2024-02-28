@@ -33,7 +33,7 @@
 #ifdef GC_STANDARD
 #define PIECE 512
 #else
-#define PIECE 512
+#define PIECE 64
 #endif
 
 #define MINVALUE PIECE

@@ -264,7 +264,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                 pts[cmts_loaded++] = ((uint8_t*) nvmev_vdev->ns[0].mapped) + off;
 
                 mark_grain_invalid(shard, PPA_TO_PGA(cmt->t_ppa, cmt->g_off), 
-                                   GRAIN_PER_PAGE);
+                                   cmt->len_on_disk);
 
                 NVMEV_DEBUG("1 Saw CMT IDX %u with len %u\n", 
                         cmt->idx, cmt->len_on_disk);
@@ -299,6 +299,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             nsecs_completed = ssd_advance_nand(ssd, &swr);
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
+            d_stat.trans_r_dgc += spp->pgsz;
+
             NVMEV_DEBUG("%s marking PPA %u grain %llu invalid while it was being read during GC.\n",
                          __func__, cmt->t_ppa, cmt->g_off);
             mark_grain_invalid(shard, PPA_TO_PGA(cmt->t_ppa, cmt->g_off), 
@@ -317,13 +319,13 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
 
             read_ppas[read_ppa_cnt++] = cmt->t_ppa;
 
-            d_stat.trans_r_dgc++;
             nr_update_tpages++;
         }
     }
 
     if(skip_all) {
         kfree(pts); 
+        kfree(read_ppas);
         kfree(skip_update);
         return 0;
     }
@@ -459,19 +461,6 @@ again:
         args->src = pts[cmts_loaded];
         args->rem = &rem;
 
-#ifdef GC_STANDARD
-        uint32_t cached = spp->pgsz / ENTRY_SIZE;
-#else
-        uint32_t cached = t_cmt.cached_cnt;
-#endif
-        //for(int i = 0; i < cached; i++) {
-        //    if(IDX(t_cmt.pt[i].lpa) != t_cmt.idx) {
-        //        NVMEV_DEBUG("Had LPA %u PPA %u IDX %u\n",
-        //                    t_cmt.pt[i].lpa, t_cmt.pt[i].ppa, t_cmt.idx);
-        //    }
-        //    NVMEV_ASSERT(IDX(t_cmt.pt[i].lpa) == t_cmt.idx);
-        //}
-
         schedule_internal_operation_cb(INT_MAX, 0,
                                        NULL, 0, 0, 
                                        (void*) __copy_work, 
@@ -490,11 +479,10 @@ again:
             swr.ppa = &p;
 
             ssd_advance_nand(shard->ssd, &swr);
+            d_stat.trans_w_dgc += spp->pgsz * spp->pgs_per_oneshotpg;
             //schedule_internal_operation(req->sq_id, nsecs_completed, wbuf,
             //        spp->pgs_per_oneshotpg * spp->pgsz);
         }
-
-        d_stat.trans_w_dgc++;
 
         struct cmt_struct *cmt = cache->member.cmt[idx];
         NVMEV_ASSERT(atomic_read(&cmt->outgoing) == 0);
@@ -538,6 +526,7 @@ again:
 
     kfree(pgs);
     kfree(pts); 
+    kfree(read_ppas);
 	kfree(skip_update);
 	return 0;
 }

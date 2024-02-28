@@ -6,39 +6,7 @@
 void** items;
 uint64_t head, tail;
 
-
-typedef struct {
-    size_t head;
-    size_t tail;
-    size_t size;
-    void** data;
-} queue_t;
-queue_t *example; // = {0, 0, QUEUE_SIZE, malloc(sizeof(void*) * QUEUE_SIZE)};
-
-void* queue_read(queue_t *queue) {
-    if (queue->tail == queue->head) {
-        return NULL;
-    }
-    void* handle = queue->data[queue->tail];
-    queue->data[queue->tail] = NULL;
-    queue->tail = (queue->tail + 1) % queue->size;
-    return handle;
-}
-
-int queue_write(queue_t *queue, void* handle) {
-    if (((queue->head + 1) % queue->size) == queue->tail) {
-        return -1;
-    }
-    queue->data[queue->head] = handle;
-    queue->head = (queue->head + 1) % queue->size;
-    return 0;
-}
-
 void lru_init(LRU** lru){
-    example = (queue_t*) kzalloc(sizeof(*example), GFP_KERNEL);
-    example->head = example->tail = 0;
-    example->size = 1000000;
-    example->data = (void*) vmalloc(sizeof(void*) * 1000000);
 	*lru = (LRU*)kzalloc(sizeof(LRU), GFP_KERNEL);
 	(*lru)->size=0;
 	(*lru)->head = (*lru)->tail = NULL;
@@ -47,13 +15,9 @@ void lru_init(LRU** lru){
 void lru_kfree(LRU* lru){
 	while(lru_pop(lru)){}
 	kfree(lru);
-    vfree(example->data);
 }
 
 NODE* lru_push(LRU* lru, void* table_ptr){
-    //queue_write(example, table_ptr);
-    //return (NODE*) 0xDEADBEEF;
-
 	NODE *now = (NODE*)kzalloc(sizeof(NODE), GFP_KERNEL);
 	now->DATA = table_ptr;
 	now->next = now->prev = NULL;
