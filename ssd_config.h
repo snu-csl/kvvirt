@@ -230,14 +230,17 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NR_NAMESPACES 1
 
 #define OP 70
-#define PAGESIZE KB(32)
+#define PAGESIZE KB(8)
 #define NPCINPAGE (PAGESIZE/PIECE)
 
 /*
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-//#define GC_STANDARD
+#undef GC_STANDARD
+
+#define KLEN_MARKER_SZ sizeof(uint8_t)
+#define VLEN_MARKER_SZ sizeof(uint32_t)
 
 #define NS_SSD_TYPE_0 SSD_TYPE_CONV
 #define NS_CAPACITY_0 (0)

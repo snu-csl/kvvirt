@@ -70,7 +70,7 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
     capacity = capacity - (4096LU << 20);
 
 	spp->secsz = 512;
-	spp->secs_per_pg = 64;
+	spp->secs_per_pg = PAGESIZE / 512;
 	spp->pgsz = spp->secsz * spp->secs_per_pg;
 
 	spp->nchs = NAND_CHANNELS;
