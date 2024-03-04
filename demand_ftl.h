@@ -36,9 +36,6 @@
  * For DFTL.
  */
 
-extern struct kmem_cache *vs_cache;
-extern struct kmem_cache *page_cache;
-
 struct d_cb_args {
     struct demand_shard *shard;
     struct request *req;
@@ -147,7 +144,8 @@ struct demand_shard {
 	struct write_flow_control wfc;
     struct gc_data gcd;
 
-    uint64_t **oob;
+    uint32_t **oob;
+    uint32_t *oob_mem;
     bool *grain_bitmap;
 
     uint64_t dram; /* in bytes */
@@ -164,8 +162,7 @@ void demand_warmup(struct nvmev_ns *ns);
 
 #ifndef GC_STANDARD
 #define INITIAL_SZ (sizeof(lpa_t) + sizeof(ppa_t)) * 2
-extern uint64_t *pg_inv_cnt;
-extern uint64_t *pg_v_cnt;
+extern uint8_t *pg_inv_cnt;
 #define INV_PAGE_SZ PAGESIZE
 #define INV_ENTRY_SZ (sizeof(lpa_t) + sizeof(ppa_t))
 extern char** inv_mapping_bufs;

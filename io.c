@@ -141,9 +141,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         offset += orig_len;
     }
 
+    void *vaddr;
 	while (remaining) {
 		size_t io_size;
-		void *vaddr;
 		size_t mem_offs = 0;
 
 		prp_offs++;
@@ -275,8 +275,31 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     uint8_t klen;
 
     if(read) {
-        ptr = nvmev_vdev->ns[nsid].mapped + cmd->kv_retrieve.rsvd;
-        //NVMEV_INFO("Returning length %u in io_kv\n", real_vlen);
+        //ptr = nvmev_vdev->ns[nsid].mapped + cmd->kv_retrieve.rsvd;
+
+        //klen = *(uint8_t*) ptr;
+        //uint8_t *kPtr = (uint8_t*) nvmev_vdev->ns[nsid].mapped + cmd->kv_retrieve.rsvd + 1;
+
+        //if(klen > 16) {
+        //    NVMEV_ERROR("WTF!!!! klen %u\n", klen);
+        //}
+
+        //char k[16];
+        //memcpy(k, kPtr, klen);
+        //k[klen] = '\0';
+
+        //if(k[0] == 'L') {
+        //    uint64_t ts = *(uint64_t*) (((uint8_t*) vaddr) + real_vlen - 8);
+
+        //    if(ts > 2009533252106612185) {
+        //        NVMEV_INFO("Log key read returns length %u. Bid %llu log num %u timestamp %llu\n", 
+        //                real_vlen,
+        //                *(uint64_t*) (k + 4), 
+        //                *(uint16_t*) (k + 4 + sizeof(uint64_t)), ts);
+        //    }
+        //} else {
+        //    //NVMEV_INFO("Returning length %u in io_kv\n", real_vlen);
+        //}
         return real_vlen;
     } else if(write || orig_len == 0) {
         ptr = nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd;

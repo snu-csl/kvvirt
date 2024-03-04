@@ -495,18 +495,10 @@ static void remove_rmap(struct demand_shard *demand_shard)
 extern struct algorithm __demand;
 extern struct lower_info virt_info;
 
-struct kmem_cache *vs_cache;
-struct kmem_cache *page_cache;
-
-static void vs_ctor(void *obj) {
-    struct value_set *vs = (struct value_set*) obj;
-	memset(vs, 0x0, sizeof(*vs));
-}
-
 #ifndef GC_STANDARD
 char **inv_mapping_bufs;
 uint64_t *inv_mapping_offs;
-uint64_t *pg_inv_cnt;
+uint8_t *pg_inv_cnt;
 #endif
 
 void demand_init(struct demand_shard *shard, uint64_t size, 
@@ -520,9 +512,9 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     spp->tt_data_pgs = spp->tt_pgs - spp->tt_map_pgs;
 
 #ifndef GC_STANDARD
-    pg_inv_cnt = (uint64_t*) vmalloc(spp->tt_pgs * sizeof(uint64_t));
+    pg_inv_cnt = (uint8_t*) vmalloc(spp->tt_pgs * sizeof(uint8_t));
     NVMEV_ASSERT(pg_inv_cnt);
-    memset(pg_inv_cnt, 0x0, spp->tt_pgs * sizeof(uint64_t));
+    memset(pg_inv_cnt, 0x0, spp->tt_pgs * sizeof(uint8_t));
 
     uint64_t inv_per_line = (spp->pgs_per_line * spp->pgsz) / GRAINED_UNIT;
     uint64_t inv_per_pg = INV_PAGE_SZ / (sizeof(lpa_t) + sizeof(ppa_t));
@@ -555,22 +547,19 @@ void demand_init(struct demand_shard *shard, uint64_t size,
      * OOB stores LPA to grain information.
      */
 
-    shard->oob = (uint64_t**)vmalloc((spp->tt_pgs * sizeof(uint64_t*)));
+	shard->oob = (uint32_t**)vmalloc(spp->tt_pgs * sizeof(uint32_t*));
+	shard->oob_mem = 
+	(uint32_t*) vmalloc(spp->tt_pgs * GRAIN_PER_PAGE * sizeof(uint32_t));
+
+	NVMEV_ASSERT(shard->oob);
+    NVMEV_ASSERT(shard->oob_mem);
+
     for(int i = 0; i < spp->tt_pgs; i++) {
-        shard->oob[i] =  (uint64_t*)kzalloc(GRAIN_PER_PAGE * sizeof(uint64_t), 
-                                            GFP_KERNEL);
-        NVMEV_ASSERT(shard->oob[i]);
+        shard->oob[i] = shard->oob_mem + i * GRAIN_PER_PAGE;
         for(int j = 0; j < GRAIN_PER_PAGE; j++) {
             shard->oob[i][j] = 2;
         }
-    }
-
-    if(!vs_cache) {
-        vs_cache = kmem_cache_create("vs_cache", sizeof(struct value_set), 0, 
-                SLAB_POISON, vs_ctor);
-        page_cache = kmem_cache_create("page_cache", spp->pgsz, spp->pgsz, 
-                SLAB_POISON, NULL);
-    }
+	}
 
 #ifdef GC_STANDARD
     shard->grain_bitmap = (bool*) vmalloc(tt_grains * sizeof(bool));
@@ -608,10 +597,7 @@ void demand_free(struct demand_shard *shard) {
     kfree(inv_mapping_offs);
 #endif
 
-    for(int i = 0; i < spp->tt_pgs; i++) {
-        kfree(shard->oob[i]); 
-    }
-
+    vfree(shard->oob_mem);
     vfree(shard->oob);
 }
 
@@ -817,7 +803,7 @@ void mark_page_invalid(struct demand_shard *demand_shard, struct ppa *ppa)
 	pg->status = PG_INVALID;
 
 #ifndef GC_STANDARD
-    NVMEV_ASSERT(pg_inv_cnt[ppa2pgidx(demand_shard, ppa)] == spp->pgsz);
+    NVMEV_ASSERT(pg_inv_cnt[ppa2pgidx(demand_shard, ppa)] == GRAIN_PER_PAGE);
 #endif
 }
 
@@ -1022,8 +1008,8 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
         mark_page_invalid(shard, &ppa);
     }
 #else
-    if(pg_inv_cnt[page] + (len * GRAINED_UNIT) > spp->pgsz) {
-        NVMEV_INFO("inv_cnt was %llu PPA %llu (tried to add %u)\n", 
+    if(pg_inv_cnt[page] + len > GRAIN_PER_PAGE) {
+        NVMEV_INFO("inv_cnt was %u PPA %llu (tried to add %u)\n", 
                     pg_inv_cnt[page], page, len * GRAINED_UNIT);
         NVMEV_INFO("Caller is %pS\n", __builtin_return_address(0));
         NVMEV_INFO("Caller is %pS\n", __builtin_return_address(1));
@@ -1031,19 +1017,12 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
         BUG_ON(true);
     }
 
-    NVMEV_ASSERT(pg_inv_cnt[page] + (len * GRAINED_UNIT) <= spp->pgsz);
-    pg_inv_cnt[page] += len * GRAINED_UNIT;
+    NVMEV_ASSERT(pg_inv_cnt[page] + len <= GRAIN_PER_PAGE);
+    pg_inv_cnt[page] += len;
 
     NVMEV_DEBUG("inv_cnt for %u is %u\n", page, pg_inv_cnt[page]);
 
-    if(pg_inv_cnt[page] == spp->pgsz) {
-        if(pg_inv_cnt[page] != spp->pgsz) {
-            NVMEV_ERROR("inv was %llu ppa %llu\n", 
-                         pg_inv_cnt[page], page);
-        }
-
-        //NVMEV_ASSERT(pg_v_cnt[page] == 0);
-        NVMEV_ASSERT(pg_inv_cnt[page] == spp->pgsz);
+    if(pg_inv_cnt[page] == GRAIN_PER_PAGE) {
         mark_page_invalid(shard, &ppa);
     }
 #endif
@@ -1109,7 +1088,7 @@ static uint64_t __record_inv_mapping(struct demand_shard *shard, lpa_t lpa,
     struct line* l = get_line(shard, &p); 
     uint64_t line = (uint64_t) l->id;
     uint64_t nsecs_completed = 0;
-    uint64_t **oob = shard->oob;
+    uint32_t **oob = shard->oob;
 
     NVMEV_DEBUG("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
                 lpa, ppa, line, inv_mapping_offs[line]);
@@ -1133,7 +1112,8 @@ static uint64_t __record_inv_mapping(struct demand_shard *shard, lpa_t lpa,
                      line, inv_mapping_offs[line], pgidx);
 
         oob[pgidx][0] = UINT_MAX;
-        oob[pgidx][1] = (line << 32) | (pgidx);
+        oob[pgidx][1] = line;
+        oob[pgidx][2] = pgidx;
 
         uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
         uint64_t off = shard_off + (pgidx * spp->pgsz);
@@ -1314,7 +1294,7 @@ void clear_oob(struct demand_shard *shard, uint64_t pgidx) {
 bool oob_empty(struct demand_shard *shard, uint64_t pgidx) {
     for(int i = 0; i < GRAIN_PER_PAGE; i++) {
         if(shard->oob[pgidx][i] == 1) {
-            NVMEV_ERROR("Page %llu offset %d was %llu\n", 
+            NVMEV_ERROR("Page %llu offset %d was %u\n", 
                          pgidx, i, shard->oob[pgidx][i]);
             return false;
         }
@@ -1647,7 +1627,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 	uint64_t reads_done = 0, pgidx = 0;
 	struct ppa ppa_copy = *ppa;
     struct line* l = get_line(shard, ppa); 
-    uint64_t **oob = shard->oob;
+    uint32_t **oob = shard->oob;
 
     struct lpa_len_ppa *lpa_lens;
     uint64_t tt_rewrite = 0;
@@ -1671,14 +1651,14 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             page_cnt++;
         } else if(pg_iter->status == PG_INVALID) {
 #ifndef GC_STANDARD
-            NVMEV_ASSERT(pg_inv_cnt[pgidx] == spp->pgsz);
+            NVMEV_ASSERT(pg_inv_cnt[pgidx] == GRAIN_PER_PAGE);
 #endif
             ppa_copy.g.pg++;
             continue;
 #ifdef GC_STANDARD
         }
 #else
-        } else if(pg_inv_cnt[pgidx] == spp->pgsz) {
+        } else if(pg_inv_cnt[pgidx] == GRAIN_PER_PAGE) {
             NVMEV_ASSERT(pg_iter->status == PG_INVALID);
             ppa_copy.g.pg++;
             continue;
@@ -1718,7 +1698,11 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  * We need to copy the whole page to somewhere else.
                  */
 
-                unsigned long key = oob[pgidx][1];
+                uint32_t key_part_1 = oob[pgidx][1];
+                uint32_t key_part_2 = oob[pgidx][2];
+                unsigned long key = 
+                ((unsigned long) key_part_1 << 32) | key_part_2;
+
                 NVMEV_DEBUG("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
                              pgidx, key, key >> 32);
                 NVMEV_ASSERT(i == 0);
@@ -1726,9 +1710,9 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
                 if(!__invalid_mapping_ppa(shard, G_IDX(grain), key)) {
                     NVMEV_ASSERT(false);
-                    //NVMEV_INFO("Mapping PPA %llu key %lu has since been rewritten. Skipping.\n",
+                    NVMEV_INFO("Mapping PPA %llu key %lu has since been rewritten. Skipping.\n",
 
-                    //        pgidx, key);
+                            pgidx, key);
 
                     i += GRAIN_PER_PAGE;
                     continue;
@@ -1799,7 +1783,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 NVMEV_DEBUG("Got regular PPA %llu grain %llu LPA %llu in GC grain %u\n", 
                              pgidx, grain, oob[pgidx][i], i);
 #ifndef GC_STANDARD
-                NVMEV_ASSERT(pg_inv_cnt[pgidx] <= spp->pgsz);
+                NVMEV_ASSERT(pg_inv_cnt[pgidx] <= GRAIN_PER_PAGE);
 #endif
                 NVMEV_ASSERT(!mapping_line);
                 
@@ -2015,7 +1999,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             __update_mapping_ppa(shard, pgidx, target_line);
             NVMEV_DEBUG("Putting %u in the OOB for mapping PPA %u which targets line %lu\n",
                         (target_line << 32) | pgidx, pgidx, target_line);
-            oob[pgidx][1] = (target_line << 32) | pgidx;
+            oob[pgidx][1] = target_line;
+            oob[pgidx][2] = pgidx;
         }  
  
         offset += length;
@@ -2493,7 +2478,7 @@ static void __expand_map_entry(struct demand_shard *shard,
     struct cache_member *cmbr;
     struct ppa p;
     uint64_t ppa;
-    uint64_t **oob;
+    uint32_t **oob;
 
     cache = shard->cache;
     spp = &shard->ssd->sp;
@@ -2732,7 +2717,7 @@ static uint32_t __collect_victims(struct demand_shard *shard, uint32_t target_g)
 
 static void __evict_one(struct demand_shard *shard, struct nvmev_request *req,
                         uint64_t stime, uint64_t *credits) {
-    uint64_t **oob;
+    uint32_t **oob;
     struct demand_cache *cache;
     struct cache_member *cmbr;
     struct ssdparams *spp;
@@ -2923,7 +2908,7 @@ uint64_t __get_one(struct demand_shard *shard, struct cmt_struct *cmt,
     struct cmt_struct* victim;
     uint64_t nsecs_completed = 0;
     uint32_t grain;
-    uint64_t **oob;
+    uint32_t **oob;
 
     cache = shard->cache;
     cmbr = &cache->member;
@@ -3171,12 +3156,6 @@ static bool __read(struct nvmev_ns *ns, struct nvmev_request *req,
     NVMEV_ASSERT(vlen <= spp->pgsz);
     NVMEV_ASSERT(klen <= 16);
 
-    //if(key.key[0] == 'L') {
-    //    NVMEV_DEBUG("Log key write. Bid %llu log num %u\n", 
-    //                *(uint64_t*) (key.key + 4), 
-    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)));
-    //}
-
     uint32_t pos = UINT_MAX;
     uint32_t len;
     bool missed = false;
@@ -3186,8 +3165,7 @@ static bool __read(struct nvmev_ns *ns, struct nvmev_request *req,
     h.find = HASH_KEY_INITIAL;
     h.lpa = 0;
 
-    uint64_t **oob = shard->oob;
-
+    uint32_t **oob = shard->oob;
 lpa:
     lpa_t lpa = get_lpa(shard->cache, key, &h);
     h.lpa = lpa;
@@ -3202,22 +3180,23 @@ lpa:
          * max_try is the most we've hashed the same key to find an empty
          * LPA.
          */
+        cmd->kv_retrieve.value_len = 0;
         cmd->kv_retrieve.rsvd = U64_MAX;
 
         if(nsecs_latest == nsecs_start) {
             nsecs_latest = local_clock();
         }
 
-        NVMEV_INFO("Key %s (%llu) not found.\n", 
-                (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
+        //NVMEV_INFO("Key %s (%llu) not found.\n", 
+        //        (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
 
         status = KV_ERR_KEY_NOT_EXIST;
         goto out;
     }
 
     if(cmt->t_ppa == UINT_MAX) {
-        NVMEV_INFO("Key %s (%llu) tried to read missing CMT entry.\n", 
-                (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
+        //NVMEV_INFO("Key %s (%llu) tried to read missing CMT entry.\n", 
+        //        (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
         h.cnt++;
 
         missed = false;
@@ -3272,6 +3251,7 @@ cache:
                 status = NVME_SC_SUCCESS;
             }
         } else {
+            cmd->kv_retrieve.value_len = 0;
             cmd->kv_retrieve.rsvd = U64_MAX;
             status = KV_ERR_KEY_NOT_EXIST;
         }
@@ -3301,22 +3281,26 @@ out:
     check_and_refill_write_credit(shard);
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-    if(status == 0) {
-        NVMEV_INFO("Read for key %llu (%llu) finishes with LPA %u PPA %llu vlen %u"
-                    " count %u\n", 
-                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                    lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-                    cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-                    cmd->kv_retrieve.value_len, h.cnt);
-    } else {
-        NVMEV_INFO("Read for %s key %llu (%llu) FAILS with LPA %u PPA %llu vlen %u"
-                    " count %u\n", 
-                    key.key[0] == 'L' ? "log" : "regular",
-                    *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-                    lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-                    cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-                    cmd->kv_retrieve.value_len, h.cnt);
-    }
+    //if(status == 0) {
+    //    NVMEV_INFO("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
+    //                " count %u\n", 
+    //                *(uint64_t*) (key.key), 
+    //                *(uint64_t*) (key.key + 4), 
+    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), 
+    //                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+    //                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+    //                cmd->kv_retrieve.value_len, h.cnt);
+    //} else {
+    //    NVMEV_INFO("Read for %s key %llu (%llu %u) FAILS with LPA %u PPA %llu vlen %u"
+    //                " count %u\n", 
+    //                key.key[0] == 'L' ? "log" : "regular",
+    //                *(uint64_t*) (key.key),
+    //                *(uint64_t*) (key.key + 4), 
+    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), 
+    //                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+    //                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+    //                cmd->kv_retrieve.value_len, h.cnt);
+    //}
 
     d_stat.read_req_cnt++;
 
@@ -3402,13 +3386,6 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
     struct ssdparams *spp = &shard->ssd->sp;
     struct buffer *wbuf = shard->ssd->write_buffer;
 
-    //allocated_buf_size = buffer_allocate(wbuf, vlen);
-    //while(allocated_buf_size < vlen) {
-    //    allocated_buf_size = buffer_allocate(wbuf, vlen);
-    //    //NVMEV_ASSERT(false);
-    //    //return false;
-    //}
-
     nsecs_xfer_completed = ssd_advance_write_buffer(shard->ssd, req->nsecs_start, 
                                                     vlen);
     nsecs_latest = nsecs_xfer_completed;
@@ -3418,7 +3395,13 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
     key.key = cmd->kv_store.key;
     key.len = klen;
 
-    uint64_t **oob = shard->oob;
+    //if(key.key[0] == 'L') {
+    //    NVMEV_INFO("Log key write. Bid %llu log num %u vlen %u\n", 
+    //                *(uint64_t*) (key.key + 4), 
+    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), vlen);
+    //}
+
+    uint32_t **oob = shard->oob;
     bool need_new = false;
 newpage:
     if(offset == 0 || __crossing_page(spp, offset, vlen)) {

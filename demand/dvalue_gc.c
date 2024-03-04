@@ -188,7 +188,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     struct demand_cache *cache = shard->cache;
 	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
     bool skip_all = true;
-    uint64_t **oob = shard->oob;
+    uint32_t **oob = shard->oob;
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
     uint64_t nsecs_completed = 0, nsecs_latest = 0, reads_done = 0;
 

@@ -227,26 +227,6 @@ static int count_filled_entry(struct demand_cache *cache) {
 //	return ret;
 }
 
-struct value_set* get_vs(struct ssdparams *spp) {
-    struct value_set* ret = kmem_cache_alloc(vs_cache, GFP_KERNEL);
-    if(!ret->value) {
-        //ret->value = kmem_cache_alloc(page_cache, GFP_KERNEL);
-    } else {
-        memset(ret->value, 0x0, spp->pgsz);
-    }
-
-    //NVMEV_ASSERT(ret->value);
-    return ret;
-}
-
-void put_vs(struct value_set *vs) {
-    if(vs) {
-        //kmem_cache_free(page_cache, vs->value);
-        memset(vs, 0x0, sizeof(*vs));
-        kmem_cache_free(vs_cache, vs);
-    }
-}
-
 static unsigned int __buf_copy(struct nvme_kv_command *cmd, void *buf, 
                                uint64_t buf_len)
 {

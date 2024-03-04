@@ -237,7 +237,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#undef GC_STANDARD
+//#undef GC_STANDARD
 
 #define KLEN_MARKER_SZ sizeof(uint8_t)
 #define VLEN_MARKER_SZ sizeof(uint32_t)
@@ -266,7 +266,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define FLASH_PAGE_SIZE KB(32)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE KB(256) /*BLKS_PER_PLN should not be 0 */
+#define BLK_SIZE KB(2048) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
