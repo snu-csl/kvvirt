@@ -68,13 +68,13 @@
 #define BITMASK64_ALL (0xFFFFFFFFFFFFFFFF)
 #define ASSERT(X)
 
-#define TIMER_START() ktime_t start, end; start = ktime_get()
+#define TIMER_START() ktime_t tstart, tend; tstart = ktime_get()
 #define TIMER_STOP_MICROSECONDS(msg) \
         do { \
-                    end = ktime_get(); \
-                    uint64_t total = ktime_to_ns(ktime_sub(end, start)) / 1000; \
-                    if(total > 0) { \
-                    printk(KERN_INFO "%s: %llu microseconds\n", (msg), ktime_to_ns(ktime_sub(end, start)) / 1000); \
+                    tend = ktime_get(); \
+                    uint64_t total = ktime_to_ns(ktime_sub(tend, tstart)) / 1000; \
+                    if(total > 50) { \
+                    NVMEV_INFO("%s: %llu microseconds\n", (msg), ktime_to_ns(ktime_sub(tend, tstart)) / 1000); \
                     } \
                 } while (0)
 

@@ -10,9 +10,12 @@
 #include "cache.h"
 #include "./interface/interface.h"
 
+#include <linux/kfifo.h>
 #include <linux/sort.h>
 
+extern struct kfifo *gc_fifo;
 extern struct algo_req *make_algo_req_default(uint8_t, value_set *);
+
 static int lpa_cmp(const void *a, const void *b)
 {
     const struct lpa_len_ppa *da = a, *db = b;
@@ -180,13 +183,18 @@ uint64_t __already_read(uint64_t *read_ppas, uint64_t cnt, uint64_t pg) {
     return UINT_MAX;
 }
 
+bool allocated = false;
+bool *skip_update = NULL;
+uint8_t **pts = NULL;
+uint64_t *read_ppas = NULL;
+struct ppa *pgs = NULL;
+
 int do_bulk_mapping_update_v(struct demand_shard *shard, 
                              struct lpa_len_ppa *ppas, int nr_valid_grains, 
                              uint64_t *read_cmts, uint64_t read_cmt_cnt) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
     struct demand_cache *cache = shard->cache;
-	bool *skip_update = (bool *)kzalloc(nr_valid_grains * sizeof(bool), GFP_KERNEL);
     bool skip_all = true;
     uint32_t **oob = shard->oob;
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
@@ -209,12 +217,32 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                  unique_cmts, nr_valid_grains, read_cmt_cnt);
 
     if(unique_cmts == 0) {
-        kfree(skip_update);
+        if(allocated) {
+            memset(skip_update, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(bool));
+            //memset(pts, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint8_t*));
+            memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
+            //memset(pgs, 0x0, sizeof(struct ppa) * spp->pgs_per_flashpg * GRAIN_PER_PAGE);
+        }
+        //kfree(skip_update);
         return 0;
     }
 
-    uint8_t** pts = kmalloc(sizeof(uint8_t*) * unique_cmts, GFP_KERNEL);
-    uint64_t *read_ppas = kmalloc(sizeof(uint64_t) * unique_cmts, GFP_KERNEL);
+    if(!allocated) {
+        skip_update = (bool*) kzalloc(spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(bool), GFP_KERNEL);
+        pts = kzalloc(spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint8_t*), GFP_KERNEL);
+        read_ppas = kzalloc(spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t), GFP_KERNEL);
+        pgs = 
+        (struct ppa*) vmalloc(sizeof(struct ppa) * spp->pgs_per_flashpg * 
+                              GRAIN_PER_PAGE);
+
+        NVMEV_ASSERT(nr_valid_grains <= spp->pgs_per_flashpg * GRAIN_PER_PAGE);
+        NVMEV_ASSERT(skip_update);
+        NVMEV_ASSERT(pts);
+        NVMEV_ASSERT(read_ppas);
+        NVMEV_ASSERT(pgs);
+        allocated = true;
+    }
+
     uint64_t read_ppa_cnt = 0;
     uint64_t cmts_loaded = 0;
     uint64_t cur_g_len = 0;
@@ -240,6 +268,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
             __update_pt(shard, cmt, lpa, ppas[i].new_ppa);
 			skip_update[i] = true;
 		} else {
+            skip_update[i] = false;
             NVMEV_DEBUG("LPA %u PPA %u IDX %u not cached update in %s.\n", 
                          lpa, ppas[i].new_ppa, cmt->idx, __func__);
 
@@ -324,9 +353,13 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     }
 
     if(skip_all) {
-        kfree(pts); 
-        kfree(read_ppas);
-        kfree(skip_update);
+        //memset(skip_update, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(bool));
+        //memset(pts, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint8_t*));
+        memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
+        //memset(pgs, 0x0, sizeof(struct ppa) * spp->pgs_per_flashpg * GRAIN_PER_PAGE);
+        //kfree(pts); 
+        //kfree(read_ppas);
+        //kfree(skip_update);
         return 0;
     }
 
@@ -344,8 +377,6 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     uint64_t ppa;
     uint64_t ppa_idx = 0;
 
-    struct ppa *pgs = (struct ppa*) kzalloc(sizeof(struct ppa) * pg_cnt, 
-                                    GFP_KERNEL);
     for(int i = 0; i < pg_cnt; i++) {
 again:
         pgs[i] = get_new_page(shard, GC_MAP_IO);
@@ -446,7 +477,9 @@ again:
 
         NVMEV_DEBUG("%s writing CMT IDX %llu back to PPA %llu grain %u len %u off %llu\n",
                      __func__, idx, ppa, g_off, t_cmt.len_on_disk, off);
-    
+ 
+        struct generic_copy_args c_args;
+
         struct copy_args *args = 
         (struct copy_args*) kzalloc(sizeof(*args), GFP_KERNEL);
         
@@ -461,11 +494,17 @@ again:
         args->src = pts[cmts_loaded];
         args->rem = &rem;
 
-        schedule_internal_operation_cb(INT_MAX, 0,
-                                       NULL, 0, 0, 
-                                       (void*) __copy_work, 
-                                       (void*) args, 
-                                       false, NULL);
+        c_args.func = __copy_work;
+        c_args.args = args;
+        while(kfifo_in(gc_fifo, &c_args, sizeof(c_args)) != sizeof(c_args)) {
+			NVMEV_INFO("Failed!\n");
+			cpu_relax();
+		}
+        //schedule_internal_operation_cb(INT_MAX, 0,
+        //                               NULL, 0, 0, 
+        //                               (void*) __copy_work, 
+        //                               (void*) args, 
+        //                               false, NULL);
 
         if (last_pg_in_wordline(shard, &p)) {
             struct nand_cmd swr = {
@@ -523,11 +562,15 @@ again:
     while(atomic_read(&rem) > 0) {
         cpu_relax();
     }
+    //memset(skip_update, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(bool));
+    //memset(pts, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint8_t*));
+    memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
+    //memset(pgs, 0x0, sizeof(struct ppa) * spp->pgs_per_flashpg * GRAIN_PER_PAGE);
 
-    kfree(pgs);
-    kfree(pts); 
-    kfree(read_ppas);
-	kfree(skip_update);
+    //kfree(pgs);
+    //kfree(pts); 
+    //kfree(read_ppas);
+	//kfree(skip_update);
 	return 0;
 }
 

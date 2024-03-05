@@ -4,6 +4,7 @@
 #define _NVMEVIRT_CONV_FTL_H
 
 #include <linux/hashtable.h> 
+#include <linux/kfifo.h>
 #include <linux/slab.h>
 #include <linux/slub_def.h>
 #include <linux/spinlock.h>
@@ -35,6 +36,14 @@
 /*
  * For DFTL.
  */
+
+struct generic_copy_args {
+    void (*func)(void *args, uint64_t*, uint64_t*);
+    void *args;
+};
+extern struct kfifo *gc_fifo;
+
+void __gc_copy_work(void *voidargs, uint64_t*, uint64_t*);
 
 struct d_cb_args {
     struct demand_shard *shard;
@@ -122,6 +131,7 @@ struct gc_data {
     bool map;
     struct xarray inv_mapping_xa;
     struct xarray gc_xa;
+    struct lpa_len_ppa *lpa_lens; 
 };
 
 struct demand_shard {
