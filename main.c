@@ -448,6 +448,8 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
 	if (nvmev_vdev->storage_mapped == NULL)
 		NVMEV_ERROR("Failed to map storage memory.\n");
 
+    //memset(nvmev_vdev->storage_mapped, 0x0, nvmev_vdev->config.storage_size);
+
 	nvmev_vdev->proc_root = proc_mkdir("nvmev", NULL);
 	nvmev_vdev->proc_read_times =
 		proc_create("read_times", 0664, nvmev_vdev->proc_root, &proc_file_fops);
@@ -485,6 +487,7 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
 static bool __load_configs(struct nvmev_config *config)
 {
 	bool first = true;
+	bool second = false;
 	unsigned int cpu_nr;
 	char *cpu;
 
@@ -518,11 +521,16 @@ static bool __load_configs(struct nvmev_config *config)
 
 	config->nr_io_workers = 0;
 	config->cpu_nr_dispatcher = -1;
+	config->cpu_nr_copier = -1;
 
 	while ((cpu = strsep(&cpus, ",")) != NULL) {
 		cpu_nr = (unsigned int)simple_strtol(cpu, NULL, 10);
 		if (first) {
 			config->cpu_nr_dispatcher = cpu_nr;
+			second = true;
+		} else if(second) {
+			config->cpu_nr_copier = cpu_nr;
+			second = false;
 		} else {
 			config->cpu_nr_io_workers[config->nr_io_workers] = cpu_nr;
 			config->nr_io_workers++;

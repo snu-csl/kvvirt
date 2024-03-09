@@ -234,6 +234,8 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         pgs = 
         (struct ppa*) vmalloc(sizeof(struct ppa) * spp->pgs_per_flashpg * 
                               GRAIN_PER_PAGE);
+		memset(pgs, 0x0, sizeof(struct ppa) * spp->pgs_per_flashpg * 
+                         GRAIN_PER_PAGE);
 
         NVMEV_ASSERT(nr_valid_grains <= spp->pgs_per_flashpg * GRAIN_PER_PAGE);
         NVMEV_ASSERT(skip_update);
@@ -285,6 +287,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
                  * In the original scheme, this cmt->t_ppa should have been
                  * set to UINT_MAX below.
                  */
+                NVMEV_INFO("Failing for PPA %u\n", cmt->t_ppa);
                 NVMEV_ASSERT(false);
 #endif
                 NVMEV_DEBUG("%s IDX %u PPA %u grain %llu had already been read here.\n", 
@@ -363,11 +366,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
         return 0;
     }
 
-    if(cur_g_len == GRAIN_PER_PAGE) {
-        NVMEV_DEBUG("!!! WERE EQUAL !!!\n");
-    }
-
-    reads_done = nsecs_latest;
+	reads_done = nsecs_latest;
 
     atomic_t rem;
     atomic_set(&rem, cmts_loaded);
@@ -514,7 +513,7 @@ again:
                 .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
             };
 
-            swr.stime = reads_done; // __get_wallclock();
+            swr.stime = 0;//reads_done; // __get_wallclock();
             swr.ppa = &p;
 
             ssd_advance_nand(shard->ssd, &swr);

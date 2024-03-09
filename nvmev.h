@@ -155,6 +155,8 @@ struct nvmev_config {
 	unsigned int nr_io_workers;
 	unsigned int cpu_nr_io_workers[32];
 
+	unsigned int cpu_nr_copier;
+
 	/* TODO Refactoring storage configurations */
 	unsigned int nr_io_units;
 	unsigned int io_unit_shift; // 2^
@@ -300,6 +302,8 @@ struct nvmev_request {
 struct nvmev_result {
 	uint32_t status;
 	uint64_t nsecs_target;
+    uint64_t (*cb)(void*, uint64_t*, uint64_t*);
+    void* args;
 };
 
 struct nvmev_ns {

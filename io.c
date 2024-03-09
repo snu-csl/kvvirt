@@ -615,6 +615,8 @@ static struct nvmev_io_work* __enqueue_io_req(int sqid, int cqid, int sq_entry,
 	w->is_copied = false;
 	w->prev = -1;
 	w->next = -1;
+    w->cb = ret->cb;
+    w->args = ret->args;
 
 	w->is_internal = false;
 	mb(); /* IO worker shall see the updated w at once */
@@ -629,6 +631,12 @@ void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 	struct nvmev_io_worker *worker;
 	struct nvmev_io_work *w;
 	unsigned int entry;
+
+	if(sqid == INT_MAX) {
+		uint16_t sqid_r;
+		get_random_bytes(&sqid_r, sizeof(sqid_r));
+		sqid = sqid_r % nvmev_vdev->config.nr_io_workers;
+	}
 
 	worker = __allocate_work_queue_entry(sqid, &entry);
 	if (!worker)
@@ -685,7 +693,7 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_start,
 	/////////////////////////////////
 	w->sqid = sqid;
 	w->nsecs_start = w->nsecs_enqueue = nsecs_start;
-	w->nsecs_target = w->nsecs_start + 1;
+	w->nsecs_target = ppa;
 	w->is_completed = false;
 	w->is_copied = false;
 	w->prev = -1;
@@ -777,11 +785,13 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	};
 	struct nvmev_result ret = {
 //#if (BASE_SSD != SAMSUNG_970PRO_HASH_DFTL)
-.nsecs_target = nsecs_start,
+        .nsecs_target = nsecs_start,
 //#else
 //        .nsecs_target = U64_MAX,
 //#endif
 		.status = NVME_SC_SUCCESS,
+        .cb = NULL,
+        .args = NULL,
 	};
 
 #ifdef PERF_DEBUG
@@ -1032,6 +1042,9 @@ static int nvmev_io_worker(void *data)
 					ns = &nvmev_vdev->ns[0];
                     if (ns->identify_io_cmd(ns, sq_entry(w->sq_entry))) {
                         w->result0 = __do_perform_io_kv(w->sqid, w->sq_entry);
+                        if(w->cb) {
+                            w->cb(w->args, 0, 0);
+                        }
                     } else {
                         __do_perform_io(w->sqid, w->sq_entry);
                     }
