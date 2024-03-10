@@ -44,7 +44,7 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
     _env->max_cached_tpages = shard->dram / spp->pgsz;
-    _env->max_cached_tentries = GRAIN_PER_PAGE; //shard->dram / GRAINED_UNIT;
+    _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
 
 #ifdef DVALUE
     _env->nr_valid_tpages *= GRAIN_PER_PAGE / 2;
@@ -144,9 +144,10 @@ int cgo_destroy(struct demand_cache *cache) {
 }
 
 int cgo_touch(struct demand_cache *cache, lpa_t lpa) {
+    return 0;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
-    lru_update(cmbr->lru, cmt->lru_ptr);
+    //lru_update(cmbr->lru, cmt->lru_ptr);
     return 0;
 }
 
@@ -154,8 +155,6 @@ int cgo_update(struct demand_shard *shard, lpa_t lpa, struct pt_struct pte) {
     struct demand_cache *cache = shard->cache;
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cmbr->cmt[IDX(lpa)];
-
-    printk("cgo_update pte ppa %u for lpa %u\n", pte.ppa, lpa);
 
     if (cmt->pt) {
         NVMEV_DEBUG("Setting LPA %u to PPA %u FP %u in update.\n", lpa, pte.ppa, pte.key_fp);

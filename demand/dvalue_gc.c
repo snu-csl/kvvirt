@@ -166,7 +166,7 @@ void __update_pt(struct demand_shard *shard, struct cmt_struct *cmt,
     NVMEV_INFO("IDX %u TPPA %u cached cnt %u\n", 
                 cmt->idx, cmt->t_ppa, cmt->cached_cnt);
     for(int i = 0; i < cmt->cached_cnt; i++) {
-        NVMEV_INFO("Had LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
+        //NVMEV_INFO("Had LPA %u PPA %u\n", cmt->pt[i].lpa, cmt->pt[i].ppa);
     }
 
     NVMEV_ASSERT(false);

@@ -31,10 +31,7 @@
 
 #endif
 
-#define EPP ((PAGESIZE / ENTRY_SIZE)) // Entry Per Page
-
 /* Support variable-sized value. Grain entries of the mapping table as GRAINED_UNIT */
-#define GRAINED_UNIT ( PIECE )
 #define VAR_VALUE_MIN ( MINVALUE )
 #define VAR_VALUE_MAX ( PAGESIZE )
 
@@ -46,7 +43,6 @@
  * (GRAINED_UNIT) to get the grains per mapping page.
  */
 
-#define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 //#define BITS_PER_PAGE GRAIN_PER_PAGE
 //static_assert((GRAIN_PER_PAGE * GRAINED_UNIT) == (EPP * PAGESIZE));
 //static_assert((BITS_PER_PAGE * GRAINED_UNIT) == (EPP * PAGESIZE));

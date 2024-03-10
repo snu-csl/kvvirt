@@ -36,7 +36,8 @@ ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL \
                                         -DKVSSD \
                                         -DSLC \
                                         -DDVALUE
-nvmev-$(CONFIG_NVMEVIRT_HASH_DFTL) += $(DEMAND_OBJS) ssd.o demand_ftl.o pqueue/pqueue.o channel_model.o city.o 
+ccflags-y += -I/lib/modules/$(shell uname -r)/build/include
+nvmev-$(CONFIG_NVMEVIRT_HASH_DFTL) += $(DEMAND_OBJS) ssd.o demand_ftl.o pqueue/pqueue.o channel_model.o city.o find.o
 
 ccflags-$(CONFIG_PAGE_MAPPED) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL
 nvmev-$(CONFIG_PAGE_MAPPED) += ssd.o pagemap.o pqueue/pqueue.o channel_model.o

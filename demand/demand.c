@@ -385,6 +385,8 @@ void clear_demand_stat(void) {
     d_stat.fp_match_w = 0;
     d_stat.fp_collision_r = 0;
     d_stat.fp_collision_w = 0;
+    d_stat.inv_m_w = 0;
+    d_stat.inv_m_r = 0;
 }
 
 char* get_demand_stat(struct demand_stat *const _stat) {
