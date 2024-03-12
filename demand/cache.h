@@ -29,8 +29,8 @@ struct cache_env {
 
 struct cache_member {
 	struct cmt_struct **cmt;
-	//struct pt_struct **mem_table;
 	LRU *lru;
+    struct fifo *fifo;
 
 	int nr_cached_tpages;
 	int nr_cached_tentries;

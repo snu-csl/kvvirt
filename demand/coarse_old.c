@@ -4,7 +4,9 @@
 
 #include "cache.h"
 #include "coarse_old.h"
+#include "../fifo.h"
 #include "utility.h"
+
 #include "./interface/interface.h"
 
 #include <linux/sched/clock.h>
@@ -82,8 +84,7 @@ static void cgo_member_init(struct demand_shard *shard) {
     }
     _member->cmt = cmt;
 
-    lru_init(&_member->lru);
-
+    fifo_init(_member->fifo);
     _member->nr_cached_tpages = 0;
 }
 

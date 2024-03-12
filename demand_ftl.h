@@ -132,6 +132,7 @@ struct gc_data {
     struct xarray inv_mapping_xa;
     struct xarray gc_xa;
     struct lpa_len_ppa *lpa_lens; 
+    atomic_t gc_rem;
 };
 
 struct demand_shard {
@@ -154,11 +155,14 @@ struct demand_shard {
 	struct write_flow_control wfc;
     struct gc_data gcd;
 
+    uint64_t offset; /* current offset on disk */
+
     uint32_t **oob;
     uint32_t *oob_mem;
     bool *grain_bitmap;
 
     uint64_t dram; /* in bytes */
+    bool fastmode; /* skip timings and build map later */
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,

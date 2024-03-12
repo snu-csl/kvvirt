@@ -237,7 +237,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#undef GC_STANDARD
+#define GC_STANDARD
 
 #ifdef GC_STANDARD
 #define PIECE 512
