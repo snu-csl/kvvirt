@@ -352,4 +352,7 @@ void schedule_internal_operation_cb(int sqid, unsigned long long nsecs_target,
                                     void* mem, uint64_t ppa, uint64_t len,
                                     uint64_t (*cb)(void*, uint64_t*, uint64_t*), 
                                     void *args, bool read, struct nvmev_io_work *w);
+
+// FAST PRECONDITION
+void fast_fill(struct nvmev_ns *ns, uint64_t size, uint32_t vlen, uint32_t pairs);
 #endif /* _LIB_NVMEV_H */

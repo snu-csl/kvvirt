@@ -27,7 +27,8 @@
 
 #define PPA_TO_PGA(_ppa_, _offset_) ( ((_ppa_) * GRAIN_PER_PAGE) + (_offset_) )
 #define G_IDX(x) ((x) / GRAIN_PER_PAGE)
-#define G_OFFSET(x) ((x) % GRAIN_PER_PAGE)
+//#define G_OFFSET(x) ((x) % GRAIN_PER_PAGE)
+#define G_OFFSET(x) ((x) & (GRAIN_PER_PAGE - 1))
 
 /* Functions */
 struct algo_req *make_algo_req_default(uint8_t type, value_set *value);

@@ -47,9 +47,12 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
 
 #ifdef DVALUE
-    _env->nr_valid_tpages *= GRAIN_PER_PAGE / 2;
-    _env->nr_valid_tentries *= GRAIN_PER_PAGE / 2;
+    _env->nr_valid_tpages *= GRAIN_PER_PAGE;
+    _env->nr_valid_tentries *= GRAIN_PER_PAGE;
 #endif
+
+    _env->nr_valid_tpages = (d_env->nr_pages * GRAIN_PER_PAGE) / EPP;
+    _env->nr_valid_tentries = (d_env->nr_pages * GRAIN_PER_PAGE);
 
     NVMEV_DEBUG("nr pages %u Valid tpages %u tentries %u\n", 
             d_env->nr_pages, _env->nr_valid_tpages, _env->nr_valid_tentries);

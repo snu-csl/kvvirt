@@ -402,7 +402,12 @@ static ssize_t __proc_file_write(struct file *file, const char __user *buf, size
 		}
 	} else if (!strcmp(filename, "debug")) {
 		/* Left for later use */
-	}
+	} else if(strcmp(filename, "fastfill") == 0) {
+        uint32_t vlen, pairs;
+		ret = sscanf(input, "%u %u", &vlen, &pairs);
+        printk("Trying vlen %u num %u\n", vlen, pairs);
+        fast_fill(&nvmev_vdev->ns[0], nvmev_vdev->ns[0].size, vlen, pairs);
+    }
 
 out:
 	__print_perf_configs();
@@ -462,6 +467,7 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
     nvmev_vdev->proc_space = proc_create("space", 0664, nvmev_vdev->proc_root, &proc_file_fops);
     nvmev_vdev->proc_space = proc_create("dstat", 0444, nvmev_vdev->proc_root, &proc_file_fops);
     nvmev_vdev->proc_space = proc_create("cleardstat", 0664, nvmev_vdev->proc_root, &proc_file_fops);
+    nvmev_vdev->proc_space = proc_create("fastfill", 0444, nvmev_vdev->proc_root, &proc_file_fops);
 }
 
 void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
@@ -474,6 +480,7 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
     remove_proc_entry("space", nvmev_vdev->proc_root);
     remove_proc_entry("dstat", nvmev_vdev->proc_root);
     remove_proc_entry("cleardstat", nvmev_vdev->proc_root);
+    remove_proc_entry("fastfill", nvmev_vdev->proc_root);
 
 	remove_proc_entry("nvmev", NULL);
 
