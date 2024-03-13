@@ -84,7 +84,7 @@ static void cgo_member_init(struct demand_shard *shard) {
     }
     _member->cmt = cmt;
 
-    fifo_init(_member->fifo);
+    fifo_init(&_member->fifo);
     _member->nr_cached_tpages = 0;
 }
 

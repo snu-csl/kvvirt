@@ -10,7 +10,7 @@ struct fifo {
     struct list_head head;
 };
 
-void fifo_init(struct fifo *queue);
+void fifo_init(struct fifo **queue);
 void* fifo_enqueue(struct fifo *queue, void *data);
 void *fifo_dequeue(struct fifo *queue);
 void fifo_destroy(struct fifo *queue);
