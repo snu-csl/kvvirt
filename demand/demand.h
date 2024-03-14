@@ -69,6 +69,16 @@ struct pt_struct {
 struct cmt_struct {
 	int32_t idx;
 	struct pt_struct *pt;
+
+    /*
+     * We wrote the FTL with the assumption that pt == NULL means the
+     * CMT isn't cached, which is fine. But when moving to using Linux's
+     * allocator instead of tying PT address to the PPA on disk, if we
+     * NULL pt we lose the memory location of the PT. Use pt_mem to keep
+     * that location around.
+     */
+    void *pt_mem;
+
 	NODE *lru_ptr;
 	ppa_t t_ppa;
 
@@ -82,6 +92,16 @@ struct cmt_struct {
 
     atomic_t outgoing;
     struct xarray map;
+
+    /*
+     * Mem is where this pair is located in-memory, which is not
+     * necessarily the same as its ppa. Consider that we don't need to
+     * re-write pairs to a new memory location if they're the same length,
+     * we can just overwrite, saving some work. We will still get
+     * flash timings based on the PPA on the SSD and use those for the
+     * completion times.
+     */
+    void **mems;
 };
 
 struct hash_params {

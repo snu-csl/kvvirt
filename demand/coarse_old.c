@@ -56,7 +56,7 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tpages = (d_env->nr_pages * GRAIN_PER_PAGE) / EPP;
     _env->nr_valid_tentries = (d_env->nr_pages * GRAIN_PER_PAGE);
 
-    NVMEV_DEBUG("nr pages %u Valid tpages %u tentries %u\n", 
+    NVMEV_INFO("nr pages %u Valid tpages %u tentries %u\n", 
             d_env->nr_pages, _env->nr_valid_tpages, _env->nr_valid_tentries);
 
     print_cache_env(shard);
@@ -75,12 +75,16 @@ static void cgo_member_init(struct demand_shard *shard) {
 
     for (int i = 0; i < cenv->nr_valid_tpages; i++) {
         cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
+        NVMEV_ASSERT(cmt[i]);
 
         cmt[i]->t_ppa = UINT_MAX;
         cmt[i]->idx = i;
         cmt[i]->pt = NULL;
         cmt[i]->lru_ptr = NULL;
         cmt[i]->state = CLEAN;
+        cmt[i]->mems = kzalloc(sizeof(void*) * EPP, GFP_KERNEL);
+
+        NVMEV_ASSERT(cmt[i]->mems);
     }
     _member->cmt = cmt;
 
@@ -125,17 +129,20 @@ static void cgo_print_member(void) {
 
 static void cgo_member_kfree(struct demand_cache *cache) {
     struct cache_member *_member = &cache->member;
+    struct cache_env *cenv = &cache->env;
+
     for (int i = 0; i < cache->env.nr_valid_tpages; i++) {
-        kfree(_member->cmt[i]);
+        struct cmt_struct *cmt = _member->cmt[i];
+        for(int i = 0; i < EPP; i++) {
+            if(cmt->mems[i]) {
+                kfree(cmt->mems[i]);
+                cmt->mems[i] = NULL;
+            }
+        }
+        kfree(cmt);
     }
     vfree(_member->cmt);
-
-    //for (int i = 0; i < cenv->nr_valid_tpages; i++) {
-    //      kfree(_member->mem_table[i]);
-    //}
-    //vfree(_member->mem_table);
-
-    lru_kfree(_member->lru);
+    fifo_destroy(_member->fifo);
 }
 
 int cgo_destroy(struct demand_cache *cache) {
@@ -211,6 +218,7 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
                     cmt);
         return cmt->pt[OFFSET(lpa)];
     } else {
+        NVMEV_ASSERT(false);
         if(cmt->t_ppa == UINT_MAX) {
             NVMEV_ASSERT(false);
             printk("%s CMT was NULL for LPA %u IDX %lu\n", 

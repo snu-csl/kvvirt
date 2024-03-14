@@ -453,8 +453,6 @@ void NVMEV_STORAGE_INIT(struct nvmev_dev *nvmev_vdev)
 	if (nvmev_vdev->storage_mapped == NULL)
 		NVMEV_ERROR("Failed to map storage memory.\n");
 
-    //memset(nvmev_vdev->storage_mapped, 0x0, nvmev_vdev->config.storage_size);
-
 	nvmev_vdev->proc_root = proc_mkdir("nvmev", NULL);
 	nvmev_vdev->proc_read_times =
 		proc_create("read_times", 0664, nvmev_vdev->proc_root, &proc_file_fops);

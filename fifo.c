@@ -1,7 +1,7 @@
 #include "fifo.h"
 
 void fifo_init(struct fifo **queue) {
-    *queue = kzalloc(sizeof(*queue), GFP_KERNEL);
+    *queue = kzalloc(sizeof(struct fifo), GFP_KERNEL);
     INIT_LIST_HEAD(&((*queue)->head));
 }
 
