@@ -96,7 +96,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     struct ssdparams *spp = &ssd->sp;
     struct demand_cache *cache = shard->cache;
     bool skip_all = true;
-    uint32_t **oob = shard->oob;
+    uint64_t **oob = shard->oob;
     uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
     uint64_t nsecs_completed = 0, nsecs_latest = 0, reads_done = 0;
 
@@ -307,9 +307,9 @@ again:
 
         if(g_off + cmt->len_on_disk > GRAIN_PER_PAGE) {
             if(g_off % GRAIN_PER_PAGE) {
-                for(int i = g_off; i < GRAIN_PER_PAGE; i++) {
-                    oob[ppa][i] = UINT_MAX;
-                }
+                //for(int i = g_off; i < GRAIN_PER_PAGE; i++) {
+                //    oob[ppa][i] = UINT_MAX;
+                //}
 
                 mark_grain_invalid(shard, PPA_TO_PGA(ppa, g_off), 
                                    GRAIN_PER_PAGE - g_off);
@@ -328,10 +328,10 @@ again:
             NVMEV_DEBUG("Took page %llu\n", ppa);
         }
 
-        oob[ppa][g_off] = lpa;
-        for(int i = 1; i < cmt->len_on_disk; i++) {
-            oob[ppa][g_off + i] = 0;
-        }
+        oob[ppa][g_off] = ((uint64_t) cmt->len_on_disk << 32) | lpa;
+        //for(int i = 1; i < cmt->len_on_disk; i++) {
+        //    oob[ppa][g_off + i] = 0;
+        //}
 
         if (last_pg_in_wordline(shard, &p)) {
             struct nand_cmd swr = {
@@ -364,9 +364,9 @@ again:
 #ifdef GC_STANDARD
         NVMEV_ASSERT(false);
 #endif
-        for(int i = g_off; i < GRAIN_PER_PAGE; i++) {
-            oob[ppa][i] = UINT_MAX;
-        }
+        //for(int i = g_off; i < GRAIN_PER_PAGE; i++) {
+        //    oob[ppa][i] = UINT_MAX;
+        //}
 
         mark_grain_invalid(shard, PPA_TO_PGA(ppa, g_off), 
                            GRAIN_PER_PAGE - g_off);

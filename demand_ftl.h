@@ -157,8 +157,8 @@ struct demand_shard {
 
     uint64_t offset; /* current offset on disk */
 
-    uint32_t **oob;
-    uint32_t *oob_mem;
+    uint64_t **oob;
+    uint64_t *oob_mem;
     bool *grain_bitmap;
 
     uint64_t dram; /* in bytes */
