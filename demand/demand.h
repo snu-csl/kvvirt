@@ -29,10 +29,7 @@ extern uint64_t pgs_this_flush;
 
 struct lpa_len_ppa {
     lpa_t lpa; /* the lpa we find in the reverse map. */
-    uint32_t len; /* the length of the key-value pair. */
-    ppa_t prev_ppa; /* to copy from during GC */
     ppa_t new_ppa; /* the new ppa we're writing this key-value pair to. */
-    ppa_t cmt_ppa; /* which CMT ppa does this item belong to? */
 };
 
 void clear_oob(struct demand_shard *shard, uint64_t pgidx);
@@ -46,8 +43,7 @@ void mark_grain_valid(struct demand_shard *demand_shard, uint64_t grain, uint32_
 void mark_grain_invalid(struct demand_shard *demand_shard, uint64_t grain, uint32_t len);
 inline void consume_write_credit(struct demand_shard *demand_shard, uint32_t len);
 inline uint64_t check_and_refill_write_credit(struct demand_shard *demand_shard);
-int do_bulk_mapping_update_v(struct demand_shard*, struct lpa_len_ppa*, int, 
-                             uint64_t*, uint64_t);
+int do_bulk_mapping_update_v(struct demand_shard*, struct lpa_len_ppa*, int);
 inline struct line *get_line(struct demand_shard *demand_shard, struct ppa *ppa);
 inline bool last_pg_in_wordline(struct demand_shard *demand_shard, struct ppa *ppa);
 

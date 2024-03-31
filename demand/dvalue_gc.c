@@ -90,8 +90,7 @@ uint64_t *read_ppas = NULL;
 struct ppa *pgs = NULL;
 
 int do_bulk_mapping_update_v(struct demand_shard *shard, 
-                             struct lpa_len_ppa *ppas, int nr_valid_grains, 
-                             uint64_t *read_cmts, uint64_t read_cmt_cnt) {
+                             struct lpa_len_ppa *ppas, int nr_valid_grains) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
     struct demand_cache *cache = shard->cache;
@@ -231,7 +230,7 @@ int do_bulk_mapping_update_v(struct demand_shard *shard,
     }
 
     if(skip_all) {
-        memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
+        //memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
         return 0;
     }
 
@@ -378,7 +377,7 @@ again:
 
     NVMEV_ASSERT(ppa_idx == pg_cnt);
 
-    memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
+    //memset(read_ppas, 0x0, spp->pgs_per_flashpg * GRAIN_PER_PAGE * sizeof(uint64_t));
 	return 0;
 }
 
