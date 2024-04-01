@@ -2104,6 +2104,7 @@ again:
     out[out_idx] = (struct lpa_len_ppa) {lpa, grain};
 }
 
+uint64_t clearing = 0, clear_count = 0, copying = 0;
 /* here ppa identifies the block we want to clean */
 void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 {
@@ -2127,7 +2128,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     uint32_t gcs = 0;
     uint64_t nsecs_completed = 0;
 
-    uint64_t start = 0, end = 0;
+    uint64_t start = 0, end = 0, clear_start = 0, copy_start = 0;
 
     lpa_lens = gcd->lpa_lens;
     NVMEV_ASSERT(lpa_lens);
@@ -2195,7 +2196,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             }
 
             NVMEV_DEBUG("Grain %llu (%d)\n", grain, i);
-            if(mapping_line && i == 0 && oob[pgidx][i] == UINT_MAX) {
+            if(i == 0 && mapping_line && oob[pgidx][i] == UINT_MAX) {
 #ifdef GC_STANDARD
                 /*
                  * Original scheme doesn't have invalid mapping pages!
@@ -2213,14 +2214,16 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 unsigned long key = 
                 ((unsigned long) target_line << 32) | page;
 
-
                 NVMEV_DEBUG("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
                              pgidx, key, key >> 32);
                 NVMEV_ASSERT(i == 0);
                 NVMEV_ASSERT(mapping_line);
 
                 __clear_inv_mapping(shard, key);
+
+                copy_start = ktime_get();
                 __copy_inv_map(shard, grain, target_line);
+                copying += ktime_to_us(ktime_get()) - ktime_to_us(copy_start);
 
                 d_stat.inv_m_w += spp->pgsz;
                 d_stat.inv_m_r += spp->pgsz;
@@ -2229,6 +2232,9 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 i += GRAIN_PER_PAGE;
 #endif
             } else if(mapping_line && valid_g) {
+                clear_start = ktime_get();
+                clear_count++;
+
                 /*
                  * A grain containing live LPA to PPA mapping information.
                  */
@@ -2240,9 +2246,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
                 struct cmt_struct *cmt = cache->get_cmt(cache, oob[pgidx][i]);
                 uint32_t idx = IDX(__lpa_from_oob(oob[pgidx][i]));
-                if(idx == 0) {
-                    continue;
-                }
 
 #ifdef GC_STANDARD
                 len = GRAIN_PER_PAGE;
@@ -2256,6 +2259,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 if(cmt->t_ppa != pgidx || cmt->g_off != i) {
                     NVMEV_DEBUG("CMT IDX %u moved from PPA %llu to PPA %u\n", 
                                  idx, pgidx, cmt->t_ppa);
+                    i += len - 1;
+                    clearing += ktime_to_us(ktime_get()) - ktime_to_us(clear_start);
                     continue;
                 }
 
@@ -2265,6 +2270,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 __copy_map(shard, idx, len);
 
                 i += len - 1;
+                clearing += ktime_to_us(ktime_get()) - ktime_to_us(clear_start);
             } else if(!mapping_line && valid_g) {
 #ifndef GC_STANDARD
                 NVMEV_ASSERT(pg_inv_cnt[pgidx] <= GRAIN_PER_PAGE);
@@ -2505,13 +2511,14 @@ static uint64_t do_gc(struct demand_shard *shard, bool force)
     NVMEV_INFO("%llu user %llu GC %llu map GC this round. %lu pgs_per_line."
                " Took %llu microseconds (%llu map %llu clean %llu free).\n"
                " Clean breakdown %llu first half %llu second half %llu third half"
-               " %llu time spent searching.", 
+               " %llu time spent searching %llu clearing %llu copying %llu clear_count.", 
                 user_pgs_this_gc, gc_pgs_this_gc, map_gc_pgs_this_gc, 
                 spp->pgs_per_line, total, map, cleaning, freeing,
                 clean_first_half, clean_second_half, clean_third_half, 
-                mapping_searches);
+                mapping_searches, clearing, copying, clear_count);
 
     clean_first_half = clean_second_half = clean_third_half = mapping_searches = 0;
+    clearing = copying = clear_count = 0;
 
     /* update line status */
 	mark_line_free(shard, &ppa);

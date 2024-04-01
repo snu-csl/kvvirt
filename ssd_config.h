@@ -240,8 +240,10 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #undef GC_STANDARD
 
 #ifdef GC_STANDARD
-#define PIECE 64
+#define CACHE_PIECE 512
+#define PIECE 512
 #else
+#define CACHE_PIECE 512
 #define PIECE 64
 #endif
 
