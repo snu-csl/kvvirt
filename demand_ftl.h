@@ -37,6 +37,8 @@
  * For DFTL.
  */
 
+#define INV_DURING_GC (UINT_MAX - 10)
+
 struct generic_copy_args {
     void (*func)(void *args, uint64_t*, uint64_t*);
     void *args;
@@ -163,6 +165,8 @@ struct demand_shard {
 
     uint64_t dram; /* in bytes */
     bool fastmode; /* skip timings and build map later */
+
+    struct task_struct *bg_gc_t;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,

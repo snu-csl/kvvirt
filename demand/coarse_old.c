@@ -83,6 +83,7 @@ static void cgo_member_init(struct demand_shard *shard) {
         cmt[i]->lru_ptr = NULL;
         cmt[i]->state = CLEAN;
         cmt[i]->mems = kzalloc(sizeof(void*) * EPP, GFP_KERNEL);
+        atomic_set(&cmt[i]->outgoing, 0);
 
         NVMEV_ASSERT(cmt[i]->mems);
     }
@@ -252,11 +253,15 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
 
 struct cmt_struct *cgo_get_cmt(struct demand_cache *cache, lpa_t lpa) {
     struct cache_member *cmbr = &cache->member;
+	struct cmt_struct *c = cmbr->cmt[IDX(lpa)];
 
-    struct cmt_struct *c = cmbr->cmt[IDX(lpa)];
-    while(atomic_read(&c->outgoing) > 0) {
-        cpu_relax();
-    }
+	while (atomic_cmpxchg(&c->outgoing, 0, 1) != 0) {
+		cpu_relax();
+	}
+
+    //while(atomic_read(&c->outgoing) > 0) {
+    //    cpu_relax();
+    //}
 
     return c;
 }

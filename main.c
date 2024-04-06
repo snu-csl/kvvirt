@@ -590,6 +590,8 @@ void NVMEV_NAMESPACE_FINAL(struct nvmev_dev *nvmev_vdev)
 	const int nr_ns = NR_NAMESPACES; // XXX: allow for dynamic nvmev_vdev->nr_ns
 	int i;
 
+    NVMEV_INFO("Namespace final!\n");
+
 	for (i = 0; i < nr_ns; i++) {
 		if (NS_SSD_TYPE(i) == SSD_TYPE_NVM)
 			simple_remove_namespace(&ns[i]);
