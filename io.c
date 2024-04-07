@@ -782,11 +782,7 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 		.nsecs_start = nsecs_start,
 	};
 	struct nvmev_result ret = {
-//#if (BASE_SSD != SAMSUNG_970PRO_HASH_DFTL)
         .nsecs_target = nsecs_start,
-//#else
-//        .nsecs_target = U64_MAX,
-//#endif
 		.status = NVME_SC_SUCCESS,
         .cb = NULL,
         .args = NULL,
@@ -803,37 +799,6 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	static unsigned long long counter = 0;
 #endif
 
-//#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
-//    /*
-//     * In the DFTLKV FTL, key-value work (store, retrieve, etc)
-//     * is done in the worker threads. When these operations complete,
-//     * we need to switch the target time of the work entry to the
-//     * finish time of the key-value operation. To do that, we need
-//     * the nvmev_io_work item first.
-//     *
-//     * Note that it doesn't matter that we insert and get the work
-//     * here before proc_io_cmd below, because we have already
-//     * set the target time of the work to U64_MAX above.
-//     */
-//
-//    bool kv_cmd = false;
-//    if(ns->identify_io_cmd(ns, sq_entry(sq_entry))) {
-//        //struct nvme_command *b_cmd = &sq_entry(sq_entry);
-//        //struct nvme_kv_command *cmd = (struct nvme_kv_command*) b_cmd;
-//
-//        //if(cmd->common.opcode == nvme_cmd_kv_store) {
-//        //    uint32_t vlen = cmd->kv_store.value_len << 2;
-//        //    cmd->kv_store.rsvd = wb_offs;
-//        //    wb_offs += vlen;
-//        //}
-//
-//        struct nvmev_io_work *w = __enqueue_io_req(sqid, sq->cqid, sq_entry, 
-//                nsecs_start, &ret);
-//        req.w = w;
-//        kv_cmd = true;
-//    }
-//#endif
-
 	if (!ns->proc_io_cmd(ns, &req, &ret))
 		return false;
 	*io_size = (cmd->rw.length + 1) << 9;
@@ -842,13 +807,7 @@ static size_t __nvmev_proc_io(int sqid, int sq_entry, size_t *io_size)
 	prev_clock2 = local_clock();
 #endif
 
-//#if (BASE_SSD != SAMSUNG_970PRO_HASH_DFTL)
     __enqueue_io_req(sqid, sq->cqid, sq_entry, nsecs_start, &ret);
-//#else
-//    if(!kv_cmd) {
-//        __enqueue_io_req(sqid, sq->cqid, sq_entry, nsecs_start, &ret);
-//    }
-//#endif
 
 #ifdef PERF_DEBUG
 	prev_clock3 = local_clock();

@@ -77,13 +77,14 @@ static void cgo_member_init(struct demand_shard *shard) {
         cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
         NVMEV_ASSERT(cmt[i]);
 
-        cmt[i]->t_ppa = UINT_MAX;
+        atomic_set(&cmt[i]->t_ppa, UINT_MAX);
+        atomic_set(&cmt[i]->outgoing, 0);
+
         cmt[i]->idx = i;
         cmt[i]->pt = NULL;
         cmt[i]->lru_ptr = NULL;
         cmt[i]->state = CLEAN;
         cmt[i]->mems = kzalloc(sizeof(void*) * EPP, GFP_KERNEL);
-        atomic_set(&cmt[i]->outgoing, 0);
 
         NVMEV_ASSERT(cmt[i]->mems);
     }
@@ -220,35 +221,7 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
         return cmt->pt[OFFSET(lpa)];
     } else {
         NVMEV_ASSERT(false);
-        if(cmt->t_ppa == UINT_MAX) {
-            NVMEV_ASSERT(false);
-            printk("%s CMT was NULL for LPA %u IDX %lu\n", 
-                        __func__, lpa, IDX(lpa));
-            /*
-             * Haven't used this CMT entry yet.
-             */
-
-            cmt->pt = kzalloc(EPP * sizeof(struct pt_struct), GFP_KERNEL);
-            for(int i = 0; i < EPP; i++) {
-                cmt->pt[i].ppa = UINT_MAX;
-#ifdef STORE_KEY_FP
-                cmt->pt[i].key_fp = FP_MAX;
-#endif
-            }
-
-            return cmt->pt[OFFSET(lpa)];
-        } else {
-            NVMEV_INFO("Failing for LPA %u IDX %lu\n", lpa, IDX(lpa));
-            BUG_ON(true);
-        }
-        /* FIXME: to handle later update after evict */
-        //return cmbr->mem_table[IDX(lpa)][OFFSET(lpa)];
     }
-    /*      if (unlikely(cmt->pt == NULL)) {
-    //NVMEV_DEBUG("Should have aborted!!!! %s:%d
-    , __FILE__, __LINE__);;
-    }
-    return cmt->pt[OFFSET(lpa)]; */
 }
 
 struct cmt_struct *cgo_get_cmt(struct demand_cache *cache, lpa_t lpa) {

@@ -358,17 +358,17 @@ uint64_t ssd_advance_pcie(struct ssd *ssd, uint64_t request_time, uint64_t lengt
 {
 	struct channel_model *perf_model = ssd->pcie->perf_model;
 
-//#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
-//    while (!spin_trylock(&spin)) {
-//		cpu_relax();
-//	}
-//#endif
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    while (!spin_trylock(&spin)) {
+		cpu_relax();
+	}
+#endif
 
     uint64_t ret = chmodel_request(perf_model, request_time, length);
 
-//#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
-//    spin_unlock(&spin);
-//#endif
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    spin_unlock(&spin);
+#endif
     return ret;
 	return chmodel_request(perf_model, request_time, length);
 }
@@ -393,6 +393,7 @@ uint64_t ssd_advance_write_buffer(struct ssd *ssd, uint64_t request_time, uint64
 	return nsecs_latest;
 }
 
+spinlock_t adv_spin;
 uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 {
 	int c = ncmd->cmd;
@@ -413,6 +414,8 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		NVMEV_ERROR("Error ppa 0x%llx\n", ppa->ppa);
 		return cmd_stime;
 	}
+
+    spin_lock(&adv_spin);
 
 	spp = &ssd->sp;
 	lun = get_lun(ssd, ppa);
@@ -483,6 +486,8 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		NVMEV_ERROR("Unsupported NAND command: 0x%x\n", c);
 		return 0;
 	}
+
+    spin_unlock(&adv_spin);
 
 	return completed_time;
 }

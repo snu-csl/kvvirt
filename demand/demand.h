@@ -43,7 +43,7 @@ void mark_grain_valid(struct demand_shard *demand_shard, uint64_t grain, uint32_
 void mark_grain_invalid(struct demand_shard *demand_shard, uint64_t grain, uint32_t len);
 inline void consume_write_credit(struct demand_shard *demand_shard, uint32_t len);
 inline uint64_t check_and_refill_write_credit(struct demand_shard *demand_shard);
-int do_bulk_mapping_update_v(struct demand_shard*, struct lpa_len_ppa*, int);
+int do_bulk_mapping_update_v(struct demand_shard*, struct lpa_len_ppa*, int, int);
 inline struct line *get_line(struct demand_shard *demand_shard, struct ppa *ppa);
 inline bool last_pg_in_wordline(struct demand_shard *demand_shard, struct ppa *ppa);
 
@@ -55,7 +55,8 @@ struct pt_struct {
 #ifndef GC_STANDARD
     lpa_t lpa;
 #endif
-	ppa_t ppa; // Index = lpa
+    atomic_t ppa;
+	//ppa_t ppa; // Index = lpa
 #ifdef STORE_KEY_FP
 	fp_t key_fp;
 #endif
@@ -75,8 +76,8 @@ struct cmt_struct {
      */
     void *pt_mem;
 
-	NODE *lru_ptr;
-	ppa_t t_ppa;
+	void *lru_ptr;
+	atomic_t t_ppa;
 
 	cmt_state_t state;
 
