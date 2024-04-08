@@ -58,7 +58,7 @@ void __update_pt(struct demand_shard *shard, struct cmt_struct *cmt,
 
 #ifdef GC_STANDARD
     struct pt_struct pte;
-    pte.ppa = ppa;
+    atomic_set(&pte.ppa, ppa);
 
     cmt->pt[OFFSET(lpa)] = pte;
     return;

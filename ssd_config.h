@@ -237,22 +237,20 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#undef GC_STANDARD
+#define GC_STANDARD
 
 #ifdef GC_STANDARD
-#define CACHE_PIECE 64
-#define PIECE 64
+#define PIECE 512
 #else
-#define CACHE_PIECE 64
 #define PIECE 64
 #endif
 
 #define EPP ((PAGESIZE / ENTRY_SIZE)) // Entry Per Page
 
-#define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 #define GRAINED_UNIT ( PIECE )
+#define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 
-#define ORIG_GLEN 1 // (PAGESIZE / GRAINED_UNIT)
+#define ORIG_GLEN 1//(PAGESIZE / GRAINED_UNIT)
 //static_assert((1024 % GRAINED_UNIT) == 0);
 //#define CGRAINED_UNIT ( CPIECE )
 //#define CGRAIN_PER_PAGE (PAGESIZE / CGRAINED_UNIT)

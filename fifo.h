@@ -1,6 +1,8 @@
 #include <linux/kfifo.h>
 #include <linux/slab.h>
 
+#include "demand/demand.h"
+
 struct q_entry {
     void *data;
     struct list_head list;

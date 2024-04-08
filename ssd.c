@@ -397,7 +397,6 @@ spinlock_t adv_spin;
 uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 {
 	int c = ncmd->cmd;
-	uint64_t cmd_stime = (ncmd->stime == 0) ? __get_ioclock(ssd) : ncmd->stime;
 	uint64_t nand_stime, nand_etime;
 	uint64_t chnl_stime, chnl_etime;
 	uint64_t remaining, xfer_size, completed_time;
@@ -410,6 +409,7 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		"SSD: %p, Enter stime: %lld, ch %d lun %d blk %d page %d command %d ppa 0x%llx\n",
 		ssd, ncmd->stime, ppa->g.ch, ppa->g.lun, ppa->g.blk, ppa->g.pg, c, ppa->ppa);
 
+	uint64_t cmd_stime = (ncmd->stime == 0) ? __get_ioclock(ssd) : ncmd->stime;
 	if (ppa->ppa == UNMAPPED_PPA) {
 		NVMEV_ERROR("Error ppa 0x%llx\n", ppa->ppa);
 		return cmd_stime;
