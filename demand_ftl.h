@@ -140,8 +140,7 @@ struct gc_data {
 #define VICTIM_RB_SZ 131072
 struct victim_buffer {
     struct cmt_struct* cmt[VICTIM_RB_SZ];
-    int head;
-    int tail;
+    int head, tail;
     spinlock_t lock;
 };
 static struct victim_buffer vb;

@@ -3045,7 +3045,8 @@ again:
         atomic_add(g_len, candidates);
 
         NVMEV_ERROR("Added IDX %u len %u to head %u. Count is now %u\n", 
-                     victim->idx, g_len, vb.head - 1, atomic_read(candidates));
+                     victim->idx, g_len, vb.head - 1, 
+                     atomic_read(candidates));
 
         if(atomic_read(candidates) >= target_g) {
             atomic_set(&victim->outgoing, 0);
@@ -3448,14 +3449,14 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     struct cache_stat *cstat;
     struct cmt_struct* victim;
     uint64_t **oob;
-    bool got_ppa = false, got_lock = false;
-    uint32_t grain = 0, g_len = 0, cnt = 0;
+    bool got_ppa, got_lock;
+    uint32_t grain, g_len, cnt;
     uint32_t t_ppa;
     struct ppa p;
-    ppa_t ppa = UINT_MAX;
-    bool all_clean = true;
-    uint64_t nsecs_completed = 0;
-    uint32_t evicted = 0;
+    ppa_t ppa;
+    bool all_clean;
+    uint64_t nsecs_completed;
+    uint32_t evicted;
     atomic_t *have_victims;
 
 	uint64_t start = 0, end = 0;
@@ -3465,41 +3466,44 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     spp = &shard->ssd->sp;
     cstat = &cache->stat;
     oob = shard->oob;
+    got_ppa = got_lock = false;
+    grain = g_len = cnt = 0;
+    ppa = UINT_MAX;
+    all_clean = true;
+    nsecs_completed = 0;
+    evicted = 0;
     have_victims = &shard->have_victims;
 
-	start = ktime_get();
+	//start = ktime_get();
     while(atomic_cmpxchg(have_victims, 1, 2) != 1) {
         cpu_relax();
     }
-    cnt = MAX_SEARCH; // __collect_victims(shard, GRAIN_PER_PAGE);
-    end = ktime_get();
+    //end = ktime_get();
 
-    if(ktime_to_us(end) - ktime_to_us(start) > 5) {
-        //NVMEV_ERROR("Collecting %u victims took %llu %d cached\n", cnt, 
-        //        ktime_to_us(end) - ktime_to_us(start), 
-        //        cmbr->nr_cached_tentries);
-    } 
+    //if(ktime_to_us(end) - ktime_to_us(start) > 5) {
+    //    //NVMEV_ERROR("Collecting %u victims took %llu %d cached\n", cnt, 
+    //    //        ktime_to_us(end) - ktime_to_us(start), 
+    //    //        cmbr->nr_cached_tentries);
+    //} 
 
-    int i;
-    while(cmbr->nr_cached_tentries > (cache->env.max_cached_tentries - GRAIN_PER_PAGE)) {
-        NVMEV_ASSERT(grain <= GRAIN_PER_PAGE);
-
-        if(evicted >= GRAIN_PER_PAGE) {
-            break;
-        }
-
-        //for(i = 0; i < cnt; i++) {
+    while(cmbr->nr_cached_tentries > 
+          cache->env.max_cached_tentries - GRAIN_PER_PAGE) {
         if(grain == GRAIN_PER_PAGE) {
             NVMEV_ERROR("EVICTION: we wrote a full page.\n");
 new_page:
-            //NVMEV_ERROR("Here PPA %u\n", ppa);
-            if(grain < GRAIN_PER_PAGE) {
-                mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
-                mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+            p = ppa_to_struct(spp, ppa);
+            struct nand_cmd swr = {
+                .type = USER_IO,
+                .cmd = NAND_WRITE,
+                .interleave_pci_dma = false,
+                .xfer_size = spp->pgsz * spp->pgs_per_oneshotpg,
+            };
 
-                for(int i = grain; i < GRAIN_PER_PAGE; i++) {
-                    oob[ppa][i] = UINT_MAX;
-                }
+            if (!shard->fastmode && last_pg_in_wordline(shard, &p)) {
+                swr.stime = __stime_or_clock(stime);
+                swr.ppa = &p;
+                d_stat.trans_w += spp->pgsz * spp->pgs_per_oneshotpg;
+                nsecs_completed = ssd_advance_nand(shard->ssd, &swr);
             }
 
             grain = 0;
@@ -3509,18 +3513,10 @@ new_page:
                          cache->env.max_cached_tentries);
         }
 
-        NVMEV_ASSERT(vb.tail < vb.head);
         victim = vb.cmt[vb.tail]; 
 
-        if(!victim) {
-            NVMEV_ERROR("NULL victim at tail %d!\n", vb.tail);
-            NVMEV_ASSERT(false);
-            break;
-        }
-
-        if(victim->state != C_CANDIDATE && victim->state != D_CANDIDATE) {
-            NVMEV_ERROR("State is %d\n", victim->state);
-        }
+        NVMEV_ASSERT(victim);
+        NVMEV_ASSERT(victim->pt);
         NVMEV_ASSERT(victim->state == C_CANDIDATE || 
                      victim->state == D_CANDIDATE);
 
@@ -3529,29 +3525,24 @@ new_page:
             got_lock = true;
         }
 
-        //while(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
-        //    cpu_relax();
-        //}
-
         g_len = __entries_to_grains(shard, victim);
         if(victim->state == D_CANDIDATE && grain + g_len > GRAIN_PER_PAGE) {
             NVMEV_ERROR("IDX %u was too big! New page!\n", 
                     victim->idx);
+
+            mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+            mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+
+            for(int i = grain; i < GRAIN_PER_PAGE; i++) {
+                oob[ppa][i] = UINT_MAX;
+            }
+
             goto new_page;
         }
 
         vb.tail = (vb.tail + 1) % VICTIM_RB_SZ;
 
         t_ppa = atomic_read(&victim->t_ppa);
-
-        NVMEV_ASSERT(victim);
-
-        if(!victim->pt) {
-            NVMEV_ERROR("IDX %u NULL at tail %d\n", victim->idx, vb.tail - 1);
-            NVMEV_ASSERT(false);
-            atomic_set(&victim->outgoing, 0);
-            continue;
-        }
 
         NVMEV_ERROR("Got victim with IDX %u len %u from tail %d in eviction.\n", 
                      victim->idx, g_len, vb.tail - 1);
@@ -3574,8 +3565,6 @@ new_page:
                 NVMEV_ASSERT(victim->len_on_disk > 0);
                 mark_grain_invalid(shard, PPA_TO_PGA(t_ppa, victim->g_off), 
                         victim->len_on_disk);
-            } else {
-                NVMEV_ERROR("Changed during evict!!!\n");
             }
 
 #ifdef GC_STANDARD
@@ -3634,10 +3623,6 @@ skip:
 
             oob[ppa][grain] = ((uint64_t) g_len << 32) | (victim->idx * EPP);
             NVMEV_DEBUG("Set OOB PPA %u grain %u to IDX %u\n", ppa, grain, victim->idx);
-            //for(int j = 1; j < g_len; j++) {
-            //    NVMEV_ASSERT(grain + j < GRAIN_PER_PAGE);
-            //    oob[ppa][grain + j] = UINT_MAX;
-            //}
 
             if(grain >= GRAIN_PER_PAGE) {
                 NVMEV_ERROR("Whoops! Grain %u\n", grain);
@@ -3650,7 +3635,6 @@ skip:
 
             grain += g_len;
 
-            victim->pt = NULL;
             //NVMEV_ERROR("Evicted DIRTY mapping entry IDX %u in %s.\n",
             //        victim->idx, __func__);
             all_clean = false;
@@ -3658,17 +3642,21 @@ skip:
         } else {
             //NVMEV_ERROR("Evicted CLEAN mapping entry IDX %u in %s.\n",
             //        victim->idx, __func__);
-            victim->pt = NULL;
             cstat->clean_evict++;
         }
 
         evicted += g_len;
         cmbr->nr_cached_tentries -= g_len;
 
+        victim->pt = NULL;
         victim->state = CLEAN;
 
         got_lock = false;
         atomic_set(&victim->outgoing, 0);
+
+        if(evicted >= GRAIN_PER_PAGE) {
+            break;
+        }
     }
     end = ktime_get();
     //NVMEV_ERROR("Total took %lluus %d cached.\n", 
@@ -3683,7 +3671,6 @@ skip:
          */
 
         NVMEV_ASSERT(GRAIN_PER_PAGE - grain > 0);
-        //NVMEV_ERROR("Here PPA %u\n", ppa);
         mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
         mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
 
