@@ -137,6 +137,15 @@ struct gc_data {
     atomic_t gc_rem;
 };
 
+#define VICTIM_RB_SZ 131072
+struct victim_buffer {
+    struct cmt_struct* cmt[VICTIM_RB_SZ];
+    int head;
+    int tail;
+    spinlock_t lock;
+};
+static struct victim_buffer vb;
+
 struct demand_shard {
     uint64_t id;
 
@@ -168,6 +177,9 @@ struct demand_shard {
 
     struct task_struct *bg_gc_t;
     struct task_struct *bg_ev_t;
+
+    atomic_t candidates;
+    atomic_t have_victims;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,

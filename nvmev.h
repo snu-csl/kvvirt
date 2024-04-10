@@ -26,7 +26,7 @@
 #define NVMEV_SUBSYSTEM_VENDOR_ID NVMEV_VENDOR_ID
 
 #define NVMEV_INFO(string, args...) BUG_ON(false); // printk(KERN_INFO "%s: [t: %d cycles: %llu] " string, NVMEV_DRV_NAME, current->pid, get_cycles(), ##args)
-#define NVMEV_ERROR(string, args...) printk(KERN_ERR "%s: " string, NVMEV_DRV_NAME, ##args)
+#define NVMEV_ERROR(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
 #ifdef CONFIG_NVMEV_DEBUG

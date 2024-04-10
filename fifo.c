@@ -35,6 +35,7 @@ int rb_push(struct ring_buffer *rb, struct cmt_struct *data) {
     //spin_lock_irqsave(&rb->lock, flags);
 
     if (rb_is_full(rb)) {
+        NVMEV_ASSERT(false);
         //spin_unlock_irqrestore(&rb->lock, flags);
         return -1; // Buffer is full
     }
@@ -62,8 +63,8 @@ struct cmt_struct *rb_pop(struct ring_buffer *rb) {
     ret = rb->buffer[rb->tail];
     rb->tail = (rb->tail + 1) % RING_BUFFER_SIZE;
 
-    NVMEV_INFO("Popping CMT IDX %u from %d\n", 
-                 ((struct cmt_struct*) ret)->idx, rb->tail);
+    //NVMEV_ERROR("Popping CMT IDX %u from %d\n", 
+                 //((struct cmt_struct*) ret)->idx, rb->tail);
 
     //spin_unlock_irqrestore(&rb->lock, flags);
     return ret; // Success

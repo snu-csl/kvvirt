@@ -68,7 +68,7 @@ void ssd_init_params(struct ssdparams *spp, uint64_t capacity, uint32_t nparts)
 	uint64_t blk_size, total_size;
 
     capacity = capacity - (4096LU << 20);
-    //capacity = 64LU << 20;
+    capacity = 64LU << 20;
 
 	spp->secsz = 512;
 	spp->secs_per_pg = PAGESIZE / 512;

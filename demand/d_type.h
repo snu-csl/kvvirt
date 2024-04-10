@@ -50,7 +50,7 @@ typedef enum {
 } hash_cmp_t;
 
 typedef enum {
-	CLEAN, DIRTY
+	CLEAN, DIRTY, C_CANDIDATE, D_CANDIDATE
 } cmt_state_t;
 
 typedef enum {

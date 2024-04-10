@@ -34,16 +34,17 @@ atomic_t gcing;
  */
 struct demand_shard* __fast_fill_shard;
 
-struct victim_buffer {
-    struct cmt_struct* cmt[131072];
-    int head;
-    int tail;
-    spinlock_t lock;
-};
-static struct victim_buffer vb;
-
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
 				 struct buffer *write_buffer, unsigned int buffs_to_release);
+
+void __warn_not_found(char* key, uint8_t klen) {
+    char k[255];
+
+    memcpy(k, key, klen);
+    k[klen] = '\0';
+
+    NVMEV_DEBUG("Key %s (%llu) not found.\n", k, *(uint64_t*) k);
+}
 
 static inline unsigned long long __get_wallclock(void)
 {
@@ -627,6 +628,9 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     shard->fastmode = false;
 
     shard->offset = 0;
+
+    atomic_set(&shard->candidates, 0);
+    atomic_set(&shard->have_victims, 0);
 
 	print_demand_stat(&d_stat);
 }
@@ -2277,9 +2281,6 @@ again:
                 PPA_TO_PGA(pgidx, cmt->g_off));
 
     oob[pgidx][offset] = ((uint64_t) len << 32) | IDX2LPA(idx);
-    //for(int i = (offset + 1); i < offset + len; i++) {
-    //    oob[pgidx][i] = UINT_MAX;
-    //}
 
     gcd->offset += len;
 }
@@ -2354,6 +2355,8 @@ again:
          * in __store take precedence over GC copies.
          */
         atomic_cmpxchg(&cmt->pt[pos].ppa, before, grain);
+    } else {
+        NVMEV_ASSERT(false);
     }
 
     out[out_idx] = (struct lpa_len_ppa) {lpa, grain};
@@ -2512,22 +2515,11 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  * A grain containing live LPA to PPA mapping information.
                  */
 
-                if(oob[pgidx][i] == UINT_MAX) {
-                    NVMEV_ERROR("OOB was UINT_MAX for PGIDX %llu grain %d\n",
-                                 pgidx, i);
-                    NVMEV_ASSERT(false);
-                    continue;
-                }
-
                 uint32_t lpa = __lpa_from_oob(oob[pgidx][i]);
                 uint32_t idx = IDX(lpa);
 
-                if(idx == 0) {
-                    NVMEV_ERROR("IDX was 0 for PGIDX %llu grain %d\n",
-                                 pgidx, i);
-                }
-
-                NVMEV_ASSERT(idx != 0);
+                NVMEV_ASSERT(oob[pgidx][i] != UINT_MAX);
+                NVMEV_ASSERT(idx > 0);
 
                 //NVMEV_INFO("Taking CMT IDX %u in GC\n", idx);
                 struct cmt_struct *cmt;
@@ -2591,45 +2583,72 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 //struct cmt_struct *cmt = cache->member.cmt[IDX(lpa)];
                 //atomic_inc(&cmt->outgoing);
 
-                if(!cmt->pt) {
-                    //NVMEV_ASSERT(!cmt->lru_ptr);
-                    /*
-                     * CMT isn't cached, but bringing it in through the usual
-                     * evict/collect path greatly increases complexity. Skip
-                     * putting it on the regular fifo and don't update
-                     * nr_cached_tentries.
-                     *
-                     * Instead, assume it's stored in some sort of reserved
-                     * area. The limits of the size of this reserved area are
-                     * GRAIN_PER_PAGE * FLASH_PAGE_SIZE, because each grain could
-                     * have a KV pair from a different CMT. With a 32K
-                     * flash and 64B grains, that's 512 pages, which is 4MB.
-                     */
-                    if(!__shadow_read(cache, atomic_read(&cmt->t_ppa))) {
-                        struct ppa p = ppa_to_struct(spp, atomic_read(&cmt->t_ppa));
-                        struct nand_cmd gcr = {
-                            .type = GC_IO,
-                            .cmd = NAND_READ,
-                            .stime = 0,
-                            .xfer_size = spp->pgsz,
-                            .interleave_pci_dma = false,
-                            .ppa = &p,
-                        };
-                        ssd_advance_nand(shard->ssd, &gcr);
-                    }
-                    cmt->pt = (struct pt_struct*) cmt->pt_mem;
-                    shadow_idx[shadow_idx_idx++] = cmt->idx;
-                }
+               if(__valid_mapping(shard, lpa, grain)) {
+				   if(!cmt->pt) {
+					   /*
+						* CMT isn't cached, but bringing it in through the usual
+						* evict/collect path greatly increases complexity, because
+						* now we need two threads potentially calling evict at the
+						* same time (instead of the background thread collecting 
+						* victims and foreground thread performing the evictions). 
+						*
+						* Skip putting it on the regular fifo and don't update
+						* nr_cached_tentries.
+						*
+						* Instead, assume it's stored in some sort of reserved
+						* area. The limits of the size of this reserved area are
+						* GRAIN_PER_PAGE * FLASH_PAGE_SIZE, because each grain could
+						* have a KV pair from a different CMT. With a 32K
+						* flash and 64B grains, that's 512 pages, which is 4MB.
+						*/
+					   if(!__shadow_read(cache, atomic_read(&cmt->t_ppa))) {
+						   //NVMEV_ERROR("Added IDX %u to shadow.\n", cmt->idx);
+						   struct ppa p = ppa_to_struct(spp, atomic_read(&cmt->t_ppa));
+						   struct nand_cmd gcr = {
+							   .type = GC_IO,
+							   .cmd = NAND_READ,
+							   .stime = 0,
+							   .xfer_size = spp->pgsz,
+							   .interleave_pci_dma = false,
+							   .ppa = &p,
+						   };
+						   ssd_advance_nand(shard->ssd, &gcr);
+					   }
+					   cmt->pt = (struct pt_struct*) cmt->pt_mem;
+					   shadow_idx[shadow_idx_idx++] = cmt->idx;
+				   }
 
-                if(__valid_mapping(shard, lpa, grain)) {
                     uint32_t pos = UINT_MAX;
                     struct pt_struct pte = __lpa_to_pte(shard, cmt, lpa, &pos);
+
+					//NVMEV_ERROR("Got valid mapping from IDX %u\n", cmt->idx);
+
                     if(atomic_read(&pte.ppa) != grain) {
-                        NVMEV_INFO("IDX %u LPA %llu grain %llu PPA %llu modified during GC. "
-                                   "New grain %u OOB len %u. Skipping!\n", 
-                                cmt->idx, lpa, grain, G_IDX(grain), cmt->pt[pos].ppa,
-                    __glen_from_oob(oob[G_IDX(cmt->pt[pos].ppa)][G_OFFSET(cmt->pt[pos].ppa)]));
+                        //NVMEV_ERROR("IDX %u LPA %llu grain %llu PPA %llu modified during GC.",
+                        //            cmt->idx, lpa, grain, G_IDX(grain));
 #ifndef GC_STANDARD
+                        /*
+                         * We enter this path because while we were
+                         * garbage collecting this line, this pair was
+                         * updated in __store. This means it created an 
+                         * invalid mapping entry for this line, even though
+                         * it's currently being garbage collected. We only
+                         * collect invalid mapping entries right at the
+                         * beginning of GC, and thus we miss this newly created
+                         * entry.
+                         *
+                         * The next time we garbage collect this line, this
+                         * incorrect invalid mapping entry will be there.
+                         * In a rare case, it's possible that the exact same
+                         * LPA goes to the exact same grain, and if its valid
+                         * the copy would be skipped.
+                         *
+                         * Re-record this invalid mapping entry so it's seen 
+                         * as a duplicate when we call get_inv_mappings the 
+                         * next time this line is garbage collected.
+                         * Duplicates are seen as invalid entries and are
+                         * removed from the invalid mapping search table.
+                         */
                         __record_inv_mapping(shard, lpa, grain, NULL);
 #endif
                     } else {
@@ -2668,6 +2687,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     struct cmt_struct *cmt;
     for(int i = 0; i < shadow_idx_idx; i++) {
         cmt = cache->get_cmt(cache, shadow_idx[i] * EPP);
+		//NVMEV_ERROR("Removed IDX %u from shadow.\n", cmt->idx);
         cmt->pt = NULL;
         atomic_set(&cmt->outgoing, 0);
     }
@@ -2906,7 +2926,7 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
     clean_first_half = clean_second_half = clean_third_half = mapping_searches = 0;
     clearing = copying = clear_count = 0;
 
-    NVMEV_INFO("Leaving GC for line %d \n", victim_line->id);
+    NVMEV_ERROR("Leaving GC for line %d \n", victim_line->id);
 
     //schedule_internal_operation_cb(UINT_MAX,  0,
     //                                NULL, 0, 0,
@@ -2917,12 +2937,140 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
 	return nsecs_latest;
 }
 
-static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *req,
-                            uint64_t stime, uint64_t *credits);
-static uint32_t __collect_victims(struct demand_shard *shard, uint32_t target_g);
+#define VICTIM_RB_SZ 131072
+#define MAX_SEARCH 131072
 
-atomic_t need_new;
-atomic_t have_victims;
+static inline uint32_t __entries_to_grains(struct demand_shard *shard,
+                                           struct cmt_struct *cmt) {
+    struct ssdparams *spp;
+    uint32_t cnt;
+    uint32_t ret;
+
+    spp = &shard->ssd->sp;
+#ifdef GC_STANDARD
+    return GRAIN_PER_PAGE;
+#else
+    cnt = cmt->cached_cnt;
+    ret = (cnt * ENTRY_SIZE) / GRAINED_UNIT;
+
+    if((cnt * ENTRY_SIZE) % GRAINED_UNIT) {
+        ret++;
+    }
+
+    return ret > cmt->len_on_disk ? ret : cmt->len_on_disk;
+#endif
+}
+
+void __mark_dirty(struct cmt_struct *cmt) {
+    if(cmt->state == C_CANDIDATE) {
+        cmt->state = D_CANDIDATE;
+    } else if(cmt->state != D_CANDIDATE) {
+        NVMEV_ERROR("Marking CMT %u dirty.\n", cmt->idx);
+        cmt->state = DIRTY;
+    }
+}
+
+static void __collect_victims(struct demand_shard *shard, uint32_t target_g) {
+    struct demand_cache *cache;
+    struct cache_member *cmbr;
+    struct cmt_struct *victim;
+    uint32_t g_len;
+    bool all_clean;
+    int dist;
+    atomic_t *candidates, *have_victims;
+
+    cache = shard->cache;
+    cmbr = &cache->member;
+    all_clean = true;
+    candidates = &shard->candidates;
+    have_victims = &shard->have_victims;
+
+    dist = vb.head - vb.tail;
+    if(dist < 0) {
+        dist += VICTIM_RB_SZ;
+    }
+
+    if(dist > (GRAIN_PER_PAGE * 10)) {
+        atomic_set(have_victims, 1);
+        NVMEV_ERROR("Set victims because dist was %d\n", dist);
+        return;
+    }
+
+again:
+	victim = fifo_dequeue(cmbr->fifo);
+
+    for(int i = 0; i < MAX_SEARCH; i++) {
+        if(!victim) {
+            if(i > 0) {
+                NVMEV_ERROR("Exiting collection because no victim i %d head %d.\n", 
+                            i, vb.head);
+            }
+            break;
+        }
+
+        while(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
+            cpu_relax();
+        }
+
+        NVMEV_ASSERT(victim->state != C_CANDIDATE &&
+                     victim->state != D_CANDIDATE);
+
+        if(victim->state == DIRTY) {
+            all_clean = false;
+
+            /*
+             * After being selected for eviction, a CMT can be expanded.
+             * This means that the current count we have here of how many
+             * grains we are evicting will be incorrect.
+             *
+             * Mark the victim as CANDIDATE, so that during expansion
+             * we can update the count accordingly.
+             */
+            victim->state = D_CANDIDATE;
+        } else {
+            victim->state = C_CANDIDATE;
+        }
+
+        g_len = __entries_to_grains(shard, victim);
+
+#ifdef GC_STANDARD
+        NVMEV_ASSERT(g_len == GRAIN_PER_PAGE);
+#endif
+
+        NVMEV_ASSERT(victim);
+
+        vb.cmt[vb.head] = victim;
+        vb.head = (vb.head + 1) % VICTIM_RB_SZ;
+
+        atomic_add(g_len, candidates);
+
+        NVMEV_ERROR("Added IDX %u len %u to head %u. Count is now %u\n", 
+                     victim->idx, g_len, vb.head - 1, atomic_read(candidates));
+
+        if(atomic_read(candidates) >= target_g) {
+            atomic_set(&victim->outgoing, 0);
+            break;
+        }
+    
+        atomic_set(&victim->outgoing, 0);
+        victim = fifo_dequeue(cmbr->fifo);
+    }
+
+    if(atomic_read(candidates) < target_g) {
+        if(kthread_should_stop()) {
+            return;
+        }
+
+        cond_resched();
+        goto again;
+    }
+
+    NVMEV_ERROR("Really got %u victims u head %d.\n", 
+                 atomic_read(candidates), vb.head);
+    atomic_set(have_victims, 1);
+
+    return;
+}
 
 int bg_ev_t(void *data) {
     struct demand_shard *shard;
@@ -2930,6 +3078,7 @@ int bg_ev_t(void *data) {
     struct cache_member *cmbr;
     struct write_flow_control *wfc;
     uint32_t threshold;
+    atomic_t *have_victims;
 
     NVMEV_INFO("Started background eviction thread.\n");
 
@@ -2938,18 +3087,13 @@ int bg_ev_t(void *data) {
     cmbr = &cache->member;
     wfc = &(shard->wfc);
     threshold = cache->env.max_cached_tentries >> 2;
+    have_victims = &shard->have_victims;
 
     while(!kthread_should_stop()) {
-        if(atomic_read(&have_victims) == 0) {
+        if(atomic_read(have_victims) == 0) {
+            atomic_set(&shard->candidates, 0);
             __collect_victims(shard, GRAIN_PER_PAGE);
         }
-        //while(atomic_read(&need_new) == 1) {
-        //    __evict_one(shard, NULL, 0, NULL);
-        //} 
-
-        //while(atomic_cmbr->nr_cached_tentries >= threshold) {
-        //    __evict_one(shard, NULL, 0, NULL);
-        //} 
         cond_resched();
     }
 
@@ -3057,27 +3201,6 @@ struct pte_e_args {
     uint32_t len;
 };
 
-static inline uint32_t __entries_to_grains(struct demand_shard *shard,
-                                           struct cmt_struct *cmt) {
-    struct ssdparams *spp;
-    uint32_t cnt;
-    uint32_t ret;
-
-    spp = &shard->ssd->sp;
-#ifdef GC_STANDARD
-    return GRAIN_PER_PAGE;
-#else
-    cnt = cmt->cached_cnt;
-    ret = (cnt * ENTRY_SIZE) / GRAINED_UNIT;
-
-    if((cnt * ENTRY_SIZE) % GRAINED_UNIT) {
-        ret++;
-    }
-
-    return ret > cmt->len_on_disk ? ret : cmt->len_on_disk;
-#endif
-}
-
 #ifndef GC_STANDARD
 struct expand_w_args {
     struct demand_shard *shard;
@@ -3128,9 +3251,9 @@ static void __expand_map_entry(struct demand_shard *shard,
     oob = shard->oob;
     t_ppa = atomic_read(&cmt->t_ppa);
 
-    //NVMEV_ERROR("Invalidating IDX %u PPA %u grain %llu len %u before expand.\n", 
-    //            cmt->idx, t_ppa, PPA_TO_PGA(t_ppa, cmt->g_off),
-    //            cmt->len_on_disk);
+    NVMEV_ERROR("Invalidating IDX %u PPA %u grain %llu len %u before expand.\n", 
+                cmt->idx, t_ppa, PPA_TO_PGA(t_ppa, cmt->g_off),
+                cmt->len_on_disk);
     mark_grain_invalid(shard, PPA_TO_PGA(t_ppa, cmt->g_off), cmt->len_on_disk);
 
     /*
@@ -3159,12 +3282,23 @@ skip:
     cmt->pt[cmt->cached_cnt].ppa = pte.ppa;
     cmt->mems[cmt->cached_cnt] = mem;
     cmt->cached_cnt++;
-    cmt->state = DIRTY;
 
     atomic_set(&cmt->t_ppa, ppa);
     cmt->g_off = 0;
     cmt->len_on_disk++;
     cmbr->nr_cached_tentries++;
+
+    if(cmt->state == C_CANDIDATE) {
+        int out = atomic_fetch_inc(&shard->candidates);
+        cmt->state = D_CANDIDATE;
+        NVMEV_ERROR("Expanding IDX %u was a clean candidate! %d\n", cmt->idx, out);
+    } else if(cmt->state == D_CANDIDATE) {
+        int out = atomic_fetch_inc(&shard->candidates);
+        NVMEV_ERROR("Expanding IDX %u was a dirty candidate! %d\n", cmt->idx, out);
+    } else {
+        NVMEV_ERROR("Expanding IDX %u was clean!\n", cmt->idx);
+        cmt->state = DIRTY;
+    }
 
     NVMEV_INFO("Moved IDX %u to PPA %u in expansion.\n", 
                 cmt->idx, ppa);
@@ -3188,13 +3322,12 @@ static void __update_map(struct demand_shard *shard, struct cmt_struct *cmt,
     struct cache_member *cmbr = &cache->member;
 
     NVMEV_ASSERT(cmt->pt);
+    __mark_dirty(cmt);
 #ifdef GC_STANDARD
     cmt->pt[OFFSET(lpa)] = pte;
     cmt->mems[OFFSET(lpa)] = mem;
-    cmt->state = DIRTY;
     //lru_update(cmbr->lru, cmt->lru_ptr);
 #else
-    cmt->state = DIRTY;
     if(pos != UINT_MAX) {
         lpa_t old_l;
         ppa_t old_p;
@@ -3302,151 +3435,6 @@ struct pt_struct __lpa_to_pte(struct demand_shard *shard,
 #endif
 }
 
-#define MAX_SEARCH 256
-struct cmt_struct *search[MAX_SEARCH];
-struct cmt_struct *my_search[MAX_SEARCH];
-int search_cnt = 0;
-
-static uint32_t __collect_victims(struct demand_shard *shard, uint32_t target_g) {
-    struct demand_cache *cache;
-    struct ssdparams *spp;
-    struct cache_member *cmbr;
-    uint32_t idx, count, g_len;
-    struct cmt_struct *victim, *prev_victim;
-    bool all_clean = true;
-    int dist;
-
-    cache = shard->cache;
-    spp = &shard->ssd->sp;
-    cmbr = &cache->member;
-    idx = 0;
-    count = 0;
-
-    uint64_t total = 0;
-
-    dist = vb.head - vb.tail;
-    if(dist < 0) {
-        dist += 131072;
-    }
-
-    if(dist > (GRAIN_PER_PAGE * 10)) {
-        atomic_set(&have_victims, 1);
-        return 0;
-    }
-
-	//victim = lru_peek(cmbr->lru);
-	victim = fifo_dequeue(cmbr->fifo);
-
-    for(int i = 0; i < MAX_SEARCH; i++) {
-        if(!victim) {
-            //NVMEV_ERROR("Exiting eviction because no victim i %d.\n", i);
-            break;
-        }
-
-        while(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
-            cpu_relax();
-        }
-
-        //if(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
-        //    victim->lru_ptr = fifo_enqueue(cmbr->fifo, victim);
-        //    NVMEV_ERROR("Set LRU PTR for IDX %u in collect.\n", victim->idx);
-        //    continue;
-        //}
-
-        if(victim->state == DIRTY) {
-            all_clean = false;
-        }
-
-        g_len = __entries_to_grains(shard, victim);
-        total += g_len;
-
-#ifdef GC_STANDARD
-        NVMEV_ASSERT(g_len == GRAIN_PER_PAGE);
-#endif
-
-        //NVMEV_ERROR("Got %u grains for IDX %u in collection.\n",
-        //            g_len, victim->idx);
-        NVMEV_ASSERT(victim);
-
-        //if(!victim->lru_ptr) {
-        //    NVMEV_ERROR("WTF!! IDX %u ptr %p ppa %u\n", 
-        //                 victim->idx, victim->lru_ptr, 
-        //                 atomic_read(&victim->t_ppa));
-        //}
-
-        //NVMEV_ASSERT(victim->lru_ptr);
-
-        if(g_len + count <= target_g) {
-            vb.cmt[vb.head] = victim;
-            vb.head = (vb.head + 1) % 131072;
-            //NVMEV_ERROR("Set head to %d\n", vb.head);
-            idx++;
-            //my_search[idx++] = victim;
-            count += g_len;
-            //NVMEV_ERROR("We added it to count. Count is now %u\n", count);
-            //cmbr->nr_cached_tentries -= g_len;
-        } else {
-            //victim->lru_ptr = 
-            fifo_enqueue(cmbr->fifo, victim);
-            //NVMEV_ERROR("Set LRU PTR for IDX %u in collect 2.\n", victim->idx);
-            atomic_set(&victim->outgoing, 0);
-            break;
-        }
-
-        if(count >= target_g) {
-            atomic_set(&victim->outgoing, 0);
-            break;
-        }
-    
-        atomic_set(&victim->outgoing, 0);
-        victim = fifo_dequeue(cmbr->fifo);
-        //victim = (struct cmt_struct *)lru_prev(cmbr->lru, victim->lru_ptr);
-    }
-
-    NVMEV_INFO("Removing %u entries from the LRU. AV glen %llu\n", idx,
-                total / idx);
-
-    for(int i = 0 ; i < idx; i++) {
-        //NVMEV_ASSERT(my_search[i]->lru_ptr);
-
-        //while(atomic_read(&my_search[i]->outgoing) > 0) {
-        //    cpu_relax();
-        //}
-
-        //if(all_clean) {
-        //    my_search[i]->pt = NULL;
-        //    atomic_set(&my_search[i]->outgoing, 0);
-        //}
-
-        //lru_delete(cmbr->lru, my_search[i]->lru_ptr);
-        //my_search[i]->lru_ptr = NULL;
-        //NVMEV_ERROR("Cleared LRU PTR for IDX %u in collect 2.\n", 
-        //            my_search[i]->idx);
-    }
-
-    //for (int i = 0; i < MAX_SEARCH; i++) {
-    //    if(i < idx) {
-    //        NVMEV_ASSERT(my_search[i]);
-    //    }
-
-    //    search[i] = my_search[i];
-    //    my_search[i] = 0x0;
-    //}
-
-    //for (int i = 0; i < idx; i++) {
-    //    NVMEV_ASSERT(search[i]);
-    //}
-
-    //search_cnt = idx;
-
-    if(idx > 0) {
-        //NVMEV_ERROR("Really got %u victims count %u.\n", idx, count);
-        atomic_set(&have_victims, 1);
-    }
-
-    return all_clean ? UINT_MAX : idx;
-}
-
 static uint64_t __stime_or_clock(uint64_t stime) {
     uint64_t clock = __get_wallclock();
     return clock > stime ? clock : stime;
@@ -3460,7 +3448,7 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     struct cache_stat *cstat;
     struct cmt_struct* victim;
     uint64_t **oob;
-    bool got_ppa = false;
+    bool got_ppa = false, got_lock = false;
     uint32_t grain = 0, g_len = 0, cnt = 0;
     uint32_t t_ppa;
     struct ppa p;
@@ -3468,6 +3456,7 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     bool all_clean = true;
     uint64_t nsecs_completed = 0;
     uint32_t evicted = 0;
+    atomic_t *have_victims;
 
 	uint64_t start = 0, end = 0;
 
@@ -3476,72 +3465,105 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     spp = &shard->ssd->sp;
     cstat = &cache->stat;
     oob = shard->oob;
+    have_victims = &shard->have_victims;
 
 	start = ktime_get();
-    while(atomic_cmpxchg(&have_victims, 1, 0) != 1) {
+    while(atomic_cmpxchg(have_victims, 1, 2) != 1) {
         cpu_relax();
     }
     cnt = MAX_SEARCH; // __collect_victims(shard, GRAIN_PER_PAGE);
     end = ktime_get();
 
     if(ktime_to_us(end) - ktime_to_us(start) > 5) {
-        NVMEV_ERROR("Collecting %u victims took %llu %d cached\n", cnt, 
-                ktime_to_us(end) - ktime_to_us(start), 
-                cmbr->nr_cached_tentries);
+        //NVMEV_ERROR("Collecting %u victims took %llu %d cached\n", cnt, 
+        //        ktime_to_us(end) - ktime_to_us(start), 
+        //        cmbr->nr_cached_tentries);
     } 
 
-    if(cnt == UINT_MAX) {
-        cstat->clean_evict++;
-        return nsecs_completed;
-    }
-
     int i;
-    for(i = 0; i < cnt; i++) {
+    while(cmbr->nr_cached_tentries > (cache->env.max_cached_tentries - GRAIN_PER_PAGE)) {
+        NVMEV_ASSERT(grain <= GRAIN_PER_PAGE);
+
         if(evicted >= GRAIN_PER_PAGE) {
             break;
         }
 
-        victim = vb.cmt[vb.tail]; // search[i];
+        //for(i = 0; i < cnt; i++) {
+        if(grain == GRAIN_PER_PAGE) {
+            NVMEV_ERROR("EVICTION: we wrote a full page.\n");
+new_page:
+            //NVMEV_ERROR("Here PPA %u\n", ppa);
+            if(grain < GRAIN_PER_PAGE) {
+                mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+                mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+
+                for(int i = grain; i < GRAIN_PER_PAGE; i++) {
+                    oob[ppa][i] = UINT_MAX;
+                }
+            }
+
+            grain = 0;
+            got_ppa = false;
+            NVMEV_ERROR("Reset variables %d %d.\n", 
+                         cmbr->nr_cached_tentries,
+                         cache->env.max_cached_tentries);
+        }
+
+        NVMEV_ASSERT(vb.tail < vb.head);
+        victim = vb.cmt[vb.tail]; 
 
         if(!victim) {
-            NVMEV_ERROR("NULL victim!\n");
+            NVMEV_ERROR("NULL victim at tail %d!\n", vb.tail);
+            NVMEV_ASSERT(false);
             break;
         }
 
-        while(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
-            cpu_relax();
+        if(victim->state != C_CANDIDATE && victim->state != D_CANDIDATE) {
+            NVMEV_ERROR("State is %d\n", victim->state);
         }
+        NVMEV_ASSERT(victim->state == C_CANDIDATE || 
+                     victim->state == D_CANDIDATE);
+
+        if(!got_lock) {
+            cache->get_cmt(cache, victim->idx * EPP);
+            got_lock = true;
+        }
+
+        //while(atomic_cmpxchg(&victim->outgoing, 0, 1) != 0) {
+        //    cpu_relax();
+        //}
 
         g_len = __entries_to_grains(shard, victim);
-        if(victim->state == DIRTY && grain + g_len > GRAIN_PER_PAGE) {
-            //NVMEV_ERROR("IDX %u was too big! Done.\n", 
-            //        victim->idx);
-            atomic_set(&victim->outgoing, 0);
-            goto out;
+        if(victim->state == D_CANDIDATE && grain + g_len > GRAIN_PER_PAGE) {
+            NVMEV_ERROR("IDX %u was too big! New page!\n", 
+                    victim->idx);
+            goto new_page;
         }
 
-        vb.tail = (vb.tail + 1) % 131072;
-        //NVMEV_ERROR("Set tail to %d\n", vb.tail);
+        vb.tail = (vb.tail + 1) % VICTIM_RB_SZ;
 
         t_ppa = atomic_read(&victim->t_ppa);
 
         NVMEV_ASSERT(victim);
 
         if(!victim->pt) {
-            NVMEV_ERROR("NULL at tail %d\n", vb.tail - 1);
+            NVMEV_ERROR("IDX %u NULL at tail %d\n", victim->idx, vb.tail - 1);
+            NVMEV_ASSERT(false);
+            atomic_set(&victim->outgoing, 0);
+            continue;
         }
 
-        NVMEV_ASSERT(victim->pt);
-        //NVMEV_ERROR("Cache is full. Got victim with IDX %u\n", victim->idx);
+        NVMEV_ERROR("Got victim with IDX %u len %u from tail %d in eviction.\n", 
+                     victim->idx, g_len, vb.tail - 1);
 
-        if (victim->state == DIRTY) {
-            bool first = g_len == victim->len_on_disk;
+        if (victim->state == D_CANDIDATE) {
+            bool same_size = g_len == victim->len_on_disk;
 #ifdef GC_STANDARD
-            NVMEV_ASSERT(first);
+            NVMEV_ASSERT(same_size);
 #endif
-            if(first) { 
+            if(same_size) { 
                 /*
-                 * The first holds true if this mapping table entry hasn't expanded.
+                 * same_size holds true if this mapping table entry hasn't expanded.
                  * If it previously expanded, the grains that it mapped too
                  * were already marked invalid, and the above condition will
                  * be false as len_on_disk will be greater.
@@ -3605,7 +3627,6 @@ skip:
             NVMEV_DEBUG("Set the length on disk for IDX %u to %u.\n", victim->idx,
                     g_len);
 #endif
-            cmbr->nr_cached_tentries -= g_len;
             /*
              * The IDX is used during GC so that we know which CMT entry
              * to update.
@@ -3626,16 +3647,10 @@ skip:
             mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), g_len);
 
             atomic_set(&victim->t_ppa, ppa);
-            victim->state = CLEAN;
 
             grain += g_len;
-            evicted += g_len;
 
-            //victim->lru_ptr = NULL;
-            //NVMEV_ERROR("Cleared LRU PTR for IDX %u in evict.\n", 
-            //            victim->idx);
             victim->pt = NULL;
-
             //NVMEV_ERROR("Evicted DIRTY mapping entry IDX %u in %s.\n",
             //        victim->idx, __func__);
             all_clean = false;
@@ -3643,15 +3658,16 @@ skip:
         } else {
             //NVMEV_ERROR("Evicted CLEAN mapping entry IDX %u in %s.\n",
             //        victim->idx, __func__);
-            cmbr->nr_cached_tentries -= g_len;
-            evicted += g_len;
-            //victim->lru_ptr = NULL;
-            //NVMEV_ERROR("Cleared LRU PTR for IDX %u in evict 2.\n", 
-            //            victim->idx);
             victim->pt = NULL;
             cstat->clean_evict++;
         }
 
+        evicted += g_len;
+        cmbr->nr_cached_tentries -= g_len;
+
+        victim->state = CLEAN;
+
+        got_lock = false;
         atomic_set(&victim->outgoing, 0);
     }
     end = ktime_get();
@@ -3659,7 +3675,7 @@ skip:
     //            ktime_to_us(end) - ktime_to_us(start),
     //            cmbr->nr_cached_tentries);
 
-out:
+//out:
     if(!all_clean && grain < GRAIN_PER_PAGE) {
         /*
          * We couldn't fill a page with mapping entries. Clear the rest of
@@ -3693,8 +3709,9 @@ out:
         }
     }
 
-    //NVMEV_ERROR("Evicted %d items %d cached.\n", i, cmbr->nr_cached_tentries);
-    atomic_set(&have_victims, 0);
+    NVMEV_ERROR("Evicted %d items %d cached tail %d.\n", 
+                 evicted, cmbr->nr_cached_tentries, vb.tail);
+    atomic_set(have_victims, 0);
 
     return nsecs_completed;
 }
@@ -3732,7 +3749,6 @@ uint64_t __get_one(struct demand_shard *shard, struct cmt_struct *cmt,
          * If this wasn't the first access of this mapping
          * table page, we need to read it from disk.
          */
-
         if(!shard->fastmode) {
             struct ppa p = ppa_to_struct(spp, t_ppa);
             struct nand_cmd srd = {
@@ -3775,7 +3791,8 @@ uint64_t __get_one(struct demand_shard *shard, struct cmt_struct *cmt,
 
     //cmt->lru_ptr = 
     fifo_enqueue(cmbr->fifo, (void*) cmt);
-    //NVMEV_ERROR("Added IDX %u in get_one.\n", cmt->idx);
+    NVMEV_ERROR("Added IDX %u len %u in get_one.\n", 
+                 cmt->idx, cmt->len_on_disk);
     cmbr->nr_cached_tentries += cmt->len_on_disk;
 
     *missed = true;
@@ -3859,7 +3876,14 @@ static uint64_t __read_and_compare(struct demand_shard *shard, ppa_t grain,
 static inline uint32_t __vlen_from_value(uint8_t* mem) {
     uint8_t klen = *(uint8_t*) (mem);
     uint32_t vlen = *(uint32_t*) (mem + KLEN_MARKER_SZ + klen);
+    NVMEV_ASSERT(vlen > 0);
     return vlen;
+}
+
+uint64_t __release_map(void *voidargs, uint64_t*, uint64_t*) {
+    atomic_t *outgoing = (atomic_t*) voidargs;
+    atomic_dec(outgoing);
+    return 0;
 }
 
 static bool __read(struct nvmev_ns *ns, struct nvmev_request *req, 
@@ -3914,17 +3938,21 @@ static bool __read(struct nvmev_ns *ns, struct nvmev_request *req,
     h.lpa = 0;
 
     uint64_t **oob = shard->oob;
-lpa:
-    lpa_t lpa = get_lpa(shard->cache, key, &h);
-    h.lpa = lpa;
 
     struct demand_cache *cache = shard->cache;
-
     while(cgo_is_full(cache)) {
         nsecs_completed = __evict_one(shard, req, nsecs_latest, &credits);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-        d_stat.t_write_on_write += spp->pgsz;
+        d_stat.t_write_on_read += spp->pgsz;
     }
+
+    consume_write_credit(shard, credits);
+    check_and_refill_write_credit(shard);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
+
+lpa:
+    lpa_t lpa = get_lpa(shard->cache, key, &h);
+    h.lpa = lpa;
 
     struct cache_member *cmbr = &cache->member;
     struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
@@ -3943,9 +3971,9 @@ lpa:
             nsecs_latest = local_clock();
         }
 
-        //NVMEV_INFO("Key %s (%llu) not found.\n", 
-        //        (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key);
+        __warn_not_found(key.key, key.len);
 
+        NVMEV_ASSERT(false);
         status = KV_ERR_KEY_NOT_EXIST;
         goto out;
     }
@@ -3954,13 +3982,8 @@ lpa:
         NVMEV_INFO("Key %s (%llu) tried to read missing CMT entry IDX %u.\n", 
                 (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key, cmt->idx);
         h.cnt++;
-
         goto lpa;
     }
-
-    //while(atomic_read(&cmt->outgoing) == 1) {
-    //    cpu_relax();
-    //}
 
 cache:
     if(__cache_hit(cmt, lpa)) { 
@@ -3993,16 +4016,21 @@ cache:
 
                 pos = UINT_MAX;
                 atomic_set(&cmt->outgoing, 0);
-                //missed = true;
                 goto lpa;
             }
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
             len = __vlen_from_value(old_mem);
+            NVMEV_ASSERT(len > 0);
+
             if(!for_del) {
                 cmd->kv_retrieve.value_len = len;
                 cmd->kv_retrieve.rsvd = (uint64_t) old_mem;
+
+				uint32_t _len = *(uint32_t*) (old_mem + 9);
+                NVMEV_ASSERT(len > 0);
+
                 //cmd->kv_retrieve.rsvd = ((uint64_t) pte.ppa) * GRAINED_UNIT;
             } else {
                 cmd->kv_retrieve.rsvd = U64_MAX;
@@ -4018,6 +4046,7 @@ cache:
                 NVMEV_ERROR("Buffer with size %u too small for value %u\n",
                              vlen, len);
                 cmd->kv_retrieve.rsvd = U64_MAX;
+                NVMEV_ASSERT(false);
                 status = KV_ERR_BUFFER_SMALL;
             } else {
                 status = NVME_SC_SUCCESS;
@@ -4026,6 +4055,7 @@ cache:
             NVMEV_INFO("Miss LPA %u key %llu\n", lpa, *(uint64_t*) key.key);
             cmd->kv_retrieve.value_len = 0;
             cmd->kv_retrieve.rsvd = U64_MAX;
+            NVMEV_ASSERT(false);
             status = KV_ERR_KEY_NOT_EXIST;
         }
 
@@ -4037,12 +4067,6 @@ cache:
 
         goto out;
     } else if(t_ppa != UINT_MAX) {
-        //if (cgo_is_full(cache)) {
-        //    nsecs_completed = __evict_one(shard, req, nsecs_latest, &credits);
-        //    nsecs_latest = max(nsecs_latest, nsecs_completed);
-        //    d_stat.t_write_on_read += spp->pgsz;
-        //}
-
         nsecs_completed = __get_one(shard, cmt, false, nsecs_latest, &missed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 
@@ -4051,15 +4075,7 @@ cache:
     }
 
 out:
-    atomic_set(&cmt->outgoing, 0);
-
-    if(h.cnt > 500) {
-        NVMEV_ERROR("NOOOOOO\n");
-    }
-
-    consume_write_credit(shard, credits);
-    check_and_refill_write_credit(shard);
-    nsecs_latest = max(nsecs_latest, nsecs_completed);
+    //atomic_set(&cmt->outgoing, 0);
 
     if(status == 0) {
         //NVMEV_INFO("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
@@ -4084,9 +4100,11 @@ out:
 
     d_stat.read_req_cnt++;
 
-    ret->nsecs_target = nsecs_latest;
-    ret->status = status;
-    return true;
+	ret->cb = __release_map;
+	ret->args = &cmt->outgoing;
+	ret->nsecs_target = nsecs_latest;
+	ret->status = status;
+	return true;
 }
 
 char kbuf[255];
@@ -4143,12 +4161,6 @@ void __mark_early(uint64_t grain, uint8_t klen, char* key) {
 
     memcpy(nvmev_vdev->ns[0].mapped + off, &klen, sizeof(klen));
     memcpy(nvmev_vdev->ns[0].mapped + off + sizeof(klen), key, klen);
-}
-
-uint64_t __release_map(void *voidargs, uint64_t*, uint64_t*) {
-    atomic_t *outgoing = (atomic_t*) voidargs;
-    atomic_dec(outgoing);
-    return 0;
 }
 
 static bool __store(struct nvmev_ns *ns, struct nvmev_request *req, 
@@ -4288,9 +4300,9 @@ again:
     mark_grain_valid(shard, grain, glen);
     credits += glen;
 
-    if(!shard->fastmode) {
-        __mark_early(grain, klen, cmd->kv_store.key);
-    }
+    //if(!shard->fastmode) {
+    //    __mark_early(grain, klen, cmd->kv_store.key);
+    //}
 
 	shard->offset += vlen & ~(GRAINED_UNIT - 1);
 	if(vlen & (GRAINED_UNIT - 1)) {
@@ -4342,6 +4354,10 @@ lpa:
         d_stat.t_write_on_write += spp->pgsz;
     }
 
+    consume_write_credit(shard, credits);
+    check_and_refill_write_credit(shard);
+    nsecs_latest = max(nsecs_latest, nsecs_completed);
+
     struct cache_member *cmbr = &cache->member;
     //NVMEV_ERROR("Taking CMT IDX %lu in write\n", IDX(lpa));
     struct cmt_struct *cmt = cache->get_cmt(cache, lpa);
@@ -4357,12 +4373,7 @@ lpa:
     if(t_ppa == UINT_MAX) {
         /*
          * Previously unused cached mapping table entry.
-         * Different from the original implementation, we
-         * actually give it a page here when we first see it,
-         * so we have an area of virt's reserved memory to
-         * work with.
          */
-
 skip:
         spin_lock(&ev_spin);
         struct ppa p = get_new_page(shard, MAP_IO);
@@ -4607,7 +4618,7 @@ append:
             //NVMEV_INFO("OW\n");
             mark_grain_invalid(shard, g_from_pte, len);
         } else {
-            pair_mem = kzalloc(vlen, GFP_KERNEL);
+            pair_mem = kzalloc(glen * GRAINED_UNIT, GFP_KERNEL);
             NVMEV_ASSERT(pair_mem);
             if(append) {
                 /*
@@ -4663,11 +4674,7 @@ out:
     d_stat.write_req_cnt++;
 
     //atomic_dec(&cmt->outgoing);
-    consume_write_credit(shard, credits);
-    check_and_refill_write_credit(shard);
-    nsecs_latest = max(nsecs_latest, nsecs_completed);
-
-    //NVMEV_INFO("%s for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n",
+    //NVMEV_ERROR("%s for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n",
     //            append ? "Append" : "Write",
     //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key),
     //            klen, vlen, grain, page, lpa);

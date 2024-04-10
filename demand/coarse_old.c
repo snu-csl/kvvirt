@@ -9,6 +9,7 @@
 
 #include "./interface/interface.h"
 
+#include <linux/jiffies.h> 
 #include <linux/sched/clock.h>
 
 extern struct algorithm __demand;
@@ -46,7 +47,7 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
     _env->max_cached_tpages = shard->dram / spp->pgsz;
-    _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
+    _env->max_cached_tentries = GRAIN_PER_PAGE + 1; // shard->dram / GRAINED_UNIT;
 
 #ifdef DVALUE
     _env->nr_valid_tpages *= GRAIN_PER_PAGE;
@@ -199,8 +200,8 @@ bool cgo_is_hit(struct demand_cache *cache, lpa_t lpa) {
 bool cgo_is_full(struct demand_cache* cache) {
     struct cache_member *cmbr = &cache->member;
 
-    //NVMEV_ERROR("CMT %u cached %u max\n", 
-    //            cmbr->nr_cached_tentries, cache->env.max_cached_tentries);
+    NVMEV_ERROR("CMT %u cached %u max\n", 
+                cmbr->nr_cached_tentries, cache->env.max_cached_tentries);
 
     return (cmbr->nr_cached_tentries >= cache->env.max_cached_tentries);
 }
@@ -227,14 +228,17 @@ struct pt_struct cgo_get_pte(struct demand_shard *shard, lpa_t lpa) {
 struct cmt_struct *cgo_get_cmt(struct demand_cache *cache, lpa_t lpa) {
     struct cache_member *cmbr = &cache->member;
 	struct cmt_struct *c = cmbr->cmt[IDX(lpa)];
+    unsigned long start = jiffies;
 
 	while (atomic_cmpxchg(&c->outgoing, 0, 1) != 0) {
 		cpu_relax();
-	}
 
-    //while(atomic_read(&c->outgoing) > 0) {
-    //    cpu_relax();
-    //}
+		if (time_after(jiffies, start + HZ)) {
+			NVMEV_ERROR("T %d stuck waiting for CMT IDX %u\n", 
+						 current->pid, c->idx);
+			start = jiffies;
+		}
+	}
 
     return c;
 }
