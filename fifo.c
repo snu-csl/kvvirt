@@ -4,7 +4,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-#define RING_BUFFER_SIZE 131072 // Define your required size
+#define RING_BUFFER_SIZE 600000 // Define your required size
 
 struct ring_buffer {
     struct cmt_struct* buffer[RING_BUFFER_SIZE];
