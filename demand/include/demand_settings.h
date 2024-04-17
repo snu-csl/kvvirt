@@ -15,20 +15,7 @@
 
 #ifdef STORE_KEY_FP
 
-#ifdef GC_STANDARD
-#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
 #else
-#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
-#endif
-
-#else
-
-#ifdef GC_STANDARD
-#define ENTRY_SIZE (sizeof(ppa_t))
-#else
-#define ENTRY_SIZE (sizeof(lpa_t) + sizeof(ppa_t))
-#endif
-
 #endif
 
 /* Support variable-sized value. Grain entries of the mapping table as GRAINED_UNIT */

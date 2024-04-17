@@ -135,20 +135,6 @@ static int demand_member_init(struct demand_shard *shard, struct ssd *ssd) {
 
 	mutex_init(&_member->op_lock);
 
-	_member->write_buffer = skiplist_init();
-
-	q_init(&_member->flying_q, env->wb_flush_size);
-	q_init(&_member->blocked_q, env->wb_flush_size);
-	//q_init(&_member->wb_cmt_load_q, d_env.wb_flush_size);
-	q_init(&_member->wb_master_q, env->wb_flush_size);
-	q_init(&_member->wb_retry_q, env->wb_flush_size);
-
-	struct flush_list *fl = (struct flush_list *)kzalloc(sizeof(struct flush_list), GFP_KERNEL);
-	fl->size = 0;
-	fl->list = (struct flush_node *)kzalloc(env->wb_flush_size * 
-                                    sizeof(struct flush_node), GFP_KERNEL);
-	_member->flush_list = fl;
-
 #ifdef HASH_KVSSD
 	_member->max_try = 0;
 #endif

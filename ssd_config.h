@@ -245,7 +245,18 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define PIECE 64
 #endif
 
+typedef uint32_t lpa_t;
+typedef uint32_t ppa_t;
+typedef ppa_t pga_t;
+
+#ifdef GC_STANDARD
+#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
+#else
+#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
+#endif
+
 #define EPP ((PAGESIZE / ENTRY_SIZE)) // Entry Per Page
+static_assert((EPP & (EPP - 1)) == 0 && EPP != 0);
 
 #define GRAINED_UNIT ( PIECE )
 #define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)

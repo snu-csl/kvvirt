@@ -142,6 +142,12 @@ static void cgo_member_kfree(struct demand_cache *cache) {
                 cmt->mems[i] = NULL;
             }
         }
+
+        if(cmt->pt_mem) {
+            kfree(cmt->pt_mem);
+        }
+
+        kfree(cmt->mems);
         kfree(cmt);
     }
     vfree(_member->cmt);
@@ -150,9 +156,7 @@ static void cgo_member_kfree(struct demand_cache *cache) {
 
 int cgo_destroy(struct demand_cache *cache) {
     print_cache_stat(cstat);
-
     cgo_print_member();
-
     cgo_member_kfree(cache);
     return 0;
 }

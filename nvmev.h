@@ -169,6 +169,9 @@ struct nvmev_config {
 	unsigned int write_trailing; // ns
 
     unsigned int cache_dram_mb; // mb
+
+    unsigned int cpu_nr_bg_gc;
+    unsigned int cpu_nr_ev_t;
 };
 
 struct nvmev_io_work {

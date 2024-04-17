@@ -280,6 +280,7 @@ static void ssd_remove_ch(struct ssd_channel *ch)
 {
 	int i;
 
+    vfree(ch->perf_model->avail_credits);
 	kfree(ch->perf_model);
 
 	for (i = 0; i < ch->nluns; i++)

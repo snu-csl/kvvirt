@@ -11,10 +11,6 @@
 #include "./include/settings.h"
 #include "./include/types.h"
 
-typedef uint32_t lpa_t;
-typedef uint32_t ppa_t;
-typedef ppa_t pga_t;
-
 #if (FP_SIZE<=8)
 typedef uint8_t fp_t;
 #define FP_MAX (255) 

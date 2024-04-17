@@ -75,6 +75,8 @@ static unsigned int io_unit_shift = 12;
 static unsigned int cache_dram_mb = 1;
 
 static char *cpus;
+static char *gccpu;
+static char *evictcpu;
 static unsigned int debug = 0;
 
 int io_using_dma = false;
@@ -113,6 +115,10 @@ module_param(io_unit_shift, uint, 0444);
 MODULE_PARM_DESC(io_unit_shift, "Size of each I/O unit (2^)");
 module_param(cpus, charp, 0444);
 MODULE_PARM_DESC(cpus, "CPU list for process, completion(int.) threads, Seperated by Comma(,)");
+module_param(gccpu, charp, 0444);
+MODULE_PARM_DESC(gccpu, "Which CPU to place DFTLKV's background GC thread on.");
+module_param(evictcpu, charp, 0444);
+MODULE_PARM_DESC(evictcpu, "Which CPU to place DFTLKV's background evict thread on.");
 module_param(debug, uint, 0644);
 module_param(cache_dram_mb, uint, 0644);
 MODULE_PARM_DESC(cache_dram_mb, "How much DRAM to use for the DFTLKV mapping cache.");
@@ -492,7 +498,6 @@ void NVMEV_STORAGE_FINAL(struct nvmev_dev *nvmev_vdev)
 static bool __load_configs(struct nvmev_config *config)
 {
 	bool first = true;
-	bool second = false;
 	unsigned int cpu_nr;
 	char *cpu;
 
@@ -527,21 +532,43 @@ static bool __load_configs(struct nvmev_config *config)
 	config->nr_io_workers = 0;
 	config->cpu_nr_dispatcher = -1;
 	config->cpu_nr_copier = -1;
+    config->cpu_nr_bg_gc = -1;
+    config->cpu_nr_ev_t = -1;
 
 	while ((cpu = strsep(&cpus, ",")) != NULL) {
 		cpu_nr = (unsigned int)simple_strtol(cpu, NULL, 10);
 		if (first) {
 			config->cpu_nr_dispatcher = cpu_nr;
-			second = true;
-		} else if(second) {
-			config->cpu_nr_copier = cpu_nr;
-			second = false;
 		} else {
 			config->cpu_nr_io_workers[config->nr_io_workers] = cpu_nr;
 			config->nr_io_workers++;
 		}
 		first = false;
 	}
+
+#if (BASE_SSD == SAMSUNG_970PRO_HASH_DFTL)
+    cpu_nr = UINT_MAX;
+	while ((cpu = strsep(&gccpu, ",")) != NULL) {
+		cpu_nr = (unsigned int)simple_strtol(cpu, NULL, 10);
+        config->cpu_nr_bg_gc = cpu_nr;
+	}
+
+    if(cpu_nr == UINT_MAX) {
+        NVMEV_ERROR("Please provide gccpu when using DFTLKV.\n");
+        return false;
+    }
+
+    cpu_nr = UINT_MAX;
+	while ((cpu = strsep(&evictcpu, ",")) != NULL) {
+		cpu_nr = (unsigned int)simple_strtol(cpu, NULL, 10);
+        config->cpu_nr_ev_t = cpu_nr;
+	}
+
+    if(cpu_nr == UINT_MAX) {
+        NVMEV_ERROR("Please provide evictcpu when using DFTLKV.\n");
+        return false;
+    }
+#endif
 
 	return true;
 }
