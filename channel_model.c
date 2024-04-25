@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#include <linux/delay.h>
 #include <linux/kthread.h>
 #include <linux/ktime.h>
 #include <linux/highmem.h>
@@ -26,7 +27,7 @@ void chmodel_init(struct channel_model *ch, uint64_t bandwidth /*MB/s*/)
     ch->avail_credits = vmalloc(NR_CREDIT_ENTRIES * SIZE_OF_CREDIT_T);
 	MEMSET(&(ch->avail_credits[0]), ch->max_credits, NR_CREDIT_ENTRIES);
 
-	NVMEV_INFO("[%s] bandwidth %llu max_credits %u tx_time %u\n", __func__, bandwidth,
+	NVMEV_ERROR("[%s] CH %p bandwidth %llu max_credits %u tx_time %u\n", __func__, ch, bandwidth,
 		   ch->max_credits, ch->xfer_lat);
 }
 
@@ -64,11 +65,8 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
     }
 
     if (request_time < cur_time) {
-        //printk("[%s] Reqeust time is before the current time %llu %llu (%llu)\n",
-        //        __func__, request_time, cur_time, cur_time - request_time);
-        //printk("Caller is %pS\n", __builtin_return_address(0));
-        //printk("Caller is %pS\n", __builtin_return_address(1));
-        //printk("Caller is %pS\n", __builtin_return_address(2));
+        NVMEV_DEBUG("[%s] Reqeust time is before the current time %llu %llu (%llu)\n",
+                     __func__, request_time, cur_time, cur_time - request_time);
         ch->last = request_time;
         return request_time; // return minimum delay
 	}
@@ -81,9 +79,6 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 	if (request_time_offs >= NR_CREDIT_ENTRIES) {
         NVMEV_ERROR("[%s] CH %p need to increase array size %llu %llu %u\n", __func__,
                 ch, request_time, cur_time, request_time_offs);
-		//printk("Caller is %pS\n", __builtin_return_address(0));
-		//printk("Caller is %pS\n", __builtin_return_address(1));
-		//printk("Caller is %pS\n", __builtin_return_address(2));
         return request_time; // return minimum delay
 	}
 

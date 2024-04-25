@@ -43,19 +43,17 @@ static void cgo_env_init(struct demand_shard const *shard, cache_t c_type,
     _env->c_type = c_type;
 
     _env->nr_tpages_optimal_caching = d_env->nr_pages * 4 / spp->pgsz;
-    _env->nr_valid_tpages = (d_env->nr_pages / EPP) + ((d_env->nr_pages % EPP) ? 1 : 0);
-    _env->nr_valid_tentries = _env->nr_valid_tpages * EPP;
 
     _env->max_cached_tpages = shard->dram / spp->pgsz;
     _env->max_cached_tentries = shard->dram / GRAINED_UNIT;
 
-#ifdef DVALUE
-    _env->nr_valid_tpages *= GRAIN_PER_PAGE;
-    _env->nr_valid_tentries *= GRAIN_PER_PAGE;
-#endif
-
     _env->nr_valid_tpages = (d_env->nr_pages * GRAIN_PER_PAGE) / EPP;
     _env->nr_valid_tentries = (d_env->nr_pages * GRAIN_PER_PAGE);
+
+#ifndef GC_STANDARD
+    _env->nr_valid_tpages++;
+    _env->nr_valid_tentries += GRAIN_PER_PAGE;
+#endif
 
     NVMEV_INFO("nr pages %u Valid tpages %u tentries %u\n", 
             d_env->nr_pages, _env->nr_valid_tpages, _env->nr_valid_tentries);
@@ -71,8 +69,8 @@ static void cgo_member_init(struct demand_shard *shard) {
     struct cmt_struct **cmt =
     (struct cmt_struct **)vmalloc(cenv->nr_valid_tpages * sizeof(struct cmt_struct *));
 
-    NVMEV_DEBUG("Allocated CMT %p member %p cache %p %u pages\n", 
-            cmt, _member, cache, cenv->nr_valid_tpages);
+    NVMEV_ERROR("Allocated CMT %p member %p cache %p %u pages\n", 
+                 cmt, _member, cache, cenv->nr_valid_tpages);
 
     for (int i = 0; i < cenv->nr_valid_tpages; i++) {
         cmt[i] = (struct cmt_struct *)kzalloc(sizeof(struct cmt_struct), GFP_KERNEL);
@@ -86,6 +84,7 @@ static void cgo_member_init(struct demand_shard *shard) {
         cmt[i]->lru_ptr = NULL;
         cmt[i]->state = CLEAN;
         cmt[i]->mems = kzalloc(sizeof(void*) * EPP, GFP_KERNEL);
+        cmt[i]->len_on_disk = 0;
 
         NVMEV_ASSERT(cmt[i]->mems);
     }
@@ -238,8 +237,8 @@ struct cmt_struct *cgo_get_cmt(struct demand_cache *cache, lpa_t lpa) {
 		cpu_relax();
 
 		if (time_after(jiffies, start + HZ)) {
-			NVMEV_ERROR("T %d stuck waiting for CMT IDX %u\n", 
-						 current->pid, c->idx);
+			NVMEV_ERROR("Stuck waiting for CMT IDX %u\n", 
+						 c->idx);
 			start = jiffies;
 		}
 	}

@@ -230,7 +230,7 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NR_NAMESPACES 1
 
 #define OP 70
-#define PAGESIZE KB(8)
+#define PAGESIZE KB(4)
 #define NPCINPAGE (PAGESIZE/PIECE)
 
 /*
@@ -240,31 +240,40 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #undef GC_STANDARD
 
 #ifdef GC_STANDARD
-#define PIECE 512
+#define PIECE 64
 #else
 #define PIECE 64
 #endif
+
+#define PAGE_CACHE_SZ MB(4)
+#define MAX_ITEMS (PAGE_CACHE_SZ / PAGESIZE)
+#define HSIZE ((PAGE_CACHE_SZ / PAGESIZE) * 2) // Size of the hash table
 
 typedef uint32_t lpa_t;
 typedef uint32_t ppa_t;
 typedef ppa_t pga_t;
 
-#ifdef GC_STANDARD
-#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
-#else
-#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
-#endif
-
-#define EPP ((PAGESIZE / ENTRY_SIZE)) // Entry Per Page
-static_assert((EPP & (EPP - 1)) == 0 && EPP != 0);
-
 #define GRAINED_UNIT ( PIECE )
 #define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 
-#define ORIG_GLEN 1//(PAGESIZE / GRAINED_UNIT)
-//static_assert((1024 % GRAINED_UNIT) == 0);
-//#define CGRAINED_UNIT ( CPIECE )
-//#define CGRAIN_PER_PAGE (PAGESIZE / CGRAINED_UNIT)
+#ifdef GC_STANDARD
+#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
+#define EPP (PAGESIZE / ENTRY_SIZE)
+#else
+#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
+
+#define ROOT_G 4
+#define ROOT_G_BYTES (ROOT_G * GRAINED_UNIT)
+
+#define IN_LEAF ((GRAINED_UNIT - sizeof(uint32_t)) / (sizeof(uint32_t) * 2))
+#define IN_ROOT ((ROOT_G_BYTES - sizeof(uint32_t)) / sizeof(uint32_t))
+
+#define EPP (IN_ROOT * IN_LEAF)
+
+#define ORIG_GLEN (ROOT_G + 2)
+#define ORIG_GLEN_BYTES (ORIG_GLEN * GRAINED_UNIT)
+
+#endif
 
 #define KLEN_MARKER_SZ sizeof(uint8_t)
 #define VLEN_MARKER_SZ sizeof(uint32_t)
@@ -293,7 +302,7 @@ static_assert((EPP & (EPP - 1)) == 0 && EPP != 0);
 #define FLASH_PAGE_SIZE KB(32)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE KB(2048) /*BLKS_PER_PLN should not be 0 */
+#define BLK_SIZE KB(32) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */

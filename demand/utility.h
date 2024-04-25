@@ -23,8 +23,12 @@
 
 #define IDX2LPA(x) ((x) * EPP)
 #define IDX(x) ((x) / EPP)
+
+#ifdef GC_STANDARD
 #define OFFSET(x) ((x) & (EPP - 1))
-//#define OFFSET(x) ((x) % EPP)
+#else
+#define OFFSET(x) ((x) % EPP)
+#endif
 
 #define PPA_TO_PGA(_ppa_, _offset_) ( ((_ppa_) * GRAIN_PER_PAGE) + (_offset_) )
 #define G_IDX(x) ((x) / GRAIN_PER_PAGE)
