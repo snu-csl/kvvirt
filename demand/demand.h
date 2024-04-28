@@ -99,6 +99,13 @@ struct cmt_struct {
      * completion times.
      */
     void **mems;
+
+#ifndef GC_STANDARD
+    /*
+     * Somewhere to store LPA -> grain mappings for use in fast filling.
+     */
+    uint32_t fm_grains[EPP];
+#endif
 };
 
 struct hash_params {

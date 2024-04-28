@@ -19,13 +19,14 @@ void btree_init(struct root *root) {
     ptr = (char*) root;
     root->cnt = ORIG_GLEN - ROOT_G;
 
-    NVMEV_INFO("IN_ROOT %lu ORIG_GLEN %d EPP %lu ROOT_G %u IN_LEAF %lu GRAINED_UNIT %d\n",
-                 IN_ROOT, ORIG_GLEN, EPP, ROOT_G, IN_LEAF, GRAINED_UNIT);
+    NVMEV_INFO("Initializing BTree ORIG_GLEN %d ROOT_G %u EPP %lu IN_ROOT %lu IN_LEAF %lu total size %lu\n", 
+            ORIG_GLEN, ROOT_G, EPP, IN_ROOT, IN_LEAF, 
+            sizeof(struct root) + (sizeof(struct leaf) * IN_ROOT));
 
     for(int i = 0; i < IN_ROOT; i++) {
         root->entries[i] = UINT_MAX;
         leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-        leaf->cnt = 0;
+        //leaf->cnt = 0;
 
         for(int j = 0; j < IN_LEAF; j++) {
             leaf->lpa[j] = UINT_MAX;
@@ -38,11 +39,6 @@ void btree_expand(struct root *root) {
     root->cnt++;
     NVMEV_INFO("Expanded btree to %u leaves.\n", root->cnt);
 }
-
-struct leaf_e {
-    uint32_t lpa;
-    uint32_t ppa;
-};
 
 static int cmp_lpa(const void *a, const void *b)
 {
@@ -67,8 +63,8 @@ uint32_t __new_roots(uint32_t *root_keys, struct leaf_e* leaves,
     int extra_keys = key_cnt % num_leaves;  // Extra keys after even distribution
     int key_index = 0, i;
 
-    NVMEV_INFO("Getting %d new root entries %u total keys %d keys per leaf %u leaves %d extra.\n",
-            root_entries, key_cnt, keys_per_leaf, num_leaves, extra_keys);
+    //NVMEV_ERROR("Getting %d new root entries %u total keys %d keys per leaf %u leaves %d extra.\n",
+    //            root_entries, key_cnt, keys_per_leaf, num_leaves, extra_keys);
     //NVMEV_ASSERT(extra_keys <= IN_LEAF);
 
     for (i = 0; i < root_entries; i++) {
@@ -90,6 +86,58 @@ uint32_t __new_roots(uint32_t *root_keys, struct leaf_e* leaves,
     return root_entries;
 }
 
+void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
+    struct leaf *l;
+    char* ptr;
+    uint32_t new_root_keys[IN_ROOT];
+    uint32_t cur_root, cur_root_idx, cur_leaf, leaf_idx, idx;
+
+    ptr = (char*) root;
+    sort(e, cnt, sizeof(struct leaf_e), cmp_lpa, NULL);
+
+    __new_roots(new_root_keys, e, cnt, root->cnt);
+
+    for(int i = 0; i < root->cnt; i++) {
+        //NVMEV_ERROR("Bulk insert copy root key %u\n", new_root_keys[i]);
+        root->entries[i] = new_root_keys[i];
+    }
+
+    cur_root = new_root_keys[0];
+    cur_root_idx = 0;
+    cur_leaf = 0;
+    leaf_idx = 0;
+    idx = 0;
+    l = (struct leaf*) (ptr + sizeof(struct root));
+
+    while(1) {
+        if(leaf_idx == cnt) {
+            break;
+        } else if(e[leaf_idx].lpa <= cur_root) {
+            NVMEV_ASSERT(e[leaf_idx].lpa > 0);
+
+            l->lpa[idx] = e[leaf_idx].lpa;
+            l->ppa[idx] = e[leaf_idx].ppa;
+            //NVMEV_ERROR("Inserted LPA %u PPA %u to leaf %u pos %u cur_root %u\n", 
+            //             e[leaf_idx].lpa, e[leaf_idx].ppa, cur_leaf, 
+            //             idx, cur_root);
+            leaf_idx++;
+            idx++;
+        } else {
+            cur_root_idx++;
+            cur_root = new_root_keys[cur_root_idx];
+            cur_leaf++;
+            idx = 0;
+
+            l = (struct leaf*) (ptr + sizeof(struct root) + 
+                               (sizeof(struct leaf) * cur_leaf));
+
+            //NVMEV_ERROR("Moving to new root %u\n", cur_root);
+        }
+    }
+
+    return;
+}
+
 void btree_reload(struct cmt_struct *cmt, struct root* root, 
                   uint32_t lpa, uint32_t ppa) {
     uint32_t new_root_cnt = 0, before;
@@ -107,22 +155,26 @@ void btree_reload(struct cmt_struct *cmt, struct root* root,
 
     for(i = 0; i < root->cnt; i++) {
         tmp_leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-        for(int j = 0; j < tmp_leaf->cnt; j++) {
+        for(int j = 0; j < IN_LEAF; j++) {
             if(tmp_leaf->lpa[j] == UINT_MAX) {
                 break;
             }
 
-            NVMEV_INFO("Adding leaf %d LPA %u PPA %u to list.\n", 
-                    i, tmp_leaf->lpa[j], tmp_leaf->ppa[j]);
+            //NVMEV_INFO("Adding leaf %d LPA %u PPA %u to list.\n", 
+            //        i, tmp_leaf->lpa[j], tmp_leaf->ppa[j]);
             tmp_leaves[tmp_leaf_idx].lpa = tmp_leaf->lpa[j];
             tmp_leaves[tmp_leaf_idx].ppa = tmp_leaf->ppa[j];
+
+            tmp_leaf->lpa[j] = UINT_MAX;
+            tmp_leaf->ppa[j] = UINT_MAX;
+
             tmp_leaf_idx++;
         }
     }
 
     if(lpa != UINT_MAX) {
-        NVMEV_INFO("Finally adding LPA %u PPA %u to list.\n", 
-                     lpa, ppa);
+        //NVMEV_INFO("Finally adding LPA %u PPA %u to list.\n", 
+        //             lpa, ppa);
         tmp_leaves[tmp_leaf_idx].lpa = lpa;
         tmp_leaves[tmp_leaf_idx].ppa = ppa;
         tmp_leaf_idx++;
@@ -148,14 +200,14 @@ void btree_reload(struct cmt_struct *cmt, struct root* root,
      * Copy them to the root.
      */
     for(int i = 0; i < root->cnt; i++) {
-        NVMEV_INFO("Placing new root LPA %u\n", new_root_keys[i]);
+        //NVMEV_INFO("Placing new root LPA %u\n", new_root_keys[i]);
         root->entries[i] = new_root_keys[i];
     }
 
     /*
      * Clear leaves.
      */
-    memset(ptr + sizeof(struct root), 0x0, sizeof(struct leaf) * root->cnt);
+    //memset(ptr + sizeof(struct root), 0x0, sizeof(struct leaf) * root->cnt);
 
     /*
      * Reinsert. Includes original to-be-inserted pair.
@@ -202,11 +254,10 @@ void btree_insert(struct cmt_struct *cmt, struct root *root,
    
     ptr  = (char*) root;
     max = root->cnt * IN_LEAF;
-    //max = ((cmt->len_on_disk - ROOT_G) * GRAINED_UNIT) / ENTRY_SIZE;
 
     if(!reloading) {
-        NVMEV_INFO("Inserting LPA %u PPA %u pos %u. Had %u leaves. Will be %u cached %u max.\n", 
-                lpa, ppa, pos, root->cnt, cmt->cached_cnt + 1, max);
+        //NVMEV_INFO("Inserting LPA %u PPA %u pos %u. Had %u leaves. Will be %u cached %u max.\n", 
+        //        lpa, ppa, pos, root->cnt, cmt->cached_cnt + 1, max);
     } else {
         NVMEV_INFO("Inserting LPA %u PPA %u in reload. Had %u leaves. Will be %u cached %u max.\n", 
                 lpa, ppa, root->cnt, cmt->cached_cnt + 1, max);
@@ -223,7 +274,7 @@ void btree_insert(struct cmt_struct *cmt, struct root *root,
 	i = __lower_bound(root, lpa);
 
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-    if(leaf->cnt == IN_LEAF) {
+    if(leaf->lpa[IN_LEAF - 1] != UINT_MAX) {
         NVMEV_ASSERT(!reloading);
         NVMEV_INFO("LEAF FULL!!! REDISTRIBUTE!!!\n");
         btree_reload(cmt, root, lpa, ppa);
@@ -238,12 +289,16 @@ void btree_insert(struct cmt_struct *cmt, struct root *root,
         root->entries[i] = lpa;
     }
 
-    leaf->lpa[leaf->cnt] = lpa;
-    leaf->ppa[leaf->cnt] = ppa;
-    leaf->cnt++;
+    for(int j = 0; j < IN_LEAF; j++) {
+        if(leaf->lpa[j] == UINT_MAX) {
+            leaf->lpa[j] = lpa;
+            leaf->ppa[j] = ppa;
+            break;
+        }
+    }
 
-    NVMEV_INFO("Added LPA %u PPA %u to slot %u in leaf %d\n", 
-                 lpa, ppa, leaf->cnt - 1, i);
+    //NVMEV_INFO("Added LPA %u PPA %u to slot %u in leaf %d\n", 
+    //             lpa, ppa, leaf->cnt - 1, i);
 }
 
 static uint64_t sample_cnt = 0;
@@ -267,9 +322,9 @@ uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
     }
 
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-    NVMEV_INFO("Got leaf %d cnt %u\n", i, leaf->cnt);
+    NVMEV_INFO("Got leaf %d\n", i);
 
-    for(j = 0; j < leaf->cnt; j++) {
+    for(j = 0; j < IN_LEAF; j++) {
         //jumps++;
         //NVMEV_INFO("Checking LPA %u leaf %d cnt %u\n", 
         //             leaf->lpa[j], i, leaf->cnt);
@@ -284,11 +339,13 @@ uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
 
             if(pos) {
                 *pos = sizeof(struct root) + (sizeof(struct leaf) * i) + 
-                       sizeof(leaf->cnt) + (sizeof(uint32_t) * IN_LEAF) + 
+                       (sizeof(uint32_t) * IN_LEAF) + 
                        (j * sizeof(uint32_t));
             }
 
             return leaf->ppa[j];
+        } else if(leaf->lpa[j] == UINT_MAX) {
+            break;
         }
     }
 

@@ -48,9 +48,13 @@ struct root {
 };
 
 struct leaf {
-    uint32_t cnt;
     uint32_t lpa[IN_LEAF];
     uint32_t ppa[IN_LEAF];
+};
+
+struct leaf_e {
+    uint32_t lpa;
+    uint32_t ppa;
 };
 
 void btree_init(struct root *root);
@@ -62,3 +66,4 @@ void btree_reload(struct cmt_struct *cmt, struct root *root,
                   uint32_t lpa, uint32_t ppa);
 void btree_direct_read(struct root *root, uint32_t pos, 
                        void* out, uint32_t len);
+void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt);

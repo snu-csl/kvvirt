@@ -120,11 +120,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     }
 
     if(offset == UINT_MAX - 1) {
-        NVMEV_ASSERT(false);
         return length;
     } else if (offset == U64_MAX) {
         NVMEV_ERROR("Failing command.\n");
-        NVMEV_ASSERT(false);
         return 0;
     }
 
@@ -918,10 +916,6 @@ static void __fill_cq_result(struct nvmev_io_work *w)
 
     struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
     struct nvme_command *cmd = &sq_entry(sq_entry);
-    if(cmd->common.opcode == nvme_cmd_kv_retrieve) {
-        NVMEV_ASSERT(result0 > 0);
-        NVMEV_ASSERT(result1 > 0);
-    }
 
 	cqe->command_id = command_id;
 	cqe->sq_id = sqid;

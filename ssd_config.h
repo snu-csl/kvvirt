@@ -237,10 +237,10 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#undef GC_STANDARD
+#define GC_STANDARD
 
 #ifdef GC_STANDARD
-#define PIECE 64
+#define PIECE 512
 #else
 #define PIECE 64
 #endif
@@ -265,13 +265,13 @@ typedef ppa_t pga_t;
 #define ROOT_G 4
 #define ROOT_G_BYTES (ROOT_G * GRAINED_UNIT)
 
-#define IN_LEAF ((GRAINED_UNIT - sizeof(uint32_t)) / (sizeof(uint32_t) * 2))
-#define IN_ROOT ((ROOT_G_BYTES - sizeof(uint32_t)) / sizeof(uint32_t))
-
-#define EPP (IN_ROOT * IN_LEAF)
-
 #define ORIG_GLEN (ROOT_G + 2)
 #define ORIG_GLEN_BYTES (ORIG_GLEN * GRAINED_UNIT)
+
+#define EPP (((GRAIN_PER_PAGE - ROOT_G) * GRAINED_UNIT) / (sizeof(uint32_t) * 2))
+
+#define IN_LEAF ((GRAINED_UNIT) / (sizeof(uint32_t) * 2))
+#define IN_ROOT (EPP / (sizeof(uint32_t) * 2))
 
 #endif
 
@@ -302,7 +302,7 @@ typedef ppa_t pga_t;
 #define FLASH_PAGE_SIZE KB(32)
 #define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 #define BLKS_PER_PLN (0)
-#define BLK_SIZE KB(32) /*BLKS_PER_PLN should not be 0 */
+#define BLK_SIZE KB(128) /*BLKS_PER_PLN should not be 0 */
 static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
