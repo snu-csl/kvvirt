@@ -237,9 +237,9 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
  * Define this to use the standard grain bitmap GC.
  * Undefine to use the new invalid-mapping-page based GC.
  */
-#define GC_STANDARD
+#define ORIGINAL
 
-#ifdef GC_STANDARD
+#ifdef ORIGINAL
 #define PIECE 512
 #else
 #define PIECE 64
@@ -256,24 +256,25 @@ typedef ppa_t pga_t;
 #define GRAINED_UNIT ( PIECE )
 #define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 
-#ifdef GC_STANDARD
-#define ENTRY_SIZE (sizeof(ppa_t) + (FP_SIZE / 8))
-#define EPP (PAGESIZE / ENTRY_SIZE)
-#else
-#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t) + (FP_SIZE / 8))
-
-#define ROOT_G 4
-#define ROOT_G_BYTES (ROOT_G * GRAINED_UNIT)
-
-#define ORIG_GLEN (ROOT_G + 2)
-#define ORIG_GLEN_BYTES (ORIG_GLEN * GRAINED_UNIT)
-
-#define EPP (((GRAIN_PER_PAGE - ROOT_G) * GRAINED_UNIT) / (sizeof(uint32_t) * 2))
-
-#define IN_LEAF ((GRAINED_UNIT) / (sizeof(uint32_t) * 2))
-#define IN_ROOT (EPP / (sizeof(uint32_t) * 2))
-
-#endif
+//#ifdef ORIGINAL
+//#define ENTRY_SIZE sizeof(ppa_t)
+//#define EPP (PAGESIZE / ENTRY_SIZE)
+//
+//#else
+//#define ENTRY_SIZE (sizeof(ppa_t) + sizeof(lpa_t))
+//
+//#define ROOT_G 4
+//#define ROOT_G_BYTES (ROOT_G * GRAINED_UNIT)
+//
+//#define ORIG_GLEN (ROOT_G + 2)
+//#define ORIG_GLEN_BYTES (ORIG_GLEN * GRAINED_UNIT)
+//
+//#define EPP (((GRAIN_PER_PAGE - ROOT_G) * GRAINED_UNIT) / (sizeof(uint32_t) * 2))
+//
+//#define IN_LEAF ((GRAINED_UNIT) / (sizeof(uint32_t) * 2))
+//#define IN_ROOT (EPP / (sizeof(uint32_t) * 2))
+//
+//#endif
 
 #define KLEN_MARKER_SZ sizeof(uint8_t)
 #define VLEN_MARKER_SZ sizeof(uint32_t)

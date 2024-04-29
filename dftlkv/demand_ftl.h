@@ -11,7 +11,7 @@
 #include <linux/types.h>
 #include <linux/xarray.h>
 
-#include "demand/d_type.h"
+#include "cache.h"
 #include "pqueue/pqueue.h"
 #include "ssd_config.h"
 #include "ssd.h"
@@ -36,21 +36,6 @@
 /*
  * For DFTL.
  */
-
-#define INV_DURING_GC (UINT_MAX - 10)
-
-struct generic_copy_args {
-    void (*func)(void *args, uint64_t*, uint64_t*);
-    void *args;
-};
-extern struct kfifo *gc_fifo;
-
-void __gc_copy_work(void *voidargs, uint64_t*, uint64_t*);
-
-struct d_cb_args {
-    struct demand_shard *shard;
-    struct request *req;
-};
 
 typedef enum {
 	// generic command status
@@ -137,20 +122,71 @@ struct gc_data {
     atomic_t gc_rem;
 };
 
-#define VICTIM_RB_SZ 131072
-struct victim_buffer {
-    struct cmt_struct* cmt[VICTIM_RB_SZ];
-    int head, tail;
-    spinlock_t lock;
+#define MAX_HASH_COLLISION 1024
+struct stats {
+	/* device traffic */
+	uint64_t data_r;
+	uint64_t data_w;
+	uint64_t trans_r;
+	uint64_t trans_w;
+	uint64_t data_r_dgc;
+	uint64_t data_w_dgc;
+	uint64_t trans_r_dgc;
+    uint64_t trans_r_dgc_2;
+	uint64_t trans_w_dgc;
+	uint64_t trans_r_tgc;
+	uint64_t trans_w_tgc;
+    uint64_t inv_m_r;
+    uint64_t inv_m_w;
+
+	/* gc trigger count */
+	uint64_t dgc_cnt;
+	uint64_t tgc_cnt;
+	uint64_t tgc_by_read;
+	uint64_t tgc_by_write;
+
+	/* r/w specific traffic */
+	uint64_t read_req_cnt;
+	uint64_t write_req_cnt;
+
+	uint64_t d_read_on_read;
+	uint64_t d_write_on_read;
+	uint64_t t_read_on_read;
+	uint64_t t_write_on_read;
+	uint64_t d_read_on_write;
+	uint64_t d_write_on_write;
+	uint64_t t_read_on_write;
+	uint64_t t_write_on_write;
+
+	/* write buffer */
+	uint64_t wb_hit;
+
+    /* gc reads and writes */
+    uint64_t gc_pair_copy;
+    uint64_t gc_invm_copy;
+    uint64_t gc_cmt_copy;
+
+	uint64_t w_hash_collision_cnt[MAX_HASH_COLLISION];
+	uint64_t r_hash_collision_cnt[MAX_HASH_COLLISION];
+
+	uint64_t fp_match_r;
+	uint64_t fp_match_w;
+	uint64_t fp_collision_r;
+	uint64_t fp_collision_w;
+
+	uint64_t cache_hit;
+	uint64_t cache_miss;
+	uint64_t clean_evict;
+	uint64_t dirty_evict;
 };
-static struct victim_buffer vb;
 
 struct demand_shard {
     uint64_t id;
 
-    struct demand_env *env;
-    struct demand_member *ftl;
-    struct demand_cache *cache;
+    /*
+     * Hash index to grain mapping cache.
+     */
+    struct cache cache;
 
 	struct ssd *ssd;
 
@@ -171,6 +207,8 @@ struct demand_shard {
     uint64_t *oob_mem;
     bool *grain_bitmap;
 
+    uint32_t max_try;
+
     uint64_t dram; /* in bytes */
     bool fastmode; /* skip timings and build map later */
 
@@ -179,6 +217,8 @@ struct demand_shard {
 
     atomic_t candidates;
     atomic_t have_victims;
+
+    struct stats stats;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
@@ -190,20 +230,45 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
                          struct nvmev_result *ret);
 void demand_warmup(struct nvmev_ns *ns);
 
-#ifndef GC_STANDARD
-#define INITIAL_SZ (sizeof(lpa_t) + sizeof(ppa_t)) * 2
-extern uint8_t *pg_inv_cnt;
+#ifndef ORIGINAL
 #define INV_PAGE_SZ PAGESIZE
 #define INV_ENTRY_SZ (sizeof(lpa_t) + sizeof(ppa_t))
+
+extern uint8_t *pg_inv_cnt;
 extern char** inv_mapping_bufs;
 extern uint64_t* inv_mapping_offs;
 #endif
 
-extern DECLARE_HASHTABLE(mapping_ht, 20);
-struct ht_mapping {
-    uint64_t lpa;
-    uint64_t ppa;
-    struct hlist_node node;
+extern uint64_t user_pgs_this_gc;
+extern uint64_t gc_pgs_this_gc;
+extern uint64_t map_pgs_this_gc;
+extern uint64_t map_gc_pgs_this_gc;
+
+struct hash_params {
+	uint32_t hash;
+	int cnt;
+	int find;
+	uint32_t lpa;
 };
+
+#define QUADRATIC_PROBING(h,c) ((h)+(c)+(c)*(c))
+#define LINEAR_PROBING(h,c) (h+c)
+
+#define PROBING_FUNC(h,c) QUADRATIC_PROBING(h,c)
+
+#define IS_INITIAL_PPA(x) ((atomic_read(&x)) == UINT_MAX)
+
+#define IDX2LPA(x) ((x) * EPP)
+#define IDX(x) ((x) / EPP)
+
+#ifdef ORIGINAL
+#define OFFSET(x) ((x) & (EPP - 1))
+#else
+#define OFFSET(x) ((x) % EPP)
+#endif
+
+#define PPA_TO_PGA(_ppa_, _offset_) ( ((_ppa_) * GRAIN_PER_PAGE) + (_offset_) )
+#define G_IDX(x) ((x) / GRAIN_PER_PAGE)
+#define G_OFFSET(x) ((x) & (GRAIN_PER_PAGE - 1))
 
 #endif

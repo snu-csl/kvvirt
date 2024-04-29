@@ -18,12 +18,11 @@
 
 #include "nvmev.h"
 #include "conv_ftl.h"
+#include "dftlkv/demand_ftl.h"
 #include "zns_ftl.h"
 #include "simple_ftl.h"
 #include "kv_ftl.h"
 #include "dma.h"
-#include "demand/cache.h"
-#include "demand/demand.h"
 
 /****************************************************************
  * Memory Layout
@@ -342,22 +341,22 @@ static int __proc_file_read(struct seq_file *m, void *data)
 	} else if(strcmp(filename, "space") == 0) {
         seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
     } else if(strcmp(filename, "dstat") == 0) {
-        char* dstat = get_demand_stat(&d_stat);
-        seq_printf(m, "%s", dstat);
-        kfree(dstat);
+        //char* dstat = get_demand_stat(&d_stat);
+        //seq_printf(m, "%s", dstat);
+        //kfree(dstat);
 
-        char* buf = (char*) kzalloc(4096, GFP_KERNEL);
-        for(int i = 0; i < SSD_PARTITIONS; i++) {
-            get_cache_stat(i, buf);
-            seq_printf(m, "%s", buf);
-        }
+        //char* buf = (char*) kzalloc(4096, GFP_KERNEL);
+        //for(int i = 0; i < SSD_PARTITIONS; i++) {
+        //    get_cache_stat(i, buf);
+        //    seq_printf(m, "%s", buf);
+        //}
 
-        kfree(buf);
+        //kfree(buf);
     } else if(strcmp(filename, "cleardstat") == 0) {
-        clear_demand_stat();
-        for(int i = 0; i < SSD_PARTITIONS; i++) {
-            clear_cache_stat(i);
-        }
+        //clear_demand_stat();
+        //for(int i = 0; i < SSD_PARTITIONS; i++) {
+        //    clear_cache_stat(i);
+        //}
     }
 
 	return 0;
@@ -647,7 +646,7 @@ static void __print_base_config(void)
 		type = "Samsung 970 Pro SSD";
 		break;
     case SAMSUNG_970PRO_HASH_DFTL:
-#ifdef GC_STANDARD
+#ifdef ORIGINAL
 		type = "Samsung 970 Pro SSD - DFTL HASH KV - OLD FTL";
 #else
         type = "Samsung 970 Pro SSD - DFTL HASH KV - NEW FTL";

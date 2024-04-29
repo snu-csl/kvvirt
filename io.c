@@ -6,8 +6,6 @@
 #include <linux/random.h>
 #include <linux/sched/clock.h>
 
-#include "demand/include/demand_settings.h"
-#include "demand/d_type.h"
 #include "nvmev.h"
 #include "nvme_kv.h"
 #include "dma.h"
