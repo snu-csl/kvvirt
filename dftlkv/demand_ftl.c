@@ -105,18 +105,6 @@ static bool should_gc(struct demand_shard *demand_shard)
 
 static inline bool should_gc_high(struct demand_shard *demand_shard)
 {
-    NVMEV_DEBUG("Free LC %d:\n", demand_shard->lm.free_line_cnt);
-
-    //if(demand_shard->lm.free_line_cnt <= 3) {
-    //    struct list_head *p;
-    //    struct line *my;
-    //    list_for_each(p, &demand_shard->lm.free_line_list) {
-    //        /* my points to the structure in which the list is embedded */
-    //        my = list_entry(p, struct line, entry);
-    //        NVMEV_ERROR("%d\n", my->id);
-    //    }
-    //}
-
 	return demand_shard->lm.free_line_cnt <= demand_shard->cp.gc_thres_lines_high;
 }
 
@@ -151,21 +139,6 @@ ppa_t ppa2pgidx(struct demand_shard *demand_shard, struct ppa *ppa)
 	return pgidx;
 }
 
-static inline uint64_t get_rmap_ent(struct demand_shard *demand_shard, struct ppa *ppa)
-{
-	uint64_t pgidx = ppa2pgidx(demand_shard, ppa);
-
-	return demand_shard->rmap[pgidx];
-}
-
-/* set rmap[page_no(ppa)] -> lpn */
-static inline void set_rmap_ent(struct demand_shard *demand_shard, uint64_t lpn, struct ppa *ppa)
-{
-	uint64_t pgidx = ppa2pgidx(demand_shard, ppa);
-
-	demand_shard->rmap[pgidx] = lpn;
-}
-
 static inline int victim_line_cmp_pri(pqueue_pri_t next, pqueue_pri_t curr)
 {
 	return (next > curr);
@@ -194,8 +167,6 @@ static inline void victim_line_set_pos(void *a, size_t pos)
 void consume_write_credit(struct demand_shard *demand_shard, uint32_t len)
 {
 	demand_shard->wfc.write_credits -= len;
-    NVMEV_DEBUG("Consuming %u credits. %d remaining.\n", len,
-                 demand_shard->wfc.write_credits);
 }
 
 static uint64_t forground_gc(struct demand_shard *demand_shard);
@@ -208,10 +179,6 @@ inline uint64_t check_and_refill_write_credit(struct demand_shard *demand_shard)
 		if(forground_gc(demand_shard) == 0) {
             return nsecs_completed;
         }
-
-        //spin_lock(&wfc_spin);
-		//wfc->write_credits += wfc->credits_to_refill;
-        //spin_unlock(&wfc_spin);
 	} 
 
     return nsecs_completed;
@@ -392,17 +359,6 @@ bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type)
 
     struct nand_block *blk = get_blk(demand_shard->ssd, &p);
     
-    //if(wpp->blk == prev_blk && blk->vgc == prev_vgc) {
-    //    NVMEV_INFO("caller is %ps\n", __builtin_return_address(0));
-    //    NVMEV_INFO("caller is %ps\n", __builtin_return_address(1));
-    //    NVMEV_INFO("caller is %ps\n", __builtin_return_address(2));
-    //    NVMEV_ERROR("vgc %u prev vgc %u\n", blk->vgc, prev_vgc);
-    //}
-
-    //if(wpp->blk == prev_blk) {
-    //    NVMEV_ASSERT(blk->vgc != prev_vgc);
-    //}
-
     prev_vgc = blk->vgc;
     prev_blk = wpp->blk;
 
@@ -507,75 +463,33 @@ struct ppa get_new_page(struct demand_shard *shard, uint32_t io_type)
 	return ppa;
 }
 
-static void init_maptbl(struct demand_shard *demand_shard)
-{
-    return;
-}
-
-static void remove_maptbl(struct demand_shard *demand_shard)
-{
-    return;
-}
-
-static void init_rmap(struct demand_shard *demand_shard)
-{
-    return;
-}
-
-static void remove_rmap(struct demand_shard *demand_shard)
-{
-    return;
-}
-
-extern struct algorithm __demand;
-extern struct lower_info virt_info;
-
 #ifndef ORIGINAL
+/*
+ * Plus's in-memory per-superblock invalid mapping buffers.
+ */
 char **inv_mapping_bufs;
+
+/*
+ * The current offset for each invalid mapping buffer.
+ */
 uint64_t *inv_mapping_offs;
+
+/*
+ * Plus's per-page invalid count.
+ */
 uint8_t *pg_inv_cnt;
 #endif
-
-#define NUM 10000
-uint32_t lpa_[NUM];
-uint32_t lpa_idx = 0;
-
-void shuffle(uint32_t *array, size_t n) {
-    uint32_t r;
-    if (n > 1) {
-        size_t i;
-        for (i = 0; i < n - 1; i++) {
-            get_random_bytes(&r, sizeof(r));
-            size_t j = i + r / (UINT_MAX / (n - i) + 1);
-            uint32_t temp = array[j];
-            array[j] = array[i];
-            array[i] = temp;
-        }
-    }
-}
 
 void demand_init(struct demand_shard *shard, uint64_t size, 
                  struct ssd* ssd) 
 {
     struct ssdparams *spp = &ssd->sp;
 
-    uint64_t tt_grains = spp->tt_pgs * GRAIN_PER_PAGE; 
-
-    spp->tt_map_pgs = tt_grains / EPP;
-    spp->tt_data_pgs = spp->tt_pgs - spp->tt_map_pgs;
-
 #ifndef ORIGINAL
     pg_inv_cnt = (uint8_t*) vmalloc_node(spp->tt_pgs * sizeof(uint8_t),
                                          numa_node_id());
     NVMEV_ASSERT(pg_inv_cnt);
     memset(pg_inv_cnt, 0x0, spp->tt_pgs * sizeof(uint8_t));
-
-    uint64_t inv_per_line = (spp->pgs_per_line * spp->pgsz) / GRAINED_UNIT;
-    uint64_t inv_per_pg = INV_PAGE_SZ / (sizeof(lpa_t) + sizeof(ppa_t));
-    uint64_t inv_ppl = spp->inv_ppl = inv_per_line / inv_per_pg;
-
-    NVMEV_DEBUG("inv_per_line %u inv_per_pg %u inv_ppl %u\n", 
-            inv_per_line, inv_per_pg, inv_ppl);
 
     inv_mapping_bufs = 
     (char**) kzalloc_node(spp->tt_lines * sizeof(char*), GFP_KERNEL, 
@@ -590,14 +504,7 @@ void demand_init(struct demand_shard *shard, uint64_t size,
         inv_mapping_offs[i] = 0;
         NVMEV_ASSERT(inv_mapping_bufs[i]);
     }
-
-    NVMEV_INFO("tt_grains %llu tt_map %lu tt_data %lu tt_lines %lu "
-            "invalid_per_line %llu inv_ppl %llu\n", 
-            tt_grains, spp->tt_map_pgs, spp->tt_data_pgs, spp->tt_lines,
-            inv_per_line, inv_ppl);
 #endif
-
-    NVMEV_INFO("tt_lines %lu\n", spp->tt_lines);
 
     /*
      * OOB stores LPA to grain information.
@@ -620,14 +527,10 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 	}
 
 #ifdef ORIGINAL
+    uint64_t tt_grains = spp->tt_pgs * GRAIN_PER_PAGE; 
     shard->grain_bitmap = (bool*) vmalloc(tt_grains * sizeof(bool));
     memset(shard->grain_bitmap, 0x0, tt_grains * sizeof(bool));
-    NVMEV_INFO("Grain bitmap (%p) allocated for shard %llu %llu grains shard %p.\n", 
-            shard->grain_bitmap, shard->id, tt_grains, shard);
 #endif
-
-    //demand_create(shard, &virt_info, NULL, &__demand, ssd, size);
-
     shard->dram  = ((uint64_t) nvmev_vdev->config.cache_dram_mb) << 20;
 
     init_cache(&shard->cache, spp->tt_pgs, shard->dram);
@@ -679,12 +582,6 @@ static void conv_init_ftl(uint64_t id, struct demand_shard *demand_shard,
 	demand_shard->ssd = ssd;
     demand_shard->id = id;
 
-	/* initialize maptbl */
-	init_maptbl(demand_shard); // mapping table
-
-	/* initialize rmap */
-	init_rmap(demand_shard); // reverse mapping table (?)
-
 	/* initialize all the lines */
 	init_lines(demand_shard);
 
@@ -710,8 +607,6 @@ static void conv_init_ftl(uint64_t id, struct demand_shard *demand_shard,
 static void conv_remove_ftl(struct demand_shard *demand_shard)
 {
 	remove_lines(demand_shard);
-	remove_rmap(demand_shard);
-	remove_maptbl(demand_shard);
 }
 
 static void conv_init_params(struct convparams *cpp)
@@ -1444,13 +1339,12 @@ uint64_t __maybe_advance(struct demand_shard *shard, struct ppa *ppa, int type,
     return nsecs;
 }
 
-struct inv_entry {
-    uint64_t key; // This will be used as the key in the hash table
-    struct hlist_node node; // Hash table uses hlist_node to chain items
-};
-DEFINE_HASHTABLE(inv_m_hash, 22); // 2^8 buckets = 256 buckets
-
 #ifndef ORIGINAL
+
+/*
+ * This is where Plus records invalid hash index to grain mappings
+ * in invalid mappings buffers. It is called on each overwrite of a pair.
+ */
 static uint64_t __record_inv_mapping(struct demand_shard *shard, lpa_t lpa, 
                                      ppa_t ppa, uint64_t *credits) {
     struct ssdparams *spp = &shard->ssd->sp;
@@ -1462,20 +1356,13 @@ static uint64_t __record_inv_mapping(struct demand_shard *shard, lpa_t lpa,
     uint64_t nsecs_completed = 0;
     uint64_t **oob = shard->oob;
 
-    uint64_t start = ktime_get();
     spin_lock(&inv_m_spin);
-    uint64_t end = ktime_get();
-
-    if(ktime_to_us(end) - ktime_to_us(start) > 1000) {
-        NVMEV_ERROR("Waited %lluus for lock!\n", 
-                     ktime_to_us(end) - ktime_to_us(start));
-    }
-
     //NVMEV_ERROR("Got an invalid LPA %u PPA %u mapping line %llu (%llu)\n", 
     //             lpa, ppa, line, inv_mapping_offs[line]);
 
     if((inv_mapping_offs[line] + sizeof(lpa) + sizeof(ppa)) > INV_PAGE_SZ) {
         /*
+         * This buffer is full, flush it to an invalid mapping page.
          * Anything bigger complicates implementation. Keep to pgsz for now.
          */
         NVMEV_ASSERT(INV_PAGE_SZ == spp->pgsz);
@@ -1499,7 +1386,13 @@ skip:
         NVMEV_INFO("Flushing an invalid mapping page for line %llu off %llu to PPA %llu\n", 
                      line, inv_mapping_offs[line], pgidx);
 
+        /*
+         * GC will see UINT_MAX at grain 0 and know it's an invalid mapping page.
+         */
         oob[pgidx][0] = UINT_MAX;
+        /*
+         * The superblock this invalid mapping page is targeting.
+         */
         oob[pgidx][1] = line;
         oob[pgidx][2] = pgidx;
 
@@ -1514,10 +1407,14 @@ skip:
         memcpy(ptr, inv_mapping_bufs[line], spp->pgsz);
         nsecs_completed = __maybe_advance(shard, &n_p, MAP_IO, 0);
 
-        nvmev_vdev->space_used += INV_PAGE_SZ;
-
         NVMEV_DEBUG("Added %u (%u %u) to XA.\n", (line << 32) | pgidx, line, pgidx);
 
+        /*
+         * This xarray stores the all of the current invalid mapping
+         * pages on disk. Shifting line by 32 allows us to iterate
+         * over the invalid mapping page addresses for a certain superblock
+         * during GC.
+         */
         xa_store(&gcd->inv_mapping_xa, (line << 32) | pgidx, 
                   xa_mk_value(pgidx), GFP_KERNEL);
         
@@ -1525,6 +1422,11 @@ skip:
         inv_mapping_offs[line] = 0;
 
         if(credits) {
+            /*
+             * We wrote a page here, so consume some credits.
+             * Credits are used for flow control between foreground
+             * writes and GC.
+             */
             (*credits) += GRAIN_PER_PAGE;
         }
     }
@@ -1539,66 +1441,6 @@ skip:
     return nsecs_completed;
 }
 #endif
-
-bool __invalid_mapping_ppa(struct demand_shard *demand_shard, uint64_t ppa, 
-                           unsigned long key) {
-    struct ssdparams *spp = &demand_shard->ssd->sp;
-    struct gc_data *gcd = &demand_shard->gcd;
-
-    NVMEV_DEBUG("Checking key %lu (%u)\n", key, ppa);
-    //spin_lock(&inv_m_spin);
-    void *xa_entry = xa_load(&gcd->inv_mapping_xa, key);
-    //spin_unlock(&inv_m_spin);
-    if(xa_entry) {
-        uint64_t xa_ppa = xa_to_value(xa_entry);
-        NVMEV_DEBUG("Got xa_ppa %u which targets line %ld\n", 
-                    xa_ppa, key >> 32);
-        if(xa_ppa == ppa) {
-            /*
-             * This page was used to store in valid mappings.
-             */
-            return true;
-        } else {
-            BUG_ON(true);
-        }
-    } else {
-        /*
-         * This page wasn't used to store invalid mappings.
-         */
-        return false;
-    }
-
-    //bool sample = false;
-    //uint64_t start, end;
-    //uint32_t rand;
-    //get_random_bytes(&rand, sizeof(rand));
-    //if(rand % 100 > 90) {
-    //    start = local_clock();
-    //    sample = true;
-    //}
-
-    //for(int i = 0; i < spp->tt_lines; i++) {
-    //    for(int j = 0; j < inv_mapping_cnts[i]; j++) {
-    //        if(inv_mapping_ppas[i][j] == ppa) {
-    //            NVMEV_DEBUG("Caught a mapping PPA %u line %d\n", ppa, i);
-
-    //            if(sample) {
-    //                end = local_clock();
-    //                NVMEV_DEBUG("%s 1 took %u ns for ONE pair\n", __func__, end - start);
-    //            }
-
-    //            return true;
-    //        } 
-    //    }
-    //}
-
-    //if(sample) {
-    //    end = local_clock();
-    //    NVMEV_DEBUG("%s 2 took %u ns for ONE pair\n", __func__, end - start);
-    //}
-
-    return false;
-}
 
 void clear_oob_block(struct demand_shard *shard, uint64_t start_pgidx) {
     struct ssdparams *spp = &shard->ssd->sp;
@@ -1665,11 +1507,8 @@ static struct line *select_victim_line(struct demand_shard *demand_shard, bool b
 again:
 	victim_line = pqueue_peek(lm->victim_line_pq);
 
-	if (!victim_line) { // || (bg && !victim_line->map)) {
+	if (!victim_line) {
         spin_unlock(&lm_spin);
-        if(!bg) {
-            //NVMEV_ERROR("Had no victim line for GC!\n");
-        }
 		return NULL;
 	}
 
@@ -1718,66 +1557,29 @@ again:
 	return victim_line;
 }
 
-bool oob_empty(struct demand_shard *shard, uint64_t pgidx) {
-    return true;
-    for(int i = 0; i < GRAIN_PER_PAGE; i++) {
-        if(shard->oob[pgidx][i] == 1) {
-            NVMEV_ERROR("Page %llu offset %d was %llu\n", 
-                         pgidx, i, shard->oob[pgidx][i]);
-            return false;
-        }
-    }
-    return true;
-}
-
 uint64_t clean_first_half = 0;
 uint64_t clean_second_half = 0;
 uint64_t clean_third_half = 0;
 uint64_t mapping_searches = 0;
 
-bool __leftover_mapping(struct demand_shard *shard, uint64_t line, 
-                        uint64_t t_ppa) {
-#ifdef ORIGINAL
-    return false;
-#else
-    return false;
-    struct ssd *ssd = shard->ssd;
-    struct ssdparams *spp = &shard->ssd->sp;
-    struct gc_data *gcd = &shard->gcd;
-    struct ppa p;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
-    uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
-    uint64_t off;
-    uint8_t *ptr;
-
-    unsigned long index;
-    unsigned long start = index = (line << 32);
-    unsigned long end = (line + 1) << 32;
-    void* xa_entry = NULL;
-
-    for(int j = 0; j < inv_mapping_offs[line] / (uint32_t) INV_ENTRY_SZ; j++) {
-        lpa_t lpa = *(lpa_t*) (inv_mapping_bufs[line] + (j * INV_ENTRY_SZ));
-        ppa_t ppa = *(ppa_t*) (inv_mapping_bufs[line] + (j * INV_ENTRY_SZ) + 
-                sizeof(lpa_t));
-
-        if(ppa / GRAIN_PER_PAGE == t_ppa) {
-            lpa_t dummy = UINT_MAX;
-            memcpy(inv_mapping_bufs[line] + (j * INV_ENTRY_SZ), &dummy, sizeof(dummy));
-            NVMEV_INFO("2 Leftover %u\n", ppa);
-            continue;
-        }
-    }
-
-    //spin_unlock(&inv_m_spin);
-
-    return true;
-#endif
-}
+/*
+ * Plus's transient GC hash table, containing invalid
+ * hash index to grain mappings.
+ */
+struct inv_entry {
+    uint64_t key; // This will be used as the key in the hash table
+    struct hlist_node node; // Hash table uses hlist_node to chain items
+};
+DEFINE_HASHTABLE(inv_m_hash, 22); // 2^8 buckets = 256 buckets
 
 uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
 #ifdef ORIGINAL
     return 0;
 #else
+    /*
+     * Where Plus gets it invalid hash index to grain
+     * mappings before GC.
+     */
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &shard->ssd->sp;
     struct gc_data *gcd = &shard->gcd;
@@ -1787,13 +1589,18 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
     uint64_t off;
     uint8_t *ptr;
 
-    //xa_init(&gcd->gc_xa);
-
     int hsize = 0;
-
     unsigned long index;
+
+    /*
+     * We want to get the physical addresses of invalid mapping pages
+     * that target the line (superblock) we are collecting.
+     *
+     * Range scan the xarray between start and end.
+     */
     unsigned long start = index = (line << 32);
     unsigned long end = (line + 1) << 32;
+
     void* xa_entry = NULL;
 
     struct nand_cmd swr = {
@@ -1821,18 +1628,17 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
 
         shard->stats.inv_m_r += spp->pgsz;
 
-        BUG_ON(m_ppa % spp->pgs_per_blk + (INV_PAGE_SZ / spp->pgsz) > spp->pgs_per_blk);
-
         for(int j = 0; j < INV_PAGE_SZ / (uint32_t) INV_ENTRY_SZ; j++) {
+            /*
+             * An invalid hash index to grain mapping.
+             */
             lpa_t lpa = *(lpa_t*) (ptr + (j * INV_ENTRY_SZ));
             ppa_t ppa = *(lpa_t*) (ptr + (j * INV_ENTRY_SZ) + 
                                          sizeof(lpa_t));
 
             if(lpa == UINT_MAX) {
                 continue;
-                //NVMEV_INFO("IDX was %d\n", j);
             }
-            //BUG_ON(lpa == UINT_MAX);
 
             NVMEV_INFO("%s XA 1 Inserting inv LPA %u PPA %u "
                         "(%llu) in GC for line %llu\n", 
@@ -1849,6 +1655,7 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
 
             hash_for_each_possible_safe(inv_m_hash, item, next, node, entry->key) {
                 if (item->key == entry->key) {
+                    NVMEV_ASSERT(false);
                     NVMEV_INFO("Found dupe LPA %u PPA %u\n", lpa, ppa);
                     hash_del(&item->node);
                     deleted = true;
@@ -1860,15 +1667,19 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
                 continue;
             }
 
+            /*
+             * Add it to the hash table.
+             */
             hash_add(inv_m_hash, &entry->node, entry->key);
             hsize++;
-
-            //xa_store(&gcd->gc_xa, ((uint64_t) ppa << 32) | lpa, 
-            //          xa_mk_value(((uint64_t) ppa << 32) | lpa),  GFP_KERNEL);
         }
 
         NVMEV_DEBUG("Erasing %lu from XA.\n", index);
         xa_erase(&gcd->inv_mapping_xa, index);
+
+        /*
+         * We don't need this page anymore.
+         */
         mark_grain_invalid(shard, PPA_TO_PGA(m_ppa, 0), GRAIN_PER_PAGE);
     }
 
@@ -1876,6 +1687,9 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
                 inv_mapping_offs[line] / INV_ENTRY_SZ, 
                 inv_mapping_offs[line], INV_ENTRY_SZ);
 
+    /*
+     * The current in-memory invalid mapping buffer.
+     */
     spin_lock(&inv_m_spin);
     for(int j = 0; j < inv_mapping_offs[line] / (uint32_t) INV_ENTRY_SZ; j++) {
         lpa_t lpa = *(lpa_t*) (inv_mapping_bufs[line] + (j * INV_ENTRY_SZ));
@@ -1895,9 +1709,6 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
         entry->key = ((uint64_t) ppa << 32) | lpa;
         hash_add(inv_m_hash, &entry->node, entry->key);
         hsize++;
-
-        //xa_store(&gcd->gc_xa, ((uint64_t) ppa << 32) | lpa, 
-        //         xa_mk_value(((uint64_t) ppa << 32) | lpa), GFP_KERNEL);
     }
 
     NVMEV_ERROR("Hsize was %d\n", hsize);
@@ -1916,9 +1727,7 @@ void __clear_inv_mapping(struct demand_shard *demand_shard, unsigned long key) {
     struct gc_data *gcd = &demand_shard->gcd;
 
     NVMEV_DEBUG("Trying to erase %lu\n", key);
-    //spin_lock(&inv_m_spin);
     void* xa_entry = xa_erase(&gcd->inv_mapping_xa, key);
-    //spin_unlock(&inv_m_spin);
     NVMEV_ASSERT(xa_entry != NULL);
 
     return;
@@ -1929,9 +1738,10 @@ bool __valid_mapping(struct demand_shard *demand_shard, uint64_t lpa, uint64_t p
 #ifdef ORIGINAL
     return true;
 #else
-    uint64_t start = 0, end = 0;
-    start = ktime_get();
-
+    /*
+     * Where Plus determines if the KV pair at a grain is valid or not.
+     * If we find it in inv_m_hash, that means it was previously invalidated.
+     */
     uint64_t key = (ppa << 32) | lpa;
     bool valid = true;
     struct inv_entry *item;
@@ -1942,9 +1752,6 @@ bool __valid_mapping(struct demand_shard *demand_shard, uint64_t lpa, uint64_t p
             break;
         }
     } 
-
-    end = ktime_get();
-    mapping_searches += ktime_to_us(end) - ktime_to_us(start);
     return valid;
 #endif
 }
@@ -1957,9 +1764,7 @@ void __update_mapping_ppa(struct demand_shard *demand_shard, uint64_t new_ppa,
     struct gc_data *gcd = &demand_shard->gcd;
     unsigned long new_key = (line << 32) | new_ppa;
     NVMEV_DEBUG("%s adding %lu to XA.\n", __func__, new_key);
-    //spin_lock(&inv_m_spin);
     xa_store(&gcd->inv_mapping_xa, new_key, xa_mk_value(new_ppa), GFP_KERNEL);
-    //spin_unlock(&inv_m_spin);
     return;
 #endif
 }
@@ -1979,8 +1784,6 @@ void __clear_gc_data(struct demand_shard* demand_shard) {
         // Free the memory allocated for the item
         kfree(item);
     }
-
-    //xa_destroy(&gcd->gc_xa);
 }
 
 uint64_t user_pgs_this_gc = 0;
@@ -2107,6 +1910,11 @@ again:
     return wrote;
 }
 
+/*
+ * We found an invalid mapping page during GC.
+ * This page targets a superblock that we aren't currently GCing.
+ * It's still live, so we need to copy it somewhere else.
+ */
 void __copy_inv_map(struct demand_shard *shard, uint64_t old_grain, 
                     uint32_t target_line) {
     struct ssdparams *spp;
@@ -2423,7 +2231,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 #endif
             ppa_copy.g.pg++;
             NVMEV_INFO("1 skipping PPA %llu in GC.\n", pgidx);
-            __leftover_mapping(shard, l->id, pgidx);
             continue;
 #ifdef ORIGINAL
         }
@@ -2432,7 +2239,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             NVMEV_ASSERT(pg_iter->status == PG_INVALID);
             ppa_copy.g.pg++;
             NVMEV_INFO("2 skipping PPA %llu in GC.\n", pgidx);
-            __leftover_mapping(shard, l->id, pgidx);
             continue;
         }
 #endif
@@ -2509,7 +2315,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 clear_count++;
 
                 /*
-                 * A grain containing live LPA to PPA mapping information.
+                 * A grain containing live hash index to grain mapping 
+                 * information.
                  */
 
                 uint32_t lpa = __lpa_from_oob(oob[pgidx][i]);
@@ -2535,7 +2342,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                     NVMEV_DEBUG("CMT IDX %u moved from PPA %llu to PPA %u\n", 
                                  idx, pgidx, t_ppa);
                     i += len - 1;
-                    //clearing += ktime_to_us(ktime_get()) - ktime_to_us(clear_start);
                     atomic_set(&ht->outgoing, 0);
                     continue;
                 }
@@ -2547,13 +2353,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 mark_grain_invalid(shard, grain, len);
                 __copy_map(shard, idx, len);
                 i += len - 1;
-
-                //if(i + 1 < GRAIN_PER_PAGE && oob[pgidx][i + 1] == UINT_MAX) {
-                //    NVMEV_ERROR("Marking leftover grain %d invalid prev %u.\n", 
-                //                 i + 1, len);
-                //    mark_grain_invalid(shard, PPA_TO_PGA(pgidx, i + 1), 
-                //                       GRAIN_PER_PAGE - (i + 1));
-                //}
 
 				atomic_set(&ht->outgoing, 0);
                 clearing += ktime_to_us(ktime_get()) - ktime_to_us(clear_start);
@@ -2689,25 +2488,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
     }
 
     shadow_idx_idx = 0;
-
-	//if (cpp->enable_gc_delay) {
-	//	struct nand_cmd gcr = {
-	//		.type = GC_IO,
-	//		.cmd = NAND_READ,
-	//		.stime = 0,
-	//		.xfer_size = spp->pgsz * page_cnt,
-	//		.interleave_pci_dma = false,
-	//		.ppa = &ppa_copy,
-	//	};
-	//	ssd_advance_nand(shard->ssd, &gcr);
-
-    //    if(mapping_line) {
-    //        shard->stats.trans_r_tgc += spp->pgsz * page_cnt;
-    //    } else {
-    //        shard->stats.data_r_dgc += spp->pgsz * page_cnt;
-    //    }
-	//}
-
     clean_third_half += ktime_to_us(end) - ktime_to_us(start);
 
     return;
@@ -2919,12 +2699,6 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
 
     NVMEV_ERROR("Leaving GC for line %d \n", victim_line->id);
 
-    //schedule_internal_operation_cb(UINT_MAX,  0,
-    //                                NULL, 0, 0,
-    //                                __get_next_victim,
-    //                                NULL, false,
-    //                                NULL)
-
 	return nsecs_latest;
 }
 
@@ -2956,7 +2730,6 @@ void __mark_dirty(struct ht_section *ht) {
     if(ht->state == C_CANDIDATE) {
         ht->state = D_CANDIDATE;
     } else if(ht->state != D_CANDIDATE) {
-        //NVMEV_ERROR("Marking CMT %u dirty.\n", ht->idx);
         ht->state = DIRTY;
     }
 }
