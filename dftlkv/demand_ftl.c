@@ -623,259 +623,6 @@ static void conv_init_params(struct convparams *cpp)
 	cpp->pba_pcent = (int)((1 + cpp->op_area_pcent) * 100);
 }
 
-#ifndef ORIGINAL
-static bool __store(struct nvmev_ns *ns, struct nvmev_request *req, 
-                    struct nvmev_result *ret, bool internal,
-                    bool append);
-static void __update_map(struct demand_shard *shard, struct ht_section *ht,
-                         lpa_t lpa, void* mem, 
-                         struct h_to_g_mapping pte, uint32_t pos);
-static void __reclaim_completed_reqs(void);
-
-uint32_t lpas[EPP];
-uint32_t ppas[EPP];
-struct leaf_e e[EPP];
-
-#define REAP 4096
-void **bufs = NULL;
-
-struct fast_fill_args {
-    struct nvmev_ns *ns;
-    uint64_t size;
-    uint32_t vlen;
-    uint32_t pairs;
-};
-
-int fast_fill_t(void *data) {
-    struct fast_fill_args *args;
-    struct demand_shard *shard;
-    struct cache* cache;
-    struct ssdparams *spp;
-    struct nvmev_ns *ns;
-    uint64_t size;
-    uint32_t vlen;
-    uint32_t pairs;
-
-    args = (struct fast_fill_args*) data;
-    shard = __fast_fill_shard;
-    cache = &shard->cache;
-    spp = &shard->ssd->sp;
-    ns = args->ns;
-    size = args->size;
-    vlen = args->vlen;
-    pairs = args->pairs;
-
-    shard->fastmode = true;
-
-    vlen += sizeof(uint32_t);
-
-    uint64_t **oob = shard->oob;
-    uint8_t klen = 8;
-    uint32_t g_len = vlen / GRAINED_UNIT;
-
-    if(vlen % GRAINED_UNIT) {
-        g_len++;
-    }
-
-    if(GRAIN_PER_PAGE % g_len) {
-        NVMEV_INFO("Fastmode failed!\n");
-        return 0; 
-    }
-
-    NVMEV_ERROR("Starting fastmode vlen %u pairs %u.\n", vlen, pairs);
-
-    bufs = kzalloc_node(sizeof(char*) * REAP, GFP_KERNEL, numa_node_id());
-    for(int i = 0; i < REAP; i++) {
-        bufs[i] = kzalloc_node(vlen, GFP_KERNEL, numa_node_id());
-    } 
-
-    ktime_t tstart, tend; 
-    tstart = ktime_get();
-
-    for(uint64_t i = 1; i < pairs; i++) {
-        struct nvme_kv_command cmd;
-        memset(&cmd, 0, sizeof (struct nvme_kv_command));
-        cmd.common.opcode = nvme_cmd_kv_store;
-
-        NVMEV_ASSERT(klen == sizeof(i));
-        memcpy(bufs[i % REAP], &klen, sizeof(klen));
-        memcpy(bufs[i % REAP] + sizeof(klen), &i, sizeof(i));
-        memcpy(cmd.kv_store.key, &i, sizeof(uint64_t));
-        cmd.kv_store.key_len = klen - 1;
-
-        cmd.kv_store.dptr.prp1 = (__u64) bufs[i % REAP];
-        cmd.kv_store.value_len = vlen >> 2;
-		cmd.kv_store.invalid_byte = 0;
-
-        struct nvmev_request req = {
-            .cmd = (struct nvme_command*) &cmd,
-            .sq_id = 0,
-            .nsecs_start = 0,
-        };
-        struct nvmev_result ret = {
-            .nsecs_target = 0,
-            .status = NVME_SC_SUCCESS,
-            .cb = NULL,
-            .args = NULL,
-        };
-
-        __store(ns, &req, &ret, false, false);
-
-        if(i % REAP == 0) {
-            __reclaim_completed_reqs();
-        }
-
-        if(i > 0 && ((i & 1048575) == 0)) {
-            tend = ktime_get();
-            uint64_t elapsed = ktime_to_ns(ktime_sub(tend, tstart)) / 1000000000;
-
-            if(elapsed > 0) {
-                uint64_t ops_s = i / elapsed;
-                NVMEV_ERROR("%llu fastmode writes done. %llu elapsed. %llu ops/s\n", 
-                             i, elapsed, ops_s);
-            }
-
-            cond_resched();
-        }
-    }
-
-    NVMEV_ERROR("Before map.\n");
-
-    uint64_t collision = 0;
-    for(uint64_t i = 1; i < cache->nr_valid_tpages; i++) {
-        struct ht_section *ht = cache->ht[i];
-
-        if(!ht) {
-            NVMEV_ERROR("CMT IDX %u hadn't been written to yet.\n", ht->idx);
-            continue;
-        }
-
-        if(i % 1000 == 0) {
-            NVMEV_ERROR("Finished %llu out of %u CMTs.\n", 
-                         i, cache->nr_valid_tpages);
-        }
-
-        uint32_t t_ppa = atomic_read(&ht->t_ppa);
-        uint32_t cnt = 0;
-        uint64_t glen = ORIG_GLEN;
-        uint64_t leaf_glen = ORIG_GLEN - ROOT_G;
-        uint32_t cnt_bytes;
-
-        for(int i = 0; i < EPP; i++) {
-            if(ht->pair_mem[i]) {
-                cnt++;
-            }
-        }
-
-        cnt_bytes = cnt * sizeof(uint32_t) * 2;
-
-        if(cnt_bytes > (leaf_glen * GRAINED_UNIT)) {
-            glen = ROOT_G + (cnt_bytes / GRAINED_UNIT);
-
-            if(cnt_bytes % GRAINED_UNIT) {
-                glen++;
-            }
-
-            //NVMEV_ERROR("New glen %llu cnt_bytes %u cnt %u\n", 
-            //             glen, cnt_bytes, cnt);
-        }
-
-        if(t_ppa == UINT_MAX) {
-skip:
-            struct ppa p = get_new_page(shard, MAP_IO);
-            ppa_t ppa = ppa2pgidx(shard, &p);
-
-            advance_write_pointer(shard, MAP_IO);
-            mark_page_valid(shard, &p);
-            mark_grain_valid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
-
-            if(ppa == 0) {
-                mark_grain_invalid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
-                goto skip;
-            }
-
-            atomic_set(&ht->t_ppa, ppa);
-
-            oob[ppa][0] = (glen << 32) | (ht->idx * EPP);
-            for(int i = 1; i < GRAIN_PER_PAGE; i++) {
-                oob[ppa][i] = UINT_MAX;
-            }
-
-            ht->mappings = kzalloc_node(spp->pgsz, GFP_KERNEL, numa_node_id());
-            ht->mem = ht->mappings;
-            ht->len_on_disk = glen;
-            ht->g_off = 0;
-
-            if(glen < GRAIN_PER_PAGE) {
-                mark_grain_invalid(shard, PPA_TO_PGA(ppa, glen), 
-                                   GRAIN_PER_PAGE - glen);
-            }
-
-            struct root* root;
-            btree_init((struct root*) ht->mappings);
-            root = (struct root*) ht->mappings;
-            for(int i = root->cnt; i < glen - ROOT_G; i++) {
-                btree_expand(root);
-            }
-        }
-
-        ht->state = CLEAN;
-
-        struct root* root;
-        root = (struct root*) ht->mappings;
-
-        uint32_t leaf_e_idx = 0;
-
-        for(int i = 0; i < EPP; i++) {
-            if(ht->pair_mem[i]) {
-                lpa_t lpa = (ht->idx * EPP) + i;
-                e[leaf_e_idx].hidx = lpa;
-                e[leaf_e_idx].ppa = ht->fm_grains[OFFSET(lpa)];
-                leaf_e_idx++;
-                //ppa_t ppa = ht->fm_grains[OFFSET(lpa)];
-                //struct h_to_g_mapping pte;
-
-                //NVMEV_ERROR("Placing LPA %u PPA %u in FF.\n", 
-                //             lpa, ht->fm_grains[OFFSET(lpa)]);
-
-                //pte.lpa = lpa;
-                //atomic_set(&pte.ppa, ppa);
-                //__update_map(shard, ht, lpa, ht->pair_mem[i], pte, UINT_MAX);
-            }
-        }
-
-        btree_bulk_insert(root, e, leaf_e_idx);
-        ht->cached_cnt += leaf_e_idx;
-        ht->state = DIRTY;
-        ht->mappings = NULL;
-    }
-
-    shard->fastmode = false;
-    NVMEV_ERROR("Fast fill done. %llu collisions\n", collision);
-
-    kfree(args);
-
-    return 0;
-}
-
-void fast_fill(struct nvmev_ns *ns, uint64_t size, uint32_t vlen, uint32_t pairs) {
-    struct fast_fill_args *args;
-
-    args = kzalloc_node(sizeof(*args), GFP_KERNEL, numa_node_id());
-    args->ns = ns;
-    args->size = size;
-    args->vlen = vlen;
-    args->pairs = pairs;
-
-    kthread_run(fast_fill_t, args, "fastfiller");
-    return;
-}
-#else
-void fast_fill(struct nvmev_ns *ns, uint64_t size, uint32_t vlen, uint32_t pairs) {
-    NVMEV_ERROR("Fast fill for the original scheme hasn't been written yet!\n");
-}
-#endif
-
 int bg_gc_t(void*);
 int bg_ev_t(void*);
 
@@ -1791,57 +1538,6 @@ uint64_t gc_pgs_this_gc = 0;
 uint64_t map_pgs_this_gc = 0;
 uint64_t map_gc_pgs_this_gc = 0;
 
-static void __reclaim_completed_reqs(void)
-{
-	unsigned int turn;
-
-	for (turn = 0; turn < nvmev_vdev->config.nr_io_workers; turn++) {
-		struct nvmev_io_worker *worker;
-		struct nvmev_io_work *w;
-
-		unsigned int first_entry = -1;
-		unsigned int last_entry = -1;
-		unsigned int curr;
-		int nr_reclaimed = 0;
-
-		worker = &nvmev_vdev->io_workers[turn];
-
-		first_entry = worker->io_seq;
-		curr = first_entry;
-
-		while (curr != -1) {
-			w = &worker->work_queue[curr];
-			if (w->is_completed == true && w->is_copied == true &&
-			    w->nsecs_target <= worker->latest_nsecs) {
-				last_entry = curr;
-				curr = w->next;
-				nr_reclaimed++;
-			} else {
-				break;
-			}
-		}
-
-		if (last_entry != -1) {
-			w = &worker->work_queue[last_entry];
-			worker->io_seq = w->next;
-			if (w->next != -1) {
-				worker->work_queue[w->next].prev = -1;
-			}
-			w->next = -1;
-
-			w = &worker->work_queue[first_entry];
-			w->prev = worker->free_seq_end;
-
-			w = &worker->work_queue[worker->free_seq_end];
-			w->next = first_entry;
-
-			worker->free_seq_end = last_entry;
-			NVMEV_DEBUG_VERBOSE("%s: %u -- %u, %d\n", __func__,
-					first_entry, last_entry, nr_reclaimed);
-		}
-	}
-}
-
 static inline uint32_t __lpa_from_oob(uint64_t oob) {
     return oob & 0xFFFFFFFF;
 }
@@ -2153,12 +1849,12 @@ again:
          * If this pair is still on the line that's being garbage collected
          * at this point, we can try to switch with the new grain. If it's
          * not on the line anymore, it means it has already been updated
-         * in __store and we can skip this update.
+         * in store and we can skip this update.
          *
          * Update the ppa if and only if the value is the same as before,
-         * otherwise it has been updated outside of here (in __store)
+         * otherwise it has been updated outside of here (in store)
          * and the update will fail, which is fine as the updates
-         * in __store take precedence over GC copies.
+         * in store take precedence over GC copies.
          */
 
 #ifdef ORIGINAL
@@ -2264,7 +1960,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
             if(shard->offset / GRAINED_UNIT == grain) {
                 /*
-                 * Edge case where in __store we got the last
+                 * Edge case where in store we got the last
                  * page of a line for the offset, and GC thinks the
                  * line is available to garbage collect because all
                  * of the pages have been used.
@@ -2417,7 +2113,7 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                         /*
                          * We enter this path because while we were
                          * garbage collecting this line, this pair was
-                         * updated in __store. This means it created an 
+                         * updated in store. This means it created an 
                          * invalid mapping entry for this line, even though
                          * it's currently being garbage collected. We only
                          * collect invalid mapping entries right at the
@@ -3715,21 +3411,12 @@ cache:
         goto out;
     } else if(t_ppa != UINT_MAX) {
         nsecs_completed = __get_one(shard, ht, false, nsecs_latest, &missed);
-
-        //if(nsecs_completed > nsecs_latest) {
-        //    NVMEV_ERROR("This miss added %llu nanoseconds to our time. "
-        //                 "Latest was %llu\n",
-        //                 nsecs_completed - nsecs_latest, nsecs_latest);
-        //}
-
         nsecs_latest = max(nsecs_latest, nsecs_completed);
-
         shard->stats.t_read_on_read += spp->pgsz;
         goto cache;
     }
 
 out:
-    //atomic_set(&ht->outgoing, 0);
 
     if(status == 0) {
         //NVMEV_INFO("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
@@ -3784,14 +3471,6 @@ inline bool __crossing_page(struct ssdparams *spp, uint64_t offset, uint32_t vle
     return !((offset % spp->pgsz) + vlen <= spp->pgsz);
 }
 
-//inline bool __crossing_page(struct ssdparams *spp, uint64_t offset, uint32_t vlen) {
-//    uint64_t page_mask = spp->pgsz - 1;
-//    // Check if offset is at the start of a new page
-//    if ((offset & page_mask) == 0) return true;
-//    // Check if the operation crosses a page boundary
-//    return (offset & ~page_mask) != ((offset + vlen - 1) & ~page_mask);
-//}
-
 static struct hash_params *make_hash_params(uint64_t hash) {
 	struct hash_params *h_params = 
     (struct hash_params *)kzalloc_node(sizeof(struct hash_params), GFP_KERNEL, 
@@ -3841,12 +3520,6 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
         nsecs_latest = nsecs_xfer_completed;
     }
 
-    //if(key.key[0] == 'L') {
-    //    NVMEV_INFO("Log key write. Bid %llu log num %u vlen %u\n", 
-    //                *(uint64_t*) (key.key + 4), 
-    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), vlen);
-    //}
-
     uint64_t **oob = shard->oob;
     bool need_new = false;
 newpage:
@@ -3895,7 +3568,6 @@ newpage:
 
 again:
         cur_page = get_new_page(shard, USER_IO);
-        //NVMEV_ERROR("Advancing WP in store.\n");
         advance_write_pointer(shard, USER_IO);
         mark_page_valid(shard, &cur_page);
 
@@ -3907,19 +3579,11 @@ again:
         }
 
         shard->offset = ((uint64_t) ppa2pgidx(shard, &cur_page)) * spp->pgsz;
-        //NVMEV_ERROR("1 Set offset to %llu PPA %llu\n", 
-        //            shard->offset, G_IDX(shard->offset / GRAINED_UNIT));
     }
 
     NVMEV_ASSERT(vlen > klen);
     NVMEV_ASSERT(vlen <= spp->pgsz);
     NVMEV_ASSERT(klen <= 16);
-
-    //if(key.key[0] == 'L') {
-    //    NVMEV_INFO("Log key write. Bid %llu log num %u len %u\n", 
-    //                *(uint64_t*) (key.key + 4), 
-    //                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), vlen);
-    //}
 
     glen = vlen / GRAINED_UNIT;
     grain = shard->offset / GRAINED_UNIT;
@@ -3938,10 +3602,7 @@ again:
 		shard->offset += GRAINED_UNIT;
 	}
 
-//    NVMEV_INFO("2 Set offset to %llu PPA %llu\n", shard->offset, page);
-//
     if(need_new == true) {
-        //NVMEV_INFO("Going back.\n");
         goto append;
     }
 
@@ -3976,16 +3637,8 @@ lpa:
     nsecs_completed = __get_wallclock();
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-    //if(shard->offset == 0) {
-    //    //mark_grain_valid(shard, grain + glen, GRAIN_PER_PAGE - glen);
-    //    //mark_grain_invalid(shard, PPA_TO_PGA(page, 0), GRAIN_PER_PAGE);
-    //    goto newpage;
-    //}
-
     struct ht_section *ht = cache_get_ht(cache, lpa);
     uint32_t t_ppa = atomic_read(&ht->t_ppa);
-
-    //NVMEV_ERROR("Got LPA %u IDX %lu\n", lpa, IDX(lpa));
 
     if(shard->fastmode) {
         if(ht->pair_mem[OFFSET(lpa)]) {
@@ -4052,9 +3705,6 @@ skip:
         }
 
         ht->len_on_disk = GRAIN_PER_PAGE;
-        //for(int i = 1; i < GRAIN_PER_PAGE; i++) {
-        //    oob[ppa][i] = 0;
-        //}
 #else
         uint64_t glen = ORIG_GLEN;
         oob[ppa][0] = (glen << 32) | (ht->idx * EPP);
@@ -4070,19 +3720,6 @@ skip:
             }
 
             ht->len_on_disk = ORIG_GLEN;
-
-            //for(int i = 1; i < ORIG_GLEN; i++) {
-            //    oob[ppa][i] = 0;
-            //}
-
-            //for(int i = ORIG_GLEN; i < GRAIN_PER_PAGE; i++) {
-            //    /*
-            //     * We set to UINT_MAX here instead of 0 so that this mapping
-            //     * page will be recognized as length 1 if the OOB needs
-            //     * checked.
-            //     */
-            //    oob[ppa][i] = UINT_MAX;
-            //}
         } else {
             ht->len_on_disk = 1;
             ht->g_off = 0;
@@ -4103,14 +3740,7 @@ skip:
 
         ht->state = CLEAN;
         first = true;
-        //NVMEV_ERROR("Assigned a new T PPA %u to IDX %u\n", ppa, ht->idx);
 	}
-
-	//if(!shard->fastmode) {
-	//	while(atomic_read(&ht->outgoing) == 1) {
-	//		cpu_relax();
-	//	}
-	//}
 
     if(shard->fastmode) {
         goto fm_out;
@@ -4144,9 +3774,6 @@ cache:
 
             uint64_t old_g_off = G_OFFSET(g_from_pte);
             uint32_t len = __glen_from_oob(oob[G_IDX(g_from_pte)][old_g_off]);
-            //while(g_off + len < GRAIN_PER_PAGE && oob[G_IDX(pte.ppa)][g_off + len] == 0) {
-            //    len++;
-            //}
 
             //NVMEV_INFO("Got len %u PPA %u\n", len, G_IDX(pte.ppa));
 
@@ -4264,13 +3891,6 @@ append:
             shard->stats.cache_hit++;
         }
     } else if(t_ppa != UINT_MAX) {
-        //NVMEV_INFO("Miss for LPA %u IDX %lu\n", lpa, IDX(lpa));
-        //if (cache_full(cache)) {
-        //    nsecs_completed = __evict_one(shard, req, nsecs_latest, &credits);
-        //    nsecs_latest = max(nsecs_latest, nsecs_completed);
-        //    shard->stats.t_write_on_write += spp->pgsz;
-        //}
-
         nsecs_completed = __get_one(shard, ht, first, nsecs_latest, &missed);
         nsecs_latest = max(nsecs_latest, nsecs_completed);
 
@@ -4281,19 +3901,10 @@ append:
     }
 
     oob[page][g_off] = ((uint64_t) glen << 32) | lpa;
-    //for(int i = 1; i < glen; i++) {
-    //    oob[page][g_off + i] = 0;
-    //}
 
     shard->max_try = (h.cnt > shard->max_try) ? h.cnt : shard->max_try;
 
     __update_map(shard, ht, lpa, pair_mem, new_pte, pos);
-    //atomic_dec(&ht->outgoing);
-    //if (cache_full(cache)) {
-    //    nsecs_completed = __evict_one(shard, req, nsecs_latest, &credits);
-    //    nsecs_latest = max(nsecs_latest, nsecs_completed);
-    //    shard->stats.t_write_on_write += spp->pgsz;
-    //}
 
 out:
     shard->stats.write_req_cnt++;
@@ -4305,8 +3916,6 @@ out:
     //            klen, vlen, grain, page, lpa);
 
     if(!shard->fastmode) {
-        //NVMEV_ASSERT(atomic_read(&ht->outgoing) == 1);
-		//atomic_inc(&ht->outgoing);
         ret->cb = __release_map;
         ret->args = &ht->outgoing;
         ret->nsecs_target = nsecs_latest;
@@ -4411,6 +4020,289 @@ static bool conv_batch(struct nvmev_ns *ns, struct nvmev_request *req, struct nv
 
     //return true;
 }
+
+#ifndef ORIGINAL
+#define REAP 4096
+static void __reclaim_completed_reqs(void)
+{
+	unsigned int turn;
+
+	for (turn = 0; turn < nvmev_vdev->config.nr_io_workers; turn++) {
+		struct nvmev_io_worker *worker;
+		struct nvmev_io_work *w;
+
+		unsigned int first_entry = -1;
+		unsigned int last_entry = -1;
+		unsigned int curr;
+		int nr_reclaimed = 0;
+
+		worker = &nvmev_vdev->io_workers[turn];
+
+		first_entry = worker->io_seq;
+		curr = first_entry;
+
+		while (curr != -1) {
+			w = &worker->work_queue[curr];
+			if (w->is_completed == true && w->is_copied == true &&
+			    w->nsecs_target <= worker->latest_nsecs) {
+				last_entry = curr;
+				curr = w->next;
+				nr_reclaimed++;
+			} else {
+				break;
+			}
+		}
+
+		if (last_entry != -1) {
+			w = &worker->work_queue[last_entry];
+			worker->io_seq = w->next;
+			if (w->next != -1) {
+				worker->work_queue[w->next].prev = -1;
+			}
+			w->next = -1;
+
+			w = &worker->work_queue[first_entry];
+			w->prev = worker->free_seq_end;
+
+			w = &worker->work_queue[worker->free_seq_end];
+			w->next = first_entry;
+
+			worker->free_seq_end = last_entry;
+			NVMEV_DEBUG_VERBOSE("%s: %u -- %u, %d\n", __func__,
+					first_entry, last_entry, nr_reclaimed);
+		}
+	}
+}
+
+void **bufs = NULL;
+
+struct fast_fill_args {
+    struct nvmev_ns *ns;
+    uint64_t size;
+    uint32_t vlen;
+    uint32_t pairs;
+};
+
+int fast_fill_t(void *data) {
+    struct fast_fill_args *args;
+    struct demand_shard *shard;
+    struct cache* cache;
+    struct ssdparams *spp;
+    struct nvmev_ns *ns;
+    uint64_t size;
+    uint32_t vlen;
+    uint32_t pairs;
+
+    args = (struct fast_fill_args*) data;
+    shard = __fast_fill_shard;
+    cache = &shard->cache;
+    spp = &shard->ssd->sp;
+    ns = args->ns;
+    size = args->size;
+    vlen = args->vlen;
+    pairs = args->pairs;
+
+    shard->fastmode = true;
+
+    vlen += sizeof(uint32_t);
+
+    uint64_t **oob = shard->oob;
+    uint8_t klen = 8;
+    uint32_t g_len = vlen / GRAINED_UNIT;
+
+    if(vlen % GRAINED_UNIT) {
+        g_len++;
+    }
+
+    if(GRAIN_PER_PAGE % g_len) {
+        NVMEV_INFO("Fastmode failed!\n");
+        return 0; 
+    }
+
+    NVMEV_ERROR("Starting fastmode vlen %u pairs %u.\n", vlen, pairs);
+
+    bufs = kzalloc_node(sizeof(char*) * REAP, GFP_KERNEL, numa_node_id());
+    for(int i = 0; i < REAP; i++) {
+        bufs[i] = kzalloc_node(vlen, GFP_KERNEL, numa_node_id());
+    } 
+
+    ktime_t tstart, tend; 
+    tstart = ktime_get();
+
+    for(uint64_t i = 1; i < pairs; i++) {
+        struct nvme_kv_command cmd;
+        memset(&cmd, 0, sizeof (struct nvme_kv_command));
+        cmd.common.opcode = nvme_cmd_kv_store;
+
+        NVMEV_ASSERT(klen == sizeof(i));
+        memcpy(bufs[i % REAP], &klen, sizeof(klen));
+        memcpy(bufs[i % REAP] + sizeof(klen), &i, sizeof(i));
+        memcpy(cmd.kv_store.key, &i, sizeof(uint64_t));
+        cmd.kv_store.key_len = klen - 1;
+
+        cmd.kv_store.dptr.prp1 = (__u64) bufs[i % REAP];
+        cmd.kv_store.value_len = vlen >> 2;
+		cmd.kv_store.invalid_byte = 0;
+
+        struct nvmev_request req = {
+            .cmd = (struct nvme_command*) &cmd,
+            .sq_id = 0,
+            .nsecs_start = 0,
+        };
+        struct nvmev_result ret = {
+            .nsecs_target = 0,
+            .status = NVME_SC_SUCCESS,
+            .cb = NULL,
+            .args = NULL,
+        };
+
+        __store(ns, &req, &ret, false, false);
+
+        if(i % REAP == 0) {
+            __reclaim_completed_reqs();
+        }
+
+        if(i > 0 && ((i & 1048575) == 0)) {
+            tend = ktime_get();
+            uint64_t elapsed = ktime_to_ns(ktime_sub(tend, tstart)) / 1000000000;
+
+            if(elapsed > 0) {
+                uint64_t ops_s = i / elapsed;
+                NVMEV_ERROR("%llu fastmode writes done. %llu elapsed. %llu ops/s\n", 
+                             i, elapsed, ops_s);
+            }
+
+            cond_resched();
+        }
+    }
+
+    NVMEV_ERROR("Before map.\n");
+
+    uint64_t collision = 0;
+    for(uint64_t i = 1; i < cache->nr_valid_tpages; i++) {
+        struct ht_section *ht = cache->ht[i];
+
+        if(!ht) {
+            NVMEV_ERROR("CMT IDX %u hadn't been written to yet.\n", ht->idx);
+            continue;
+        }
+
+        if(i % 1000 == 0) {
+            NVMEV_ERROR("Finished %llu out of %u CMTs.\n", 
+                         i, cache->nr_valid_tpages);
+        }
+
+        uint32_t t_ppa = atomic_read(&ht->t_ppa);
+        uint32_t cnt = 0;
+        uint64_t glen = ORIG_GLEN;
+        uint64_t leaf_glen = ORIG_GLEN - ROOT_G;
+        uint32_t cnt_bytes;
+
+        for(int i = 0; i < EPP; i++) {
+            if(ht->pair_mem[i]) {
+                cnt++;
+            }
+        }
+
+        cnt_bytes = cnt * sizeof(uint32_t) * 2;
+
+        if(cnt_bytes > (leaf_glen * GRAINED_UNIT)) {
+            glen = ROOT_G + (cnt_bytes / GRAINED_UNIT);
+
+            if(cnt_bytes % GRAINED_UNIT) {
+                glen++;
+            }
+
+            //NVMEV_ERROR("New glen %llu cnt_bytes %u cnt %u\n", 
+            //             glen, cnt_bytes, cnt);
+        }
+
+        if(t_ppa == UINT_MAX) {
+skip:
+            struct ppa p = get_new_page(shard, MAP_IO);
+            ppa_t ppa = ppa2pgidx(shard, &p);
+
+            advance_write_pointer(shard, MAP_IO);
+            mark_page_valid(shard, &p);
+            mark_grain_valid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+
+            if(ppa == 0) {
+                mark_grain_invalid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+                goto skip;
+            }
+
+            atomic_set(&ht->t_ppa, ppa);
+
+            oob[ppa][0] = (glen << 32) | (ht->idx * EPP);
+            for(int i = 1; i < GRAIN_PER_PAGE; i++) {
+                oob[ppa][i] = UINT_MAX;
+            }
+
+            ht->mappings = kzalloc_node(spp->pgsz, GFP_KERNEL, numa_node_id());
+            ht->mem = ht->mappings;
+            ht->len_on_disk = glen;
+            ht->g_off = 0;
+
+            if(glen < GRAIN_PER_PAGE) {
+                mark_grain_invalid(shard, PPA_TO_PGA(ppa, glen), 
+                                   GRAIN_PER_PAGE - glen);
+            }
+
+            struct root* root;
+            btree_init((struct root*) ht->mappings);
+            root = (struct root*) ht->mappings;
+            for(int i = root->cnt; i < glen - ROOT_G; i++) {
+                btree_expand(root);
+            }
+        }
+
+        ht->state = CLEAN;
+
+        struct root* root;
+        root = (struct root*) ht->mappings;
+
+        uint32_t leaf_e_idx = 0;
+
+        for(int i = 0; i < EPP; i++) {
+            if(ht->pair_mem[i]) {
+                lpa_t lpa = (ht->idx * EPP) + i;
+                e[leaf_e_idx].hidx = lpa;
+                e[leaf_e_idx].ppa = ht->fm_grains[OFFSET(lpa)];
+                leaf_e_idx++;
+            }
+        }
+
+        btree_bulk_insert(root, e, leaf_e_idx);
+        ht->cached_cnt += leaf_e_idx;
+        ht->state = DIRTY;
+        ht->mappings = NULL;
+    }
+
+    shard->fastmode = false;
+    NVMEV_ERROR("Fast fill done. %llu collisions\n", collision);
+
+    kfree(args);
+
+    return 0;
+}
+
+void fast_fill(struct nvmev_ns *ns, uint64_t size, uint32_t vlen, uint32_t pairs) {
+    struct fast_fill_args *args;
+
+    args = kzalloc_node(sizeof(*args), GFP_KERNEL, numa_node_id());
+    args->ns = ns;
+    args->size = size;
+    args->vlen = vlen;
+    args->pairs = pairs;
+
+    kthread_run(fast_fill_t, args, "fastfiller");
+    return;
+}
+#else
+void fast_fill(struct nvmev_ns *ns, uint64_t size, uint32_t vlen, uint32_t pairs) {
+    NVMEV_ERROR("Fast fill for the original scheme hasn't been written yet!\n");
+}
+#endif
 
 static void conv_flush(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
