@@ -1043,16 +1043,6 @@ void mark_page_valid(struct demand_shard *demand_shard, struct ppa *ppa)
 	pg = get_pg(demand_shard->ssd, ppa);
 	NVMEV_ASSERT(pg->status == PG_FREE);
 	pg->status = PG_VALID;
-
-	///* update corresponding block status */
-	//blk = get_blk(demand_shard->ssd, ppa);
-	//NVMEV_ASSERT(blk->vpc >= 0 && blk->vpc < spp->pgs_per_blk);
-	//blk->vpc++;
-
-	///* update corresponding line status */
-	//line = get_line(demand_shard, ppa);
-	//NVMEV_ASSERT(line->vpc >= 0 && line->vpc < spp->pgs_per_line);
-	//line->vpc++;
 }
 
 uint64_t __maybe_advance(struct demand_shard *shard, struct ppa *ppa, int type,
