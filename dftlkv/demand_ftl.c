@@ -97,6 +97,12 @@ inline bool last_pg_in_wordline(struct demand_shard *demand_shard, struct ppa *p
 	return (ppa->g.pg % spp->pgs_per_oneshotpg) == (spp->pgs_per_oneshotpg - 1);
 }
 
+inline bool last_pg_in_line(struct demand_shard *demand_shard, struct ppa *ppa)
+{
+	struct ssdparams *spp = &demand_shard->ssd->sp;
+	return (ppa->g.pg % spp->pgs_per_line) == (spp->pgs_per_line - 1);
+}
+
 static bool should_gc(struct demand_shard *demand_shard)
 {
 	return (demand_shard->lm.free_line_cnt <= demand_shard->cp.gc_thres_lines);
