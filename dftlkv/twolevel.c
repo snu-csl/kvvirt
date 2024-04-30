@@ -12,7 +12,7 @@ static inline uint64_t __cycles(void)
     return ((uint64_t)high << 32) | low;
 }
 
-void btree_init(struct root *root) {
+void twolevel_init(struct root *root) {
     struct leaf *leaf;
     char* ptr;
     
@@ -34,9 +34,9 @@ void btree_init(struct root *root) {
     }
 }
 
-void btree_expand(struct root *root) {
+void twolevel_expand(struct root *root) {
     root->cnt++;
-    NVMEV_INFO("Expanded btree to %u leaves.\n", root->cnt);
+    NVMEV_INFO("Expanded twolevel to %u leaves.\n", root->cnt);
 }
 
 static int cmp_hidx(const void *a, const void *b)
@@ -81,7 +81,7 @@ uint32_t __new_roots(uint32_t *root_keys, struct leaf_e* leaves,
     return root_entries;
 }
 
-void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
+void twolevel_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
     struct leaf *l;
     char* ptr;
     uint32_t new_root_keys[IN_ROOT];
@@ -128,7 +128,7 @@ void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
     return;
 }
 
-void btree_reload(struct ht_section *ht, struct root* root, 
+void twolevel_reload(struct ht_section *ht, struct root* root, 
                   uint32_t hidx, uint32_t ppa) {
     uint32_t new_root_cnt = 0, before;
     uint32_t new_root_keys[IN_ROOT];
@@ -188,7 +188,7 @@ void btree_reload(struct ht_section *ht, struct root* root,
      * Reinsert. Includes original to-be-inserted pair.
      */
     for(int i = 0; i < tmp_leaf_idx; i++) {
-        btree_insert(ht, root, tmp_leaves[i].hidx, tmp_leaves[i].ppa, UINT_MAX);
+        twolevel_insert(ht, root, tmp_leaves[i].hidx, tmp_leaves[i].ppa, UINT_MAX);
     }
 
     reloading = 0;
@@ -213,14 +213,14 @@ int __lower_bound(struct root *root, uint32_t hidx) {
 	return left;
 }
 
-void btree_direct_read(struct root *root, uint32_t pos, 
+void twolevel_direct_read(struct root *root, uint32_t pos, 
                        void* out, uint32_t len) {
     char* ptr;
     ptr = (char*) root;
     memcpy(out, ptr + pos, len);
 }
 
-void btree_insert(struct ht_section *ht, struct root *root, 
+void twolevel_insert(struct ht_section *ht, struct root *root, 
                   uint32_t hidx, uint32_t ppa, uint32_t pos) {
     int i = 0;
     struct leaf *leaf;
@@ -241,7 +241,7 @@ void btree_insert(struct ht_section *ht, struct root *root,
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
     if(leaf->hidx[IN_LEAF - 1] != UINT_MAX) {
         NVMEV_ASSERT(!reloading);
-        btree_reload(ht, root, hidx, ppa);
+        twolevel_reload(ht, root, hidx, ppa);
         return;
     }
 
@@ -256,7 +256,7 @@ void btree_insert(struct ht_section *ht, struct root *root,
     }
 }
 
-uint32_t btree_find(struct root *root, uint32_t hidx, uint32_t *pos) {
+uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     int i, j;
     struct leaf *leaf;
     uint32_t ret;

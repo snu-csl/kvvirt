@@ -154,7 +154,7 @@ struct h_to_g_mapping cache_hidx_to_grain(struct ht_section *ht, uint32_t hidx,
 
     root = (struct root*) ht->mappings;
     ret.hidx = hidx;
-    atomic_set(&ret.ppa, btree_find(root, hidx, pos));
+    atomic_set(&ret.ppa, twolevel_find(root, hidx, pos));
 
     return ret;
 #endif

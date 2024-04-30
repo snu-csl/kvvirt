@@ -1829,7 +1829,7 @@ again:
 #else
     struct root *root;
     root = (struct root*) ht->mappings;
-    btree_direct_read(root, pos, &before, sizeof(before));
+    twolevel_direct_read(root, pos, &before, sizeof(before));
 #endif
 
     if(__grain2lineid(shard, before) == gc_line) {
@@ -1850,7 +1850,7 @@ again:
 #ifdef ORIGINAL
         atomic_cmpxchg(&ht->mappings[pos].ppa, before, grain);
 #else
-        btree_insert(ht, root, lpa, grain, pos);
+        twolevel_insert(ht, root, lpa, grain, pos);
 #endif
     } else {
         NVMEV_ASSERT(false);
@@ -2747,17 +2747,17 @@ static void __update_map(struct demand_shard *shard, struct ht_section *ht,
 
     if(ht->cached_cnt == max && pos == UINT_MAX) {
         __expand_map_entry(shard, ht, pte, mem);
-        btree_expand(root);
-        btree_reload(ht, root, UINT_MAX, UINT_MAX);
+        twolevel_expand(root);
+        twolevel_reload(ht, root, UINT_MAX, UINT_MAX);
     }
 
 	if(pos != UINT_MAX) {
         ppa_t old_ppa;
-        btree_direct_read(root, pos, &old_ppa, sizeof(old_ppa));
+        twolevel_direct_read(root, pos, &old_ppa, sizeof(old_ppa));
         __record_inv_mapping(shard, lpa, old_ppa, NULL);
     }
 
-    btree_insert(ht, root, lpa, atomic_read(&pte.ppa), pos);
+    twolevel_insert(ht, root, lpa, atomic_read(&pte.ppa), pos);
     ht->pair_mem[OFFSET(lpa)] = mem;
     return;
 #endif
@@ -3079,7 +3079,7 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
             ht->pair_mem[i] = NULL;
         }
 #else
-        btree_init((struct root*) ht->mappings);
+        twolevel_init((struct root*) ht->mappings);
 
         ht->len_on_disk = ORIG_GLEN;
         ht->g_off = 0;
@@ -4239,10 +4239,10 @@ skip:
             }
 
             struct root* root;
-            btree_init((struct root*) ht->mappings);
+            twolevel_init((struct root*) ht->mappings);
             root = (struct root*) ht->mappings;
             for(int i = root->cnt; i < glen - ROOT_G; i++) {
-                btree_expand(root);
+                twolevel_expand(root);
             }
         }
 
@@ -4262,7 +4262,7 @@ skip:
             }
         }
 
-        btree_bulk_insert(root, e, leaf_e_idx);
+        twolevel_bulk_insert(root, e, leaf_e_idx);
         ht->cached_cnt += leaf_e_idx;
         ht->state = DIRTY;
         ht->mappings = NULL;

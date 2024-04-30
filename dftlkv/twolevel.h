@@ -39,15 +39,15 @@ struct leaf_e {
     uint32_t ppa;
 };
 
-void btree_init(struct root *root);
-void btree_insert(struct ht_section *ht, struct root *root, 
+void twolevel_init(struct root *root);
+void twolevel_insert(struct ht_section *ht, struct root *root, 
                   uint32_t hidx, uint32_t ppa, uint32_t pos);
-uint32_t btree_find(struct root *root, uint32_t hidx, uint32_t *pos);
-void btree_expand(struct root *root);
-void btree_reload(struct ht_section *ht, struct root *root, 
+uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos);
+void twolevel_expand(struct root *root);
+void twolevel_reload(struct ht_section *ht, struct root *root, 
                   uint32_t hidx, uint32_t ppa);
-void btree_direct_read(struct root *root, uint32_t pos, 
+void twolevel_direct_read(struct root *root, uint32_t pos, 
                        void* out, uint32_t len);
-void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt);
+void twolevel_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt);
 
 #endif
