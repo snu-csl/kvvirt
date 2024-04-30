@@ -234,10 +234,9 @@ static_assert((ZONE_SIZE % DIES_PER_ZONE) == 0);
 #define NPCINPAGE (PAGESIZE/PIECE)
 
 /*
- * Define this to use the standard grain bitmap GC.
- * Undefine to use the new invalid-mapping-page based GC.
+ * Undefine for Plus.
  */
-#define ORIGINAL
+#undef ORIGINAL
 
 #ifdef ORIGINAL
 #define PIECE 512

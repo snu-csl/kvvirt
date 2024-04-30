@@ -2,7 +2,7 @@
 #include "ssd_config.h"
 
 #ifndef ORIGINAL
-#include "btree.h"
+#include "twolevel.h"
 int reloading = 0;
 
 static inline uint64_t __cycles(void)
@@ -29,7 +29,7 @@ void btree_init(struct root *root) {
         //leaf->cnt = 0;
 
         for(int j = 0; j < IN_LEAF; j++) {
-            leaf->lpa[j] = UINT_MAX;
+            leaf->hidx[j] = UINT_MAX;
             leaf->ppa[j] = UINT_MAX;
         }
     }
@@ -40,14 +40,14 @@ void btree_expand(struct root *root) {
     NVMEV_INFO("Expanded btree to %u leaves.\n", root->cnt);
 }
 
-static int cmp_lpa(const void *a, const void *b)
+static int cmp_hidx(const void *a, const void *b)
 {
     const struct leaf_e *la = a;
     const struct leaf_e *lb = b;
     
-    if (la->lpa < lb->lpa)
+    if (la->hidx < lb->hidx)
         return -1;
-    if (la->lpa > lb->lpa)
+    if (la->hidx > lb->hidx)
         return 1;
     return 0;
 }
@@ -76,7 +76,7 @@ uint32_t __new_roots(uint32_t *root_keys, struct leaf_e* leaves,
         }
 
         if(i < root_entries - 1) {
-            root_keys[i] = leaves[key_index].lpa;
+            root_keys[i] = leaves[key_index].hidx;
         } else {
             root_keys[i] = UINT_MAX;
         }
@@ -93,7 +93,7 @@ void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
     uint32_t cur_root, cur_root_idx, cur_leaf, leaf_idx, idx;
 
     ptr = (char*) root;
-    sort(e, cnt, sizeof(struct leaf_e), cmp_lpa, NULL);
+    sort(e, cnt, sizeof(struct leaf_e), cmp_hidx, NULL);
 
     __new_roots(new_root_keys, e, cnt, root->cnt);
 
@@ -112,13 +112,13 @@ void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
     while(1) {
         if(leaf_idx == cnt) {
             break;
-        } else if(e[leaf_idx].lpa <= cur_root) {
-            NVMEV_ASSERT(e[leaf_idx].lpa > 0);
+        } else if(e[leaf_idx].hidx <= cur_root) {
+            NVMEV_ASSERT(e[leaf_idx].hidx > 0);
 
-            l->lpa[idx] = e[leaf_idx].lpa;
+            l->hidx[idx] = e[leaf_idx].hidx;
             l->ppa[idx] = e[leaf_idx].ppa;
             //NVMEV_ERROR("Inserted LPA %u PPA %u to leaf %u pos %u cur_root %u\n", 
-            //             e[leaf_idx].lpa, e[leaf_idx].ppa, cur_leaf, 
+            //             e[leaf_idx].hidx, e[leaf_idx].ppa, cur_leaf, 
             //             idx, cur_root);
             leaf_idx++;
             idx++;
@@ -138,15 +138,15 @@ void btree_bulk_insert(struct root* root, struct leaf_e *e, uint32_t cnt) {
     return;
 }
 
-void btree_reload(struct cmt_struct *cmt, struct root* root, 
-                  uint32_t lpa, uint32_t ppa) {
+void btree_reload(struct ht_section *ht, struct root* root, 
+                  uint32_t hidx, uint32_t ppa) {
     uint32_t new_root_cnt = 0, before;
     uint32_t new_root_keys[IN_ROOT];
     struct leaf *tmp_leaf;
     char* ptr;
     int i;
 
-    before = cmt->cached_cnt;
+    before = ht->cached_cnt;
     tmp_leaf_idx = 0;
     ptr = (char*) root;
     i = 0;
@@ -156,39 +156,39 @@ void btree_reload(struct cmt_struct *cmt, struct root* root,
     for(i = 0; i < root->cnt; i++) {
         tmp_leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
         for(int j = 0; j < IN_LEAF; j++) {
-            if(tmp_leaf->lpa[j] == UINT_MAX) {
+            if(tmp_leaf->hidx[j] == UINT_MAX) {
                 break;
             }
 
             //NVMEV_INFO("Adding leaf %d LPA %u PPA %u to list.\n", 
-            //        i, tmp_leaf->lpa[j], tmp_leaf->ppa[j]);
-            tmp_leaves[tmp_leaf_idx].lpa = tmp_leaf->lpa[j];
+            //        i, tmp_leaf->hidx[j], tmp_leaf->ppa[j]);
+            tmp_leaves[tmp_leaf_idx].hidx = tmp_leaf->hidx[j];
             tmp_leaves[tmp_leaf_idx].ppa = tmp_leaf->ppa[j];
 
-            tmp_leaf->lpa[j] = UINT_MAX;
+            tmp_leaf->hidx[j] = UINT_MAX;
             tmp_leaf->ppa[j] = UINT_MAX;
 
             tmp_leaf_idx++;
         }
     }
 
-    if(lpa != UINT_MAX) {
+    if(hidx != UINT_MAX) {
         //NVMEV_INFO("Finally adding LPA %u PPA %u to list.\n", 
-        //             lpa, ppa);
-        tmp_leaves[tmp_leaf_idx].lpa = lpa;
+        //             hidx, ppa);
+        tmp_leaves[tmp_leaf_idx].hidx = hidx;
         tmp_leaves[tmp_leaf_idx].ppa = ppa;
         tmp_leaf_idx++;
     }
 
-    sort(tmp_leaves, tmp_leaf_idx, sizeof(struct leaf_e), cmp_lpa, NULL);
-    cmt->cached_cnt -= tmp_leaf_idx;
+    sort(tmp_leaves, tmp_leaf_idx, sizeof(struct leaf_e), cmp_hidx, NULL);
+    ht->cached_cnt -= tmp_leaf_idx;
 
     NVMEV_INFO("Reduced cached count to %u before upcoming shuffle.\n",
-            cmt->cached_cnt);
+            ht->cached_cnt);
 
     //NVMEV_INFO("After sorting:\n");
     //for(int i = 0; i < tmp_leaf_idx; i++) {
-    //    NVMEV_INFO("LPA %u PPA %u\n", tmp_leaves[i].lpa, tmp_leaves[i].ppa);
+    //    NVMEV_INFO("LPA %u PPA %u\n", tmp_leaves[i].hidx, tmp_leaves[i].ppa);
     //}    
 
     /*
@@ -213,23 +213,23 @@ void btree_reload(struct cmt_struct *cmt, struct root* root,
      * Reinsert. Includes original to-be-inserted pair.
      */
     for(int i = 0; i < tmp_leaf_idx; i++) {
-        btree_insert(cmt, root, tmp_leaves[i].lpa, tmp_leaves[i].ppa, UINT_MAX);
+        btree_insert(ht, root, tmp_leaves[i].hidx, tmp_leaves[i].ppa, UINT_MAX);
     }
 
     reloading = 0;
 
-    if(cmt->cached_cnt != before) {
-        NVMEV_INFO("Mismatch before %d after %d\n", before, cmt->cached_cnt);
+    if(ht->cached_cnt != before) {
+        NVMEV_INFO("Mismatch before %d after %d\n", before, ht->cached_cnt);
     }
-    NVMEV_ASSERT(cmt->cached_cnt == before);
+    NVMEV_ASSERT(ht->cached_cnt == before);
     return;
 }
 
-int __lower_bound(struct root *root, uint32_t lpa) {
+int __lower_bound(struct root *root, uint32_t hidx) {
 	int left = 0, right = root->cnt - 1, mid;
 	while (left <= right) {
 		mid = left + (right - left) / 2;
-		if (root->entries[mid] < lpa) {
+		if (root->entries[mid] < hidx) {
 			left = mid + 1;
 		} else {
 			right = mid - 1;
@@ -245,8 +245,8 @@ void btree_direct_read(struct root *root, uint32_t pos,
     memcpy(out, ptr + pos, len);
 }
 
-void btree_insert(struct cmt_struct *cmt, struct root *root, 
-                  uint32_t lpa, uint32_t ppa, uint32_t pos) {
+void btree_insert(struct ht_section *ht, struct root *root, 
+                  uint32_t hidx, uint32_t ppa, uint32_t pos) {
     int i = 0;
     struct leaf *leaf;
     char* ptr;
@@ -257,52 +257,52 @@ void btree_insert(struct cmt_struct *cmt, struct root *root,
 
     if(!reloading) {
         //NVMEV_INFO("Inserting LPA %u PPA %u pos %u. Had %u leaves. Will be %u cached %u max.\n", 
-        //        lpa, ppa, pos, root->cnt, cmt->cached_cnt + 1, max);
+        //        hidx, ppa, pos, root->cnt, ht->cached_cnt + 1, max);
     } else {
         NVMEV_INFO("Inserting LPA %u PPA %u in reload. Had %u leaves. Will be %u cached %u max.\n", 
-                lpa, ppa, root->cnt, cmt->cached_cnt + 1, max);
+                hidx, ppa, root->cnt, ht->cached_cnt + 1, max);
     }
 
     if(pos != UINT_MAX) {
         NVMEV_INFO("Updating LPA %u PPA %u directly at %u\n",
-                     lpa, ppa, pos);
+                     hidx, ppa, pos);
         memcpy(ptr + pos, &ppa, sizeof(ppa));
         return;
     }
 
-    cmt->cached_cnt++;
-	i = __lower_bound(root, lpa);
+    ht->cached_cnt++;
+	i = __lower_bound(root, hidx);
 
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-    if(leaf->lpa[IN_LEAF - 1] != UINT_MAX) {
+    if(leaf->hidx[IN_LEAF - 1] != UINT_MAX) {
         NVMEV_ASSERT(!reloading);
         NVMEV_INFO("LEAF FULL!!! REDISTRIBUTE!!!\n");
-        btree_reload(cmt, root, lpa, ppa);
+        btree_reload(ht, root, hidx, ppa);
         return;
     }
 
     if(i == root->cnt - 1) {
         NVMEV_INFO("Not going to update highest key of last leaf.\n");
-    } else if(lpa >= root->entries[i] || root->entries[i] == UINT_MAX) {
+    } else if(hidx >= root->entries[i] || root->entries[i] == UINT_MAX) {
         NVMEV_INFO("Assigning new highest LPA %u when old LPA was %u\n", 
-                     lpa, root->entries[i]);
-        root->entries[i] = lpa;
+                     hidx, root->entries[i]);
+        root->entries[i] = hidx;
     }
 
     for(int j = 0; j < IN_LEAF; j++) {
-        if(leaf->lpa[j] == UINT_MAX) {
-            leaf->lpa[j] = lpa;
+        if(leaf->hidx[j] == UINT_MAX) {
+            leaf->hidx[j] = hidx;
             leaf->ppa[j] = ppa;
             break;
         }
     }
 
     //NVMEV_INFO("Added LPA %u PPA %u to slot %u in leaf %d\n", 
-    //             lpa, ppa, leaf->cnt - 1, i);
+    //             hidx, ppa, leaf->cnt - 1, i);
 }
 
 static uint64_t sample_cnt = 0;
-uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
+uint32_t btree_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     int i, j;
     struct leaf *leaf;
     uint32_t ret;
@@ -313,9 +313,9 @@ uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
     ret = UINT_MAX;
     ptr = (char*) root;
 
-    NVMEV_INFO("Trying to find LPA %u\n", lpa);
+    NVMEV_INFO("Trying to find LPA %u\n", hidx);
 
-	i = __lower_bound(root, lpa);
+	i = __lower_bound(root, hidx);
 
     if(i == root->cnt) {
         goto out;
@@ -327,9 +327,9 @@ uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
     for(j = 0; j < IN_LEAF; j++) {
         //jumps++;
         //NVMEV_INFO("Checking LPA %u leaf %d cnt %u\n", 
-        //             leaf->lpa[j], i, leaf->cnt);
-        if(leaf->lpa[j] == lpa) {
-            NVMEV_INFO("Returning PPA %u for LPA %u\n", leaf->ppa[j], lpa);
+        //             leaf->hidx[j], i, leaf->cnt);
+        if(leaf->hidx[j] == hidx) {
+            NVMEV_INFO("Returning PPA %u for LPA %u\n", leaf->ppa[j], hidx);
 
             //if(sample) {
             //    end = __cycles();
@@ -344,13 +344,13 @@ uint32_t btree_find(struct root *root, uint32_t lpa, uint32_t *pos) {
             }
 
             return leaf->ppa[j];
-        } else if(leaf->lpa[j] == UINT_MAX) {
+        } else if(leaf->hidx[j] == UINT_MAX) {
             break;
         }
     }
 
 out:
-    NVMEV_INFO("LPA %u not found!!\n", lpa);
+    NVMEV_INFO("LPA %u not found!!\n", hidx);
     return ret;
 }
 
@@ -372,7 +372,7 @@ out:
 //int main() {
 //    void* buf;
 //    struct root *root;
-//    struct cmt_struct cmt;
+//    struct ht_section ht;
 //    int entry;
 //    uint32_t max;
 //    uint32_t pos;
@@ -386,8 +386,8 @@ out:
 //    root = (struct root*) buf;
 //    btree_init(root);
 //
-//    cmt.cached_cnt = 0;
-//    cmt.len_on_disk = 5;
+//    ht.cached_cnt = 0;
+//    ht.len_on_disk = 5;
 //
 //    for(int i = 0; i < NUM; i++) {
 //again:
@@ -403,22 +403,22 @@ out:
 //    for(int i = 0; i < NUM; i++) {
 //        max = root->cnt * IN_LEAF;
 //
-//        if(cmt.cached_cnt == max) {
+//        if(ht.cached_cnt == max) {
 //            btree_expand(root);
-//            btree_reload(&cmt, root, UINT_MAX, UINT_MAX);
-//            cmt.len_on_disk++;
+//            btree_reload(&ht, root, UINT_MAX, UINT_MAX);
+//            ht.len_on_disk++;
 //        }
 //
 //        entry = keys[i];
 //        if(btree_find(root, keys[i], &pos) == UINT_MAX) {
-//            btree_insert(&cmt, root, entry, rand(), UINT_MAX);
+//            btree_insert(&ht, root, entry, rand(), UINT_MAX);
 //
 //            if(btree_find(root, keys[i], NULL) == UINT_MAX) {
 //                NVMEV_INFO("Find failed for key %d!\n", keys[i]);
 //                NVMEV_ASSERT(0);
 //            }
 //        } else {
-//            btree_insert(&cmt, root, entry, rand(), pos);
+//            btree_insert(&ht, root, entry, rand(), pos);
 //        }
 //
 //        pos = UINT_MAX;

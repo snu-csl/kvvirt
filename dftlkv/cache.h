@@ -123,4 +123,5 @@ struct h_to_g_mapping cache_hidx_to_grain(struct ht_section *ht, uint32_t hidx,
 
 struct ht_section *cache_get_ht(struct cache*, uint32_t);
 
+#include "twolevel.h"
 #endif

@@ -16,11 +16,10 @@
 #include "hashset.h"
 
 #ifndef ORIGINAL
-#include "btree.h"
+#include "twolevel.h"
 #endif
 
 spinlock_t entry_spin;
-spinlock_t te_spin;
 spinlock_t ev_spin;
 spinlock_t wfc_spin;
 spinlock_t v_spin;
@@ -1008,10 +1007,6 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 #ifdef ORIGINAL
     NVMEV_ASSERT(shard->grain_bitmap[grain] != 0);
     shard->grain_bitmap[grain] = 0;
-
-    //if(page_grains_invalid(shard, page)) {
-    //    mark_page_invalid(shard, &ppa);
-    //}
 #else
     if(pg_inv_cnt[page] + len > GRAIN_PER_PAGE) {
         NVMEV_INFO("inv_cnt was %u PPA %llu (tried to add %u)\n", 
@@ -1359,7 +1354,6 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
     };
 
     NVMEV_DEBUG("Starting an XA scan %lu %lu\n", start, end);
-    //spin_lock(&inv_m_spin);
     xa_for_each_range(&gcd->inv_mapping_xa, index, xa_entry, start, end) {
         uint64_t m_ppa = xa_to_value(xa_entry);
 
@@ -3909,7 +3903,6 @@ append:
 out:
     shard->stats.write_req_cnt++;
 
-    //atomic_dec(&ht->outgoing);
     //NVMEV_ERROR("%s for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n",
     //            append ? "Append" : "Write",
     //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key),
@@ -4074,6 +4067,7 @@ static void __reclaim_completed_reqs(void)
 	}
 }
 
+struct leaf_e e[EPP];
 void **bufs = NULL;
 
 struct fast_fill_args {
