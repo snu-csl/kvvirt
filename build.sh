@@ -1,4 +1,8 @@
+#!/bin/bash
+
 DIR=${PWD}
+export USER=$(whoami)
+export Q_DIR="./ycsb/concurrentqueue"
 
 TYPE=$1
 if [[ ! $TYPE =~ ^(debug|rel|clean)$ ]]; then 

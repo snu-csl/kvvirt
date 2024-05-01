@@ -23,6 +23,11 @@ void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes)
     c->nr_valid_tentries = (tt_pgs * GRAIN_PER_PAGE);
     c->max_cached_tentries = dram_bytes / GRAINED_UNIT;
 
+#ifndef ORIGINAL
+    c->nr_valid_tpages++;
+    c->nr_valid_tentries += GRAIN_PER_PAGE;
+#endif
+
     fifo_init(&c->fifo);
 
     /*

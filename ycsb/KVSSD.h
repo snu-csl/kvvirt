@@ -11,8 +11,8 @@
 #include <unistd.h>
 #include <vector>
 
-#include "/home/move/concurrentqueue/blockingconcurrentqueue.h"
-#include "/home/move/concurrentqueue/concurrentqueue.h"
+#include "blockingconcurrentqueue.h"
+#include "concurrentqueue.h"
 #include "kv_nvme.h"
 #include "linux_nvme_ioctl.h"
 

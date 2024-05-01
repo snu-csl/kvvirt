@@ -3564,12 +3564,7 @@ skip:
         atomic_set(&ht->t_ppa, ppa);
         t_ppa = ppa;
 
-        if(!shard->fastmode) {
-            ht->mappings = NULL;
-        } else {
-            ht->mappings = (struct h_to_g_mapping*) (nvmev_vdev->ns[0].mapped + 
-                                          ((uint64_t) ppa) * spp->pgsz);
-        }
+        ht->mappings = NULL;
 
         /*
          * Despite the new scheme only using as many mapping entries as needed,

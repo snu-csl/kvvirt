@@ -36,7 +36,6 @@ void twolevel_init(struct root *root) {
 
 void twolevel_expand(struct root *root) {
     root->cnt++;
-    NVMEV_INFO("Expanded twolevel to %u leaves.\n", root->cnt);
 }
 
 static int cmp_hidx(const void *a, const void *b)
@@ -169,9 +168,6 @@ void twolevel_reload(struct ht_section *ht, struct root* root,
     sort(tmp_leaves, tmp_leaf_idx, sizeof(struct leaf_e), cmp_hidx, NULL);
     ht->cached_cnt -= tmp_leaf_idx;
 
-    NVMEV_INFO("Reduced cached count to %u before upcoming shuffle.\n",
-            ht->cached_cnt);
-
     /*
      * Get the new set of root keys.
      */
@@ -192,10 +188,6 @@ void twolevel_reload(struct ht_section *ht, struct root* root,
     }
 
     reloading = 0;
-
-    if(ht->cached_cnt != before) {
-        NVMEV_INFO("Mismatch before %d after %d\n", before, ht->cached_cnt);
-    }
     NVMEV_ASSERT(ht->cached_cnt == before);
     return;
 }
@@ -267,7 +259,6 @@ uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     ptr = (char*) root;
 
     NVMEV_ASSERT(ptr);
-    NVMEV_INFO("Trying to find LPA %u\n", hidx);
 
 	i = __lower_bound(root, hidx);
 
@@ -276,12 +267,8 @@ uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     }
 
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
-    NVMEV_INFO("Got leaf %d\n", i);
-
     for(j = 0; j < IN_LEAF; j++) {
         if(leaf->hidx[j] == hidx) {
-            NVMEV_INFO("Returning PPA %u for LPA %u\n", leaf->ppa[j], hidx);
-
             if(pos) {
                 *pos = sizeof(struct root) + (sizeof(struct leaf) * i) + 
                        (sizeof(uint32_t) * IN_LEAF) + 
@@ -295,7 +282,6 @@ uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     }
 
 out:
-    NVMEV_INFO("LPA %u not found!!\n", hidx);
     return ret;
 }
 

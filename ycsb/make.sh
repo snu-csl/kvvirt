@@ -25,7 +25,7 @@ fi
 
 WRAP=""
 LIB=""
-INC=""
+INC="-I${Q_DIR}"
 DEF=""
 if [[ $STORE == kvssd ]]; then
     WRAP="kvssd.cc kvssd_ycsb.cc"

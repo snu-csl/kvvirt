@@ -1,6 +1,6 @@
 #include <shared_mutex>
 
-#include "/home/move/ycsb/KVSSD.h"
+#include "KVSSD.h"
 #include "lrucache.hpp"
 
 const uint32_t NUM_CACHE_SHARDS = 31;
