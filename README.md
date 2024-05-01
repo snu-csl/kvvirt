@@ -8,8 +8,9 @@ Included in this repository is the following:
 - The *Original* FTL, based on the good work at from https://github.com/dgist-datalab/PinK/.
 - The *Plus* FTL.
 - The YCSB code used in the paper.
-- A code walkthrough for the FTLs.
+- [Installation Instructions](#installation)
 
+<a id="installation"></a>
 ## Installation
 
 The build.sh script will build both YCSB and NVMeVirt with either Original or Plus.
@@ -20,10 +21,14 @@ Invoke it as follows:
 ./build.sh debug # Debug (-O0 for YCSB, nothing right now for virt.)
 ```
 
-Switching between Original and Plus is a compile time define. Delete the line or undefine
+Switching between Original and Plus is a compile time define, they are both implemented
+in *demand\_ftl.c*. Delete the line or undefine
 it to use Plus.
 
-`#define ORIGINAL # in ssd_config.h`
+```
+#define ORIGINAL # in ssd_config.h
+#undef ORIGINAL # to use Plus
+```
 
 After building NVMeVirt, you can insert the kernel module with the a command similar to the following:
 
@@ -85,7 +90,7 @@ Running a YCSB benchmark can be done with the following command:
 A log file will be created in the directory from which the command is
 run. There are other options available, see the top of main.cc in the  ycsb
 folder for details (although not all of them
-are tested!). You can run multiple benchmarks with 
+are tested!). You can run multiple benchmarks with
 *--benchmarks=a,b,c,d,f*, but it is less
 convenient as there won't be a separate log file for each benchmark as of now.
 
