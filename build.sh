@@ -10,6 +10,8 @@ if [[ ! $TYPE =~ ^(debug|rel|clean)$ ]]; then
     exit
 fi
 
+sudo apt-get install libgflags-dev
+
 if [[ $TYPE == "clean" ]]; then
     cd drivers/kernel_v5.10.37
     make clean
