@@ -404,9 +404,9 @@ bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type)
 		NVMEV_ASSERT(wpp->curline->ipc == 0);
 		list_add_tail(&wpp->curline->entry, &lm->full_line_list);
 		lm->full_line_cnt++;
-		NVMEV_ERROR("wpp: move line %d to full_line_list\n", wpp->curline->id);
+		NVMEV_DEBUG("wpp: move line %d to full_line_list\n", wpp->curline->id);
 	} else {
-		NVMEV_ERROR("wpp: line %d is moved to victim list PQ\n", wpp->curline->id);
+		NVMEV_DEBUG("wpp: line %d is moved to victim list PQ\n", wpp->curline->id);
 		//NVMEV_ASSERT(wpp->curline->vpc >= 0 && wpp->curline->vpc < spp->pgs_per_line);
         NVMEV_ASSERT(wpp->curline->vgc >= 0 && wpp->curline->vgc < spp->pgs_per_line * GRAIN_PER_PAGE);
 		/* there must be some invalid pages in this line */
@@ -429,7 +429,7 @@ bool advance_write_pointer(struct demand_shard *demand_shard, uint32_t io_type)
         return false;
     }
 
-	NVMEV_ERROR("wpp: got new clean line %d for type %u\n", 
+	NVMEV_DEBUG("wpp: got new clean line %d for type %u\n", 
                  wpp->curline->id, io_type);
 
 	wpp->blk = wpp->curline->id;
@@ -2505,7 +2505,6 @@ again:
         goto again;
     }
 
-
     atomic_set(have_victims, 1);
     return;
 }
@@ -2926,7 +2925,7 @@ skip:
         cache->nr_cached_tentries -= g_len;
         spin_unlock(&entry_spin);
 
-        victim->mem = NULL;
+        victim->mappings = NULL;
         victim->state = CLEAN;
 
         got_lock = false;
@@ -2970,7 +2969,6 @@ skip:
     }
 
     atomic_set(have_victims, 0);
-
     return nsecs_completed;
 }
 

@@ -19,9 +19,9 @@ void twolevel_init(struct root *root) {
     ptr = (char*) root;
     root->cnt = ORIG_GLEN - ROOT_G;
 
-    NVMEV_INFO("Initializing BTree ORIG_GLEN %d ROOT_G %u EPP %lu IN_ROOT %lu IN_LEAF %lu total size %lu\n", 
-            ORIG_GLEN, ROOT_G, EPP, IN_ROOT, IN_LEAF, 
-            sizeof(struct root) + (sizeof(struct leaf) * IN_ROOT));
+    //NVMEV_INFO("Initializing BTree ORIG_GLEN %d ROOT_G %u EPP %lu IN_ROOT %lu IN_LEAF %lu total size %lu\n", 
+    //        ORIG_GLEN, ROOT_G, EPP, IN_ROOT, IN_LEAF, 
+    //        sizeof(struct root) + (sizeof(struct leaf) * IN_ROOT));
 
     for(int i = 0; i < IN_ROOT; i++) {
         root->entries[i] = UINT_MAX;
@@ -60,6 +60,8 @@ uint32_t __new_roots(uint32_t *root_keys, struct leaf_e* leaves,
     int keys_per_leaf = key_cnt / num_leaves;
     int extra_keys = key_cnt % num_leaves;
     int key_index = 0, i;
+
+    NVMEV_ASSERT(extra_keys <= IN_LEAF);
 
     for (i = 0; i < root_entries; i++) {
         key_index += keys_per_leaf - 1;
@@ -232,12 +234,20 @@ void twolevel_insert(struct ht_section *ht, struct root *root,
 
     leaf = (struct leaf*) (ptr + sizeof(struct root) + (sizeof(struct leaf) * i));
     if(leaf->hidx[IN_LEAF - 1] != UINT_MAX) {
+        if(reloading) {
+            NVMEV_ERROR("Value was %u %u!!!!!!!\n", 
+                         leaf->hidx[IN_LEAF - 1], leaf->ppa[IN_LEAF - 1]);
+        }
+
         NVMEV_ASSERT(!reloading);
         twolevel_reload(ht, root, hidx, ppa);
         return;
     }
 
-    root->entries[i] = hidx;
+    if((i != root->cnt - 1) && 
+       (hidx >= root->entries[i] || root->entries[i] == UINT_MAX))  {
+        root->entries[i] = hidx;
+    }
 
     for(int j = 0; j < IN_LEAF; j++) {
         if(leaf->hidx[j] == UINT_MAX) {
