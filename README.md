@@ -107,6 +107,8 @@ convenient as there won't be a separate log file for each benchmark as of now.
 
 ## Code Notes
 
+The main store function is \_\_store, and the main retrieve function is \_\_retrieve. GC starts in do\_gc, and clean\_one\_flashpg performs the actual invalid pair checking and copying.
+
 How FTLs are written in NVMeVirt can be confusing at first. The general theory is this; for writes/stores, IO workers will copy to an address in memory that we give them, as a result of the mapping logic in the __store function. We *won't* perform any copies in the foreground. The foreground dispatcher performs mapping logic only. If we overwrite a KV pair, the IO worker will copy to the same address as before unless the pair size changes. This isn't how flash works in real life, but the underlying flash model ultimately determines how long the store will take.
 
 In GC, we only update mapping information, and don't actually copy any KV data to new locations.
