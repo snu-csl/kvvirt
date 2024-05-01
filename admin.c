@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include "nvmev.h"
-#include "conv_ftl.h"
-#include "zns_ftl.h"
 
 #define sq_entry(entry_id) \
 	queue->nvme_sq[SQ_ENTRY_TO_PAGE_NUM(entry_id)][SQ_ENTRY_TO_PAGE_OFFSET(entry_id)]
@@ -332,61 +330,6 @@ static void __nvmev_admin_identify_namespace_desc(int eid)
 	__make_cq_entry(eid, NVME_SC_SUCCESS);
 }
 
-static void __nvmev_admin_identify_zns_namespace(int eid)
-{
-	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
-	struct nvme_identify *cmd = &sq_entry(eid).identify;
-	struct nvme_id_zns_ns *ns;
-	int nsid = cmd->nsid - 1;
-	struct zns_ftl *zns_ftl = (struct zns_ftl *)nvmev_vdev->ns[nsid].ftls;
-	struct znsparams *zpp = &zns_ftl->zp;
-
-	BUG_ON(nvmev_vdev->ns[nsid].csi != NVME_CSI_ZNS);
-
-	ns = prp_address(cmd->prp1);
-	memset(ns, 0x00, sizeof(*ns));
-
-	ns->zoc = 0; //currently not support variable zone capacity
-	ns->ozcs = 0;
-	ns->mar = zpp->nr_active_zones - 1; // 0-based
-
-	ns->mor = zpp->nr_open_zones - 1; // 0-based
-
-	/* zrwa enabled */
-	if (zpp->nr_zrwa_zones > 0) {
-		ns->ozcs |= OZCS_ZRWA; //Support ZRWA
-
-		ns->numzrwa = zpp->nr_zrwa_zones - 1;
-
-		ns->zrwafg = zpp->zrwafg_size;
-
-		ns->zrwasz = zpp->zrwa_size;
-
-		ns->zrwacap = 0; // explicit zrwa flush
-		ns->zrwacap |= ZRWACAP_EXPFLUSHSUP;
-	}
-	// Zone Size
-	ns->lbaf[0].zsze = BYTE_TO_LBA(zpp->zone_size);
-
-	// Zone Descriptor Extension Size
-	ns->lbaf[0].zdes = 0; // currently not support
-
-	__make_cq_entry(eid, NVME_SC_SUCCESS);
-}
-
-static void __nvmev_admin_identify_zns_ctrl(int eid)
-{
-	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
-	struct nvme_identify *cmd = &sq_entry(eid).identify;
-	struct nvme_id_zns_ctrl *res;
-
-	res = prp_address(cmd->prp1);
-
-	res->zasl = 0; // currently not support zone append command
-
-	__make_cq_entry(eid, NVME_SC_SUCCESS);
-}
-
 static void __nvmev_admin_identify_ctrl(int eid)
 {
 	struct nvmev_admin_queue *queue = nvmev_vdev->admin_q;
@@ -427,12 +370,6 @@ static void __nvmev_admin_identify(int eid)
 		break;
 	case 0x03:
 		__nvmev_admin_identify_namespace_desc(eid);
-		break;
-	case 0x05:
-		__nvmev_admin_identify_zns_namespace(eid);
-		break;
-	case 0x06:
-		__nvmev_admin_identify_zns_ctrl(eid);
 		break;
 	default:
 		__make_cq_entry(eid, NVME_SC_INVALID_OPCODE);

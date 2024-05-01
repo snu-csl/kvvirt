@@ -17,11 +17,7 @@
 #endif
 
 #include "nvmev.h"
-#include "conv_ftl.h"
-#include "dftlkv/demand_ftl.h"
-#include "zns_ftl.h"
-#include "simple_ftl.h"
-#include "kv_ftl.h"
+#include "demand_ftl.h"
 #include "dma.h"
 
 /****************************************************************
@@ -589,14 +585,8 @@ void NVMEV_NAMESPACE_INIT(struct nvmev_dev *nvmev_vdev)
 		else
 			size = min(NS_CAPACITY(i), remaining_capacity);
 
-		if (NS_SSD_TYPE(i) == SSD_TYPE_NVM)
-			simple_init_namespace(&ns[i], i, size, ns_addr, disp_no);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_CONV)
+		if (NS_SSD_TYPE(i) == SSD_TYPE_CONV)
 			conv_init_namespace(&ns[i], i, size, ns_addr, disp_no);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_ZNS)
-			zns_init_namespace(&ns[i], i, size, ns_addr, disp_no);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_KV)
-			kv_init_namespace(&ns[i], i, size, ns_addr, disp_no);
 		else
 			BUG_ON(1);
 
@@ -616,17 +606,9 @@ void NVMEV_NAMESPACE_FINAL(struct nvmev_dev *nvmev_vdev)
 	const int nr_ns = NR_NAMESPACES; // XXX: allow for dynamic nvmev_vdev->nr_ns
 	int i;
 
-    NVMEV_INFO("Namespace final!\n");
-
 	for (i = 0; i < nr_ns; i++) {
-		if (NS_SSD_TYPE(i) == SSD_TYPE_NVM)
-			simple_remove_namespace(&ns[i]);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_CONV)
+		if (NS_SSD_TYPE(i) == SSD_TYPE_CONV)
 			conv_remove_namespace(&ns[i]);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_ZNS)
-			zns_remove_namespace(&ns[i]);
-		else if (NS_SSD_TYPE(i) == SSD_TYPE_KV)
-			kv_remove_namespace(&ns[i]);
 		else
 			BUG_ON(1);
 	}

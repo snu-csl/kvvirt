@@ -24,15 +24,8 @@ nvmev-$(CONFIG_NVMEVIRT_ZNS) += ssd.o zns_ftl.o zns_read_write.o zns_mgmt_send.o
 ccflags-$(CONFIG_NVMEVIRT_KV) += -DBASE_SSD=KV_PROTOTYPE
 nvmev-$(CONFIG_NVMEVIRT_KV) += kv_ftl.o append_only.o bitmap.o
 
-DEMAND_SRCDIR = $(src)/dftlkv
-DEMAND_SRCS := $(shell find $(DEMAND_SRCDIR) -name '*.c' | cut -d'/' -f5-)
-DEMAND_OBJS := $(DEMAND_SRCS:c=o) 
 ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -Wno-declaration-after-statement -std=gnu99 -Werror
 ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL
-ccflags-$(CONFIG_NVMEVIRT_HASH_DFTL) += -I$(src)
 
 ccflags-y += -I/lib/modules/$(shell uname -r)/build/include
-nvmev-$(CONFIG_NVMEVIRT_HASH_DFTL) += $(DEMAND_OBJS) ssd.o pqueue/pqueue.o channel_model.o 
-
-ccflags-$(CONFIG_PAGE_MAPPED) += -DBASE_SSD=SAMSUNG_970PRO_HASH_DFTL
-nvmev-$(CONFIG_PAGE_MAPPED) += ssd.o pagemap.o pqueue/pqueue.o channel_model.o
+nvmev-$(CONFIG_NVMEVIRT_HASH_DFTL) += ssd.o demand_ftl.o pqueue/pqueue.o channel_model.o cache.o city.o fifo.o hashset.o twolevel.o
