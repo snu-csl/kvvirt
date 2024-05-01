@@ -1,181 +1,93 @@
-# NOTES
+# A Hash-Based Key-Value SSD FTL With Efficient Small-Value Support
 
-Right now DFTLKV will take away 4GB from memmap\_size. If you want a 1GB drive, use memmap\_size=5G,
-and if you want a 32GB drive, use memmap\_size=37G.
-
-Values above 4K won't work for now, as the DFTLKV implementation is tied to the page size. Would
-really like to change this to be the flash page size (e.g. 32K) instead, so we can have larger
-values.
-
-Since values are written in grains in the DFTLKV implementation, if you write a 520B value it
-will take up 1024B (512B grain size). Keep this in mind when deciding value sizes for the tests,
-because in Dotori we will copy the key length (sizeof(uint8\_t)), actual key (8B or whatever it is), 
-and then the real length of the value written (sizeof(uint32\_t)) to the start of the value. 
-
-The real length of the value is gotten from the returned value when Dotori reads the actual KV pair or log, and we then 
-memmove the real value back to the start of the read buffer (discarding the key length, key,
-and real value length). This isn't as user-friendly as the Samsung SSD right now, and would
-be nice to improve. However, because the DFTLKV implementation requires the key length and key to be
-at the start of the value, not sure if we can make much of a change.
-
-I moved to a sharded design for DFTLKV like in the conventional FTL, but keep it at 1 shard
-for now until I test it further.
-
-As of now, the DFTLKV implementation is slower than Samsung's KVSSD we know. The performance numbers
-aren't so bad in Dotori, actually, but keep it in mind.
-
-DFTKLV might not be able to keep the space on the KVSSD level right now with a really
-big WAL flush period in Dotori (e.g. 327680 like in the paper). I've been using 65536.
-
-Be careful when using outside of a VM. I've had days of perfect VM runs that somehow crash because 
-something isn't zero'd when trying outside of the VM.
-
-The number of worker threads matters in DFTLKV; everything including timings generation 
-is done on the worker threads, not in the dispatcher like in the conventional design.
-
-Ignore the space and write amp calculations in the Dotori bench for now. I can fix them if
-you need to use them.
-
-# Towards Accessible Key-Value SSD Research With NVMeVirt
-
-Welcome to the repository for the work described in the above paper. The KVSSD FTLs in this repository will
-be updated and cleaned up regularly over the next while, so please check back often. This work is not a part of the
+Welcome to the repository for the work described in the above paper. This work is not a part of the
 official NVMeVirt repository (https://github.com/snu-csl/NVMeVirt), but with some extra time and effort the KVSSD FTLs might added once the code is neat enough. The original NVMeVirt README with installation instructions is located at the bottom.
 
 Included in this repository is the following:
 
-- The original demand-based KVSSD FTL (DFTLKV) port to NVMeVirt (based on the good work at from https://github.com/dgist-datalab/PinK/)
-- The updated version (DFTLKV+)
-- The scripts required to replicate the tests in the paper
-- A code walkthrough for the DFTLKV+
-- A link to a VM image that you can use to replicate the tests easily (once we work out how to host one)
-
-## Introduction
-
-NVMeVirt is a versatile software-defined virtual NVMe device. It is implemented as a Linux kernel module providing the system with a virtual NVMe device of various kinds. Currently, NVMeVirt supports conventional SSDs, NVM SSDs, ZNS SSDs, etc. The device is emulated at the PCI layer, presenting a native NVMe device to the entire system. Thus, NVMeVirt has the capability not only to function as a standard storage device, but also to be utilized in advanced storage configurations, such as NVMe-oF target offloading, kernel bypassing, and PCI peer-to-peer communication.
-
-Further details on the design and implementation of NVMeVirt can be found in the following [paper](https://www.usenix.org/conference/fast23/presentation/kim-sang-hoon).
-
-Please feel free to contact us at [nvmevirt@gmail.com](mailto:nvmevirt@gmail.com) if you have any questions or suggestions. Also you can raise an issue anytime for bug reports or discussions.
-
-We encourage you to cite our paper at FAST 2023 as follows:
-```
-@InProceedings{NVMeVirt:FAST23,
-  author = {Sang-Hoon Kim and Jaehoon Shim and Euidong Lee and Seongyeop Jeong and Ilkueon Kang and Jin-Soo Kim},
-  title = {{NVMeVirt}: A Versatile Software-defined Virtual {NVMe} Device},
-  booktitle = {Proceedings of the 21st USENIX Conference on File and Storage Technologies (USENIX FAST)},
-  address = {Santa Clara, CA},
-  month = {February},
-  year = {2023},
-}
-```
-
+- The *Original* FTL, based on the good work at from https://github.com/dgist-datalab/PinK/.
+- The *Plus* FTL.
+- The YCSB code used in the paper.
+- A code walkthrough for the FTLs.
 
 ## Installation
 
-### Linux kernel requirement
+The build.sh script will build both YCSB and NVMeVirt with either Original or Plus.
+Invoke it as follows:
 
-The recommended Linux kernel version is v5.15.x and higher (tested on Linux vanilla kernel v5.15.37 and Ubuntu kernel v5.15.0-58-generic).
-
-### Reserving physical memory
-
-A part of the main memory should be reserved for the storage of the emulated NVMe device. To reserve a chunk of physical memory, add the following option to `GRUB_CMDLINE_LINUX` in `/etc/default/grub` as follows:
-
-```bash
-GRUB_CMDLINE_LINUX="memmap=64G\\\$128G"
+```
+./build.sh rel # Release
+./build.sh debug # Debug (-O0 for YCSB, nothing right now for virt.)
 ```
 
-This example will reserve 64GiB of physical memory chunk (out of the total 192GiB physical memory) starting from the 128GiB memory offset. You may need to adjust those values depending on the available physical memory size and the desired storage capacity.
+Switching between Original and Plus is a compile time define. Delete the line or undefine
+it to use Plus.
 
-After changing the `/etc/default/grub` file, you are required to run the following commands to update `grub` and reboot your system.
+`#define ORIGINAL # in ssd_config.h`
 
-```bash
-$ sudo update-grub
-$ sudo reboot
+After building NVMeVirt, you can insert the kernel module with the a command similar to the following:
+
+`insmod /home/username/virtkv/nvmev.ko memmap_start=32G memmap_size=124G cpus=35,36 gccpu=37 evictcpu=38 cache_dram_mb=8`
+
+memmap\_start and memmap\_size refer to an area of memory reserved at boot time.
+You can reserve memory by adding the following to /etc/default/grub
+
+`memmap=128G\\\$600G # Reserve 128GB from 600GB`
+
+A good guide to figuring out which memory you can reserve is here: https://pmem.io/blog/2016/02/how-to-emulate-persistent-memory/
+
+The parameters cpus, gccpu, and evictcpu refer to cores on which to pin the as-named threads.
+cpus=35,36 means NVMeVirt's dispatcher thread will run on CPU 35, and the IO worker thread
+will run on CPU 36. You can specify multiple IO worker threads with cpus=35,36,37...
+
+The design assumes one background GC and one eviction thread for now.
+
+After you run the insmod command above, you should see a new NVMe SSD in your system
+
+```
+sudo nvme list
+Node             SN                   Model                                    Namespace Usage                      Format           FW Rev
+---------------- -------------------- ---------------------------------------- --------- -------------------------- ---------------- --------
+/dev/nvme0n1     CSL_Virt_SN_01       CSL_Virt_MN_01                           1          124  GB /  124  GB    512   B +  0 B   CSL_002
 ```
 
-### Compiling `nvmevirt`
+If not, check dmesg for errors. You may run into an error that has been previously reported
+in the official NVMeVirt repository at https://github.com/snu-csl/NVMeVirt, so check the
+issues there too.
 
-Please download the latest version of `nvmevirt` from Github:
+## Changing Parameters
 
-```bash
-$ git clone https://github.com/snu-csl/nvmevirt
+In ssd\_config.h you can modify both the timing parameters for things like flash accesses in NVMeVirt, and parameters like the grain size
+for the KVSSD FTLs.
+
+```
+#define SSD_PARTITIONS (1)
+#define NAND_CHANNELS (8)
+#define LUNS_PER_NAND_CH (8)
+#define PLNS_PER_LUN (1)
+#define FLASH_PAGE_SIZE KB(32)
+#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
+#define BLKS_PER_PLN (0)
+#define BLK_SIZE KB(128) /*BLKS_PER_PLN should not be 0 */
+static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+
+#define PIECE 512 # 512B grain size
 ```
 
-`nvmevirt` is implemented as a Linux kernel module. Thus, the kernel headers should be installed in the `/lib/modules/$(shell uname -r)` directory to compile `nvmevirt`.
+## YCSB
 
-Currently, you need to select the target device type by manually editing the `Kbuild`. You may find the following lines in the `Kbuild`, which imply that NVMeVirt is currently configured for emulating NVM(Non-Volatile Memory) SSD (such as Intel Optane SSD). You may uncomment other one to change the target device type. Note that you can select one device type at a time.
+Running a YCSB benchmark can be done with the following command:
 
-```Makefile
-# Select one of the targets to build
-CONFIG_NVMEVIRT_NVM := y
-#CONFIG_NVMEVIRT_SSD := y
-#CONFIG_NVMEVIRT_ZNS := y
-#CONFIG_NVMEVIRT_KV := y
-```
+`./build/ycsb_kvssd --num_pairs=100000000 --vlen=1000 --threads=20 --num_ops=500000 --duration=0 --cache_size_mb=0 --pop=true --benchmarks=a --store_name=KVSSD --uniform=true --warmup_time=0`
 
-You may find the detailed configuration parameters for conventional SSD and ZNS SSD from `ssd_config.h`.
-
-Build the kernel module by running the `make` command in the `nvmevirt` source directory.
-```bash
-$ make
-make -C /lib/modules/5.15.37/build M=/path/to/nvmev modules
-make[1]: Entering directory '/path/to/linux-5.15.37'
-  CC [M]  /path/to/nvmev/main.o
-  CC [M]  /path/to/nvmev/pci.o
-  CC [M]  /path/to/nvmev/admin.o
-  CC [M]  /path/to/nvmev/io.o
-  CC [M]  /path/to/nvmev/dma.o
-  CC [M]  /path/to/nvmev/simple_ftl.o
-  LD [M]  /path/to/nvmev/nvmev.o
-  MODPOST /path/to/nvmev/Module.symvers
-  CC [M]  /path/to/nvmev/nvmev.mod.o
-  LD [M]  /path/to/nvmev/nvmev.ko
-  BTF [M] /path/to/nvmev/nvmev.ko
-make[1]: Leaving directory '/path/to/linux-5.15.37'
-$
-```
-
-### Using `nvmevirt`
-
-`nvmevirt` is configured to emulate the NVM SSD by default. You can attach an emulated NVM SSD in your system by loading the `nvmevirt` kernel module as follows:
-
-```bash
-$ sudo insmod ./nvmev.ko \
-  memmap_start=128G \       # e.g., 1M, 4G, 8T
-  memmap_size=64G   \       # e.g., 1M, 4G, 8T
-  cpus=7,8                  # List of CPU cores to process I/O requests (should have at least 2)
-```
-
-In the above example, `memmap_start` and `memmap_size` indicate the relative offset and the size of the reserved memory, respectively. Those values should match the configurations specified in the `/etc/default/grub` file shown earlier. In addition, the `cpus` option specifies the id of cores on which I/O dispatcher and I/O worker threads run. You have to specify at least two cores for this purpose: one for the I/O dispatcher thread, and one or more cores for the I/O worker thread(s).
-
-When you are successfully load the `nvmevirt` module, you can see something like these from the system message.
-
-```log
-$ sudo dmesg
-[  144.812917] nvme nvme0: pci function 0001:10:00.0
-[  144.812975] NVMeVirt: Successfully created virtual PCI bus (node 1)
-[  144.813911] NVMeVirt: nvmev_proc_io_0 started on cpu 7 (node 1)
-[  144.813972] NVMeVirt: Successfully created Virtual NVMe device
-[  144.814032] NVMeVirt: nvmev_dispatcher started on cpu 8 (node 1)
-[  144.822075] nvme nvme0: 48/0/0 default/read/poll queues
-```
-
-If you encounter a kernel panic in `__pci_enable_msix()` or in `nvme_hwmon_init()` during `insmod`, it is because the current implementation of `nvmevirt` is not compatible with IOMMU. In this case, you can either turn off Intel VT-d or IOMMU in BIOS, or disable the interrupt remapping using the grub option as shown below:
-
-```bash
-GRUB_CMDLINE_LINUX="memmap=64G\\\$128G intremap=off"
-```
-
-Now the emulated `nvmevirt` device is ready to be used as shown below. The actual device number (`/dev/nvme0`) can vary depending on the number of real NVMe devices in your system.
-
-
-```bash
-$ ls -l /dev/nvme*
-crw------- 1 root root 242, 0 Feb 22 14:13 /dev/nvme0
-brw-rw---- 1 root disk 259, 5 Feb 22 14:13 /dev/nvme0n1
-```
-
+*pop* refers to population. To run YCSB B next, change *pop* to false and
+*--benchmarks=a* to *--benchmarks=b* .
+A log file will be created in the directory from which the command is
+run. There are other options available, see the top of main.cc in the  ycsb
+folder for details (although not all of them
+are tested!). You can run multiple benchmarks with 
+*--benchmarks=a,b,c,d,f*, but it is less
+convenient as there won't be a separate log file for each benchmark as of now.
 
 ## License
 
