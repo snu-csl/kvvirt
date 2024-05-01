@@ -266,6 +266,7 @@ uint32_t twolevel_find(struct root *root, uint32_t hidx, uint32_t *pos) {
     ret = UINT_MAX;
     ptr = (char*) root;
 
+    NVMEV_ASSERT(ptr);
     NVMEV_INFO("Trying to find LPA %u\n", hidx);
 
 	i = __lower_bound(root, hidx);

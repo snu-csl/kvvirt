@@ -1730,8 +1730,8 @@ again:
         NVMEV_ASSERT(offset > 0);
         mark_grain_valid(shard, PPA_TO_PGA(pgidx, offset), 
                 GRAIN_PER_PAGE - offset);
-        //mark_grain_invalid(shard, PPA_TO_PGA(pgidx, offset), 
-        //        GRAIN_PER_PAGE - offset);
+        mark_grain_invalid(shard, PPA_TO_PGA(pgidx, offset), 
+                GRAIN_PER_PAGE - offset);
 
         for(int i = offset; i < GRAIN_PER_PAGE; i++) {
             oob[pgidx][i] = UINT_MAX;
@@ -1753,9 +1753,6 @@ again:
     ht = cache->ht[idx];
     atomic_set(&ht->t_ppa, pgidx);
     ht->g_off = gcd->offset;
-
-    //NVMEV_ERROR("Moved IDX %u len %u to PPA %llu grain %llu\n", idx, len, pgidx,
-    //             PPA_TO_PGA(pgidx, ht->g_off));
 
     oob[pgidx][offset] = ((uint64_t) len << 32) | IDX2LPA(idx);
 
@@ -2440,7 +2437,6 @@ static void __collect_victims(struct demand_shard *shard, uint32_t target_g) {
 
     if(dist > (GRAIN_PER_PAGE * 10)) {
         atomic_set(have_victims, 1);
-        NVMEV_ERROR("Set victims because dist was %d\n", dist);
         return;
     }
 
@@ -2456,6 +2452,9 @@ again:
             cpu_relax();
         }
 
+        /*
+         * Shouldn't be collecting items that have already been chosen in here.
+         */
         NVMEV_ASSERT(victim->state != C_CANDIDATE &&
                      victim->state != D_CANDIDATE);
 
@@ -2488,10 +2487,6 @@ again:
 
         atomic_add(g_len, candidates);
 
-        //NVMEV_ERROR("Added IDX %u len %u to head %u. Count is now %u\n", 
-        //             victim->idx, g_len, vb.head - 1, 
-        //             atomic_read(candidates));
-
         if(atomic_read(candidates) >= target_g) {
             atomic_set(&victim->outgoing, 0);
             break;
@@ -2510,10 +2505,8 @@ again:
         goto again;
     }
 
-    //NVMEV_ERROR("Really got %u victims u head %d.\n", 
-    //             atomic_read(candidates), vb.head);
-    atomic_set(have_victims, 1);
 
+    atomic_set(have_victims, 1);
     return;
 }
 
@@ -2650,7 +2643,9 @@ static inline uint32_t __need_expand(struct ht_section *ht) {
 
 /*
  * This function just assigns a new physical page
- * to the mapping entry. Some space is wasted if the mapping
+ * to the mapping entry and updates its properties. 
+ *
+ * Some space is wasted if the mapping
  * entry doesn't contain enough entries to fill a page, but
  * later it will be packed into a page with other mapping
  * entries during eviction.
@@ -2685,8 +2680,6 @@ skip:
     p = get_new_page(shard, MAP_IO);
     ppa = ppa2pgidx(shard, &p);
 
-    //BUG_ON(!ht->lru_ptr);
-
     advance_write_pointer(shard, MAP_IO);
     mark_page_valid(shard, &p);
     spin_unlock(&ev_spin);
@@ -2712,9 +2705,6 @@ skip:
     } else {
         ht->state = DIRTY;
     }
-
-    //NVMEV_INFO("Moved IDX %u to PPA %u in expansion.\n", 
-    //            ht->idx, ppa);
 
     oob[ppa][0] = ((uint64_t) ht->len_on_disk << 32) | (ht->idx * EPP);
     for(int i = ht->len_on_disk; i < GRAIN_PER_PAGE; i++) {
@@ -2784,8 +2774,6 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     uint32_t evicted;
     atomic_t *have_victims;
 
-	uint64_t start = 0, end = 0;
-
     cache = &shard->cache;
     spp = &shard->ssd->sp;
     oob = shard->oob;
@@ -2797,17 +2785,9 @@ static uint64_t __evict_one(struct demand_shard *shard, struct nvmev_request *re
     evicted = 0;
     have_victims = &shard->have_victims;
 
-	start = ktime_get();
     while(atomic_cmpxchg(have_victims, 1, 2) != 1) {
         cpu_relax();
     }
-    end = ktime_get();
-
-    if(ktime_to_us(end) - ktime_to_us(start) > 5) {
-        NVMEV_ERROR("Collecting %u victims took %llu %d cached\n", cnt, 
-                ktime_to_us(end) - ktime_to_us(start), 
-                cache->nr_cached_tentries);
-    } 
 
     while(cache->nr_cached_tentries > 
           cache->max_cached_tentries - GRAIN_PER_PAGE) {
@@ -2847,11 +2827,8 @@ new_page:
 
         g_len = __entries_to_grains(shard, victim);
         if(victim->state == D_CANDIDATE && grain + g_len > GRAIN_PER_PAGE) {
-            //NVMEV_ERROR("IDX %u was too big! New page!\n", 
-            //        victim->idx);
-
             mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
-            //mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+            mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
 
             for(int i = grain; i < GRAIN_PER_PAGE; i++) {
                 oob[ppa][i] = UINT_MAX;
@@ -2862,9 +2839,6 @@ new_page:
 
         vb.tail = (vb.tail + 1) % VICTIM_RB_SZ;
         t_ppa = atomic_read(&victim->t_ppa);
-
-        //NVMEV_ERROR("Got victim with IDX %u len %u from tail %d in eviction.\n", 
-        //             victim->idx, g_len, vb.tail - 1);
 
         if (victim->state == D_CANDIDATE) {
             bool same_size = g_len == victim->len_on_disk;
@@ -2878,10 +2852,6 @@ new_page:
                  * were already marked invalid, and the above condition will
                  * be false as len_on_disk will be greater.
                  */
-                //NVMEV_ERROR("Trying to mark IDX %u TPPA %u len %u off %llu invalid.\n",
-                //             victim->idx, t_ppa, victim->len_on_disk, 
-                //             victim->g_off);
-                NVMEV_ASSERT(victim->len_on_disk > 0);
                 mark_grain_invalid(shard, PPA_TO_PGA(t_ppa, victim->g_off), 
                         victim->len_on_disk);
             }
@@ -2912,8 +2882,9 @@ skip:
                 }
             }
 
-            NVMEV_DEBUG("Assigned PPA %u (old %u) grain %u to victim at IDX %u in %s. Prev PPA %llu\n",
-                    ppa, t_ppa, grain, victim->idx, __func__, prev_ppa);
+            NVMEV_DEBUG("Assigned PPA %u (old %u) grain %u to victim at "
+                        "IDX %u in %s. Prev PPA %llu\n",
+                        ppa, t_ppa, grain, victim->idx, __func__, prev_ppa);
 
             got_ppa = true;
 
@@ -2926,37 +2897,26 @@ skip:
 #else
             g_len = __entries_to_grains(shard, victim);
 
-            //NVMEV_ERROR("Reduced cached tentries to %d\n", 
-            //             cmbr->nr_cached_tentries);
-
             victim->g_off = grain;
             victim->len_on_disk = g_len;
-
-            NVMEV_DEBUG("Set the length on disk for IDX %u to %u.\n", victim->idx,
-                    g_len);
 #endif
             /*
-             * The IDX is used during GC so that we know which CMT entry
-             * to update.
+             * The IDX is used during GC so that we know which hash table
+             * section to update.
              */
 
             oob[ppa][grain] = ((uint64_t) g_len << 32) | (victim->idx * EPP);
-            NVMEV_DEBUG("Set OOB PPA %u grain %u to IDX %u\n", ppa, grain, victim->idx);
 
-            NVMEV_ASSERT(grain < GRAIN_PER_PAGE);
             mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), g_len);
 
             atomic_set(&victim->t_ppa, ppa);
 
+            NVMEV_ASSERT(grain < GRAIN_PER_PAGE);
             grain += g_len;
 
-            //NVMEV_ERROR("Evicted DIRTY mapping entry IDX %u in %s.\n",
-            //        victim->idx, __func__);
             all_clean = false;
             shard->stats.dirty_evict++;
         } else {
-            //NVMEV_ERROR("Evicted CLEAN mapping entry IDX %u in %s.\n",
-            //        victim->idx, __func__);
             shard->stats.clean_evict++;
         }
 
@@ -2976,12 +2936,7 @@ skip:
             break;
         }
     }
-    end = ktime_get();
-    //NVMEV_ERROR("Total took %lluus %d cached.\n", 
-    //            ktime_to_us(end) - ktime_to_us(start),
-    //            cmbr->nr_cached_tentries);
 
-//out:
     if(!all_clean && grain < GRAIN_PER_PAGE) {
         /*
          * We couldn't fill a page with mapping entries. Clear the rest of
@@ -2990,7 +2945,7 @@ skip:
 
         NVMEV_ASSERT(GRAIN_PER_PAGE - grain > 0);
         mark_grain_valid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
-        //mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
+        mark_grain_invalid(shard, PPA_TO_PGA(ppa, grain), GRAIN_PER_PAGE - grain);
 
         for(int i = grain; i < GRAIN_PER_PAGE; i++) {
             oob[ppa][i] = UINT_MAX;
@@ -3014,8 +2969,6 @@ skip:
         }
     }
 
-    //NVMEV_ERROR("Evicted %d items %d cached tail %d.\n", 
-    //             evicted, cmbr->nr_cached_tentries, vb.tail);
     atomic_set(have_victims, 0);
 
     return nsecs_completed;
@@ -3035,12 +2988,6 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
     grain = ht->g_off;
 	oob = shard->oob;
     t_ppa = atomic_read(&ht->t_ppa);
-
-	//if(!shard->fastmode) {
-	//	while(atomic_read(&ht->outgoing) == 1) {
-	//		cpu_relax();
-	//	}
-	//}
 
     if(!first) {
         ht->mappings = (struct h_to_g_mapping*) ht->mem;
@@ -3064,7 +3011,6 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
             nsecs_completed = ssd_advance_nand(shard->ssd, &srd);
             shard->stats.trans_r += spp->pgsz;
         }
-        //NVMEV_INFO("Sent a read for CMT PPA %u\n", ht->t_ppa);
     } else {
         ht->mappings = kzalloc_node(spp->pgsz, GFP_KERNEL, numa_node_id());
         ht->mem = ht->mappings;
@@ -3085,17 +3031,12 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
         ht->g_off = 0;
 
         for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
-        //    ht->mappings[i].lpa = UINT_MAX;
-        //    atomic_set(&ht->mappings[i].ppa, UINT_MAX);
             ht->pair_mem[i] = NULL;
         }
 #endif
     }
 
-    //ht->lru_ptr = 
     fifo_enqueue(cache->fifo, (void*) ht);
-    //NVMEV_ERROR("Added IDX %u len %u in get_one.\n", 
-    //             ht->idx, ht->len_on_disk);
     spin_lock(&entry_spin);
     cache->nr_cached_tentries += ht->len_on_disk;
     spin_unlock(&entry_spin);
@@ -3150,26 +3091,11 @@ static uint64_t __read_and_compare(struct demand_shard *shard, ppa_t grain,
 		swr.stime = __stime_or_clock(stime);
 		*nsecs = ssd_advance_nand(ssd, &swr);
 		hashset_insert(cached_pages, ppa);
-		//NVMEV_ERROR("Miss on hashset PPA %llu CH %d!\n", ppa, p.g.ch);
 	} else {
-		//NVMEV_ERROR("Hit on hashset PPA %llu!\n", ppa);
 		*nsecs = 0;
 	}
 
-    if(!shard->fastmode) {
-        //uint64_t res = ssd_advance_nand(ssd, &swr);
-        //if(res > stime) {
-        //    NVMEV_ERROR("This read added %llu nanoseconds to our time. cnt %d",
-        //                res - stime, h_params->cnt);
-        //} else {
-        //    NVMEV_ERROR("WTF!!!\n");
-        //}
-
-        //*nsecs = ssd_advance_nand(ssd, &swr);
-    }
     shard->stats.data_r += spp->pgsz;
-    //NVMEV_INFO("Read completed %llu\n", *nsecs);
-
 
     uint8_t* ptr = mem;
     uint8_t klen = __klen_from_value(ptr);
@@ -3182,19 +3108,9 @@ static uint64_t __read_and_compare(struct demand_shard *shard, ppa_t grain,
     }
 
     if (!strncmp(key_from_user, key_on_disk, klen)) {
-        //NVMEV_INFO("Match %llu %llu when checking offset %llu.\n", 
-        //*(uint64_t*) actual_key.key, *(uint64_t*) check_key.key,
-        //      *(uint64_t*) ptr);
-
-        /* hash key found -> update */
         shard->stats.fp_match_w++;
         return 0;
     } else {
-        //NVMEV_INFO("Fail got %llu wanted %llu when checking offset %llu.\n", 
-        //           *(uint64_t*) actual_key.key, *(uint64_t*) check_key.key,
-        //           (uint64_t) ptr);
-
-        /* retry */
         shard->stats.fp_collision_w++;
         h_params->cnt++;
         return 1;
@@ -3330,10 +3246,6 @@ cache:
         uint32_t g_from_pte = atomic_read(&pte.ppa);
         void* old_mem;
 
-        //NVMEV_INFO("Read for key %llu (%llu) checks LPA %u PPA %u\n", 
-        //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key), 
-        //            lpa, pte.ppa);
-
         if (!IS_INITIAL_PPA(pte.ppa)) {
             shard->stats.d_read_on_read += spp->pgsz;
             old_mem = ht->pair_mem[OFFSET(lpa)];
@@ -3365,8 +3277,6 @@ cache:
 
 				uint32_t _len = *(uint32_t*) (old_mem + 9);
                 NVMEV_ASSERT(len > 0);
-
-                //cmd->kv_retrieve.rsvd = ((uint64_t) pte.ppa) * GRAINED_UNIT;
             } else {
                 cmd->kv_retrieve.rsvd = U64_MAX;
                 mark_grain_invalid(shard, g_from_pte, 
@@ -3408,26 +3318,14 @@ cache:
 
 out:
 
-    if(status == 0) {
-        //NVMEV_INFO("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
-        //            " count %u\n", 
-        //            *(uint64_t*) (key.key), 
-        //            *(uint64_t*) (key.key + 4), 
-        //            *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), 
-        //            lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-        //            cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-        //            cmd->kv_retrieve.value_len, h.cnt);
-    } else {
-        //NVMEV_INFO("Read for %s key %llu (%llu %u) FAILS with LPA %u PPA %llu vlen %u"
-        //            " count %u\n", 
-        //            key.key[0] == 'L' ? "log" : "regular",
-        //            *(uint64_t*) (key.key),
-        //            *(uint64_t*) (key.key + 4), 
-        //            *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), 
-        //            lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
-        //            cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
-        //            cmd->kv_retrieve.value_len, h.cnt);
-    }
+    NVMEV_DEBUG("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
+                " count %u\n", 
+                *(uint64_t*) (key.key), 
+                *(uint64_t*) (key.key + 4), 
+                *(uint16_t*) (key.key + 4 + sizeof(uint64_t)), 
+                lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
+                cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
+                cmd->kv_retrieve.value_len, h.cnt);
 
     shard->stats.read_req_cnt++;
 
@@ -3438,10 +3336,10 @@ out:
 	ret->args = &ht->outgoing;
 	ret->nsecs_target = nsecs_latest;
 	ret->status = status;
+
 	return true;
 }
 
-char kbuf[255];
 static bool conv_read(struct nvmev_ns *ns, struct nvmev_request *req, struct nvmev_result *ret)
 {
     return __read(ns, req, ret, false);
@@ -3744,7 +3642,6 @@ cache:
         void* old_mem;
 
         if(!IS_INITIAL_PPA(pte.ppa)) {
-            //NVMEV_INFO("Hit for LPA %u IDX %lu, got grain %u\n", lpa, IDX(lpa), pte.ppa);
             shard->stats.d_read_on_write += spp->pgsz;
             old_mem = ht->pair_mem[OFFSET(lpa)];
 
@@ -3758,14 +3655,10 @@ cache:
                 goto lpa;
             }
 
-            //NVMEV_INFO("Overwrite LPA %u PPA %u line %d\n", 
-            //            lpa, pte.ppa, __grain2lineid(shard, pte.ppa));
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
             uint64_t old_g_off = G_OFFSET(g_from_pte);
             uint32_t len = __glen_from_oob(oob[G_IDX(g_from_pte)][old_g_off]);
-
-            //NVMEV_INFO("Got len %u PPA %u\n", len, G_IDX(pte.ppa));
 
             if(append) {
                 /*
@@ -3816,21 +3709,14 @@ append:
                         new_glen++;
                     }
 
-                    NVMEV_INFO("vlen %u glen %llu new_glen %llu\n",
-                                vlen, glen, new_glen);
                     if(new_glen > glen) {
                         mark_grain_valid(shard, grain + glen, new_glen - glen);
                         shard->offset += (new_glen - glen) * GRAINED_UNIT;
                         glen = new_glen;
-
-                        NVMEV_INFO("Set new glen to %llu\n", glen);
                     }
 
                     NVMEV_ASSERT((shard->offset / spp->pgsz) == page);
-                    //NVMEV_INFO("Append glen now %llu\n", glen);
                 }
-
-                //NVMEV_INFO("Offset %llu\n", offset);
 
                 /*
                  * The original location of the KV pair will be used
@@ -3847,20 +3733,15 @@ append:
                 cmd->kv_append.nsid = (uint32_t) (off & 0xFFFFFFFF); 
                 cmd->kv_append.rsvd2 = (uint32_t) (off >> 32);
                 cmd->kv_append.offset = b_len;
-                NVMEV_INFO("Set original append vlen to %u\n", b_len);
             } else if(len == glen) {
                 uint8_t *ptr = ((uint8_t*) old_mem) + 1;
                 cmd->kv_store.rsvd = (uint64_t) old_mem;
                 pair_mem = old_mem;
             } else if(len != glen) {
-                NVMEV_INFO("Mismatch LPA %u grain %u: %u %llu OOB %llu\n", 
-                            lpa, atomic_read(&pte.ppa), len, glen, 
-                            oob[G_IDX(atomic_read(&pte.ppa))][old_g_off]);
                 NVMEV_ASSERT(false);
             }
 
             NVMEV_ASSERT(len > 0);
-            //NVMEV_INFO("OW\n");
             mark_grain_invalid(shard, g_from_pte, len);
         } else {
             pair_mem = kzalloc_node(glen * GRAINED_UNIT, GFP_KERNEL, numa_node_id());
@@ -3899,10 +3780,10 @@ append:
 out:
     shard->stats.write_req_cnt++;
 
-    //NVMEV_ERROR("%s for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n",
-    //            append ? "Append" : "Write",
-    //            *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key),
-    //            klen, vlen, grain, page, lpa);
+    NVMEV_DEBUG("%s for key %llu (%llu) klen %u vlen %u grain %llu PPA %llu LPA %u\n",
+                append ? "Append" : "Write",
+                *(uint64_t*) (key.key), *(uint64_t*) &(cmd->kv_store.key),
+                klen, vlen, grain, page, lpa);
 
     if(!shard->fastmode) {
         ret->cb = __release_map;
@@ -3925,8 +3806,6 @@ fm_out:
 #ifndef ORIGINAL
         ht->fm_grains[OFFSET(lpa)] = PPA_TO_PGA(page, g_off);
 #endif
-        
-        //NVMEV_ERROR("FM wrote LPA %u grain %llu\n", lpa, PPA_TO_PGA(page, g_off));
         atomic_dec(&ht->outgoing);
     }
 

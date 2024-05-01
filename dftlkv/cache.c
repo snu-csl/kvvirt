@@ -129,7 +129,7 @@ bool cache_hit(struct ht_section *ht) {
      * table that Plus uses to find hash index to grain mappings. If a search
      * through the table can't find the mapping, we continue and add it.
      */
-    return ht->mappings == NULL;
+    return ht->mappings != NULL;
 }
 
 struct h_to_g_mapping cache_hidx_to_grain(struct ht_section *ht, uint32_t hidx, 
@@ -139,7 +139,6 @@ struct h_to_g_mapping cache_hidx_to_grain(struct ht_section *ht, uint32_t hidx,
     /*
      * Original's offset calculation scheme.
      */
-
     if(pos) {
         *pos = OFFSET(hidx);
     }
@@ -149,7 +148,6 @@ struct h_to_g_mapping cache_hidx_to_grain(struct ht_section *ht, uint32_t hidx,
     /*
      * Plus's two level table scheme.
      */
-
     struct root *root;
 
     root = (struct root*) ht->mappings;
