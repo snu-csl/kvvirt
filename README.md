@@ -8,9 +8,8 @@ Included in this repository is the following:
 - The *Original* FTL, based on the good work at from https://github.com/dgist-datalab/PinK/.
 - The *Plus* FTL.
 - The YCSB code used in the paper.
-- [Installation Instructions](#installation)
+- Installation Instructions
 
-<a id="installation"></a>
 ## Installation
 
 The build.sh script will build both YCSB and NVMeVirt with either Original or Plus.
@@ -30,16 +29,24 @@ it to use Plus.
 #undef ORIGINAL # to use Plus
 ```
 
-After building NVMeVirt, you can insert the kernel module with the a command similar to the following:
+First, insert the KVSSD kernel module:
 
-`insmod /home/username/virtkv/nvmev.ko memmap_start=32G memmap_size=124G cpus=35,36 gccpu=37 evictcpu=38 cache_dram_mb=8`
+```
+rmmod nvme nvme_core # if you already have the NVMe module loaded
+insmod drivers/kernel_v5.10.37/nvme-core.ko
+insmod drivers/kernel_v5.10.37/nvme.ko
+```
+
+Next, insert the NVMeVirt the kernel module with the a command similar to the following:
+
+`insmod nvmev.ko memmap_start=32G memmap_size=124G cpus=35,36 gccpu=37 evictcpu=38 cache_dram_mb=8`
 
 memmap\_start and memmap\_size refer to an area of memory reserved at boot time.
 You can reserve memory by adding the following to /etc/default/grub
 
 `memmap=128G\\\$600G # Reserve 128GB from 600GB`
 
-A good guide to figuring out which memory you can reserve is here: https://pmem.io/blog/2016/02/how-to-emulate-persistent-memory/
+A good guide to figuring out which memory you can reserve is here: https://pmem.io/blog/2016/02/how-to-emulate-persistent-memory/. The current versions of Original and Plus don't actually use this memory right now (they use the kernel allocator), but reserving is still required.
 
 The parameters cpus, gccpu, and evictcpu refer to cores on which to pin the as-named threads.
 cpus=35,36 means NVMeVirt's dispatcher thread will run on CPU 35, and the IO worker thread
@@ -47,7 +54,7 @@ will run on CPU 36. You can specify multiple IO worker threads with cpus=35,36,3
 
 The design assumes one background GC and one eviction thread for now.
 
-After you run the insmod command above, you should see a new NVMe SSD in your system
+After you run the insmod command above, you should see a new NVMe KVSSD in your system
 
 ```
 sudo nvme list
