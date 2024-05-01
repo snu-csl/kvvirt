@@ -1,7 +1,7 @@
 # A Hash-Based Key-Value SSD FTL With Efficient Small-Value Support
 
 Welcome to the repository for the work described in the above paper. This work is not a part of the
-official NVMeVirt repository (https://github.com/snu-csl/NVMeVirt), but with some extra time and effort the KVSSD FTLs might added once the code is neat enough. The original NVMeVirt README with installation instructions is located at the bottom.
+official NVMeVirt repository, located here: https://github.com/snu-csl/NVMeVirt.
 
 Included in this repository is the following:
 
