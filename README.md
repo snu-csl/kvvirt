@@ -16,7 +16,7 @@ A kernel that is both supported by the KVSSD drivers and NVMeVirt is required. A
 
 ## Installation
 
-The build.sh script will install libgflags (necessary for YCSB), a concurrent queue library we use for KVSSD async I/O (see [Acknowledgements](#ack)), and build YCSB, the KVSSD driver, and NVMeVirt with either Original or Plus.  The *drivers* folder is taken from a modified version of Samsung's official KVSSD repository, located here: https://github.com/snu-csl/KVSSD_5.10.37.
+The build.sh script will install libgflags (necessary for YCSB), a concurrent queue library we use for KVSSD async I/O (see [Acknowledgements](#ack)), and build YCSB, the KVSSD driver, and NVMeVirt with either Original or Plus.  The *drivers* folder is taken from a modified version of Samsung's official KVSSD repository, located here: https://github.com/snu-csl/KVSSD\_5.10.37.
 
 ```
 ./build.sh rel # Release
@@ -109,14 +109,14 @@ convenient as there won't be a separate log file for each benchmark as of now.
 
 The main store function is \_\_store, and the main retrieve function is \_\_retrieve. GC starts in do\_gc, and clean\_one\_flashpg performs the actual invalid pair checking and copying.
 
-How FTLs are written in NVMeVirt can be confusing at first. The general theory is this; for writes/stores, IO workers will copy to an address in memory that we give them, as a result of the mapping logic in the __store function. We *won't* perform any copies in the foreground. The foreground dispatcher performs mapping logic only. If we overwrite a KV pair, the IO worker will copy to the same address as before unless the pair size changes. This isn't how flash works in real life, but the underlying flash model ultimately determines how long the store will take.
+How FTLs are written in NVMeVirt can be confusing at first. The general theory is this; for writes/stores, IO workers will copy to an address in memory that we give them, as a result of the mapping logic in the \_\_store function. We *won't* perform any copies in the foreground. The foreground dispatcher performs mapping logic only. If we overwrite a KV pair, the IO worker will copy to the same address as before unless the pair size changes. This isn't how flash works in real life, but the underlying flash model ultimately determines how long the store will take.
 
 In GC, we only update mapping information, and don't actually copy any KV data to new locations.
 This reduces the work the foreground dispatcher and background garbage collector have to perform dramatically. 
 
-This doesn't result in "free" or unrealistically fast IO; the flash timings we generate from the dispatcher are ultimately what decides when the completion event gets placed onto the disk's completion queue.
+This doesn't result in "free" or unrealistically fast IO; the flash timings we generate are ultimately what decides when the completion event gets placed onto the disk's completion queue.
 
-Originally, hash indexes were called LPAs (logical page addresses). If you see LPA in the code, assume hash index. Likewise, hash table sections (ht_section) were called CMT.
+Originally, hash indexes were called LPAs (logical page addresses). If you see LPA in the code, assume hash index. Likewise, hash table sections (ht\_section) were called CMT.
 
 ## License
 

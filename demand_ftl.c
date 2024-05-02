@@ -2859,7 +2859,7 @@ new_page:
             NVMEV_ASSERT(!got_ppa);
             NVMEV_ASSERT(victim->len_on_disk == GRAIN_PER_PAGE);
 #endif
-skip:
+skip:;
             uint64_t prev_ppa = t_ppa;
             if(!got_ppa) {
                 spin_lock(&ev_spin);
@@ -3141,7 +3141,7 @@ static inline uint32_t __vlen_from_value(uint8_t* mem) {
     return vlen;
 }
 
-uint64_t __release_map(void *voidargs, uint64_t*, uint64_t*) {
+uint64_t __release_map(void *voidargs, uint64_t* a, uint64_t* b) {
     atomic_t *outgoing = (atomic_t*) voidargs;
     atomic_dec(outgoing);
     return 0;
@@ -3206,7 +3206,7 @@ static bool __read(struct nvmev_ns *ns, struct nvmev_request *req,
     nsecs_completed = __get_wallclock();
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-lpa:
+lpa:;
     lpa_t lpa = get_hash_idx(&shard->cache, &h);
     h.lpa = lpa;
 
@@ -3503,7 +3503,7 @@ again:
     struct h_to_g_mapping new_pte;
     atomic_set(&new_pte.ppa, grain);
 
-lpa:
+lpa:;
     lpa_t lpa = get_hash_idx(&shard->cache, &h);
     h.lpa = lpa;
 
@@ -3783,7 +3783,7 @@ out:
         ret->args = &ht->outgoing;
         ret->nsecs_target = nsecs_latest;
     } else {
-fm_out:
+fm_out:;
         void* to;
         void* from = (void*) cmd->kv_store.dptr.prp1;
 
@@ -4080,7 +4080,7 @@ int fast_fill_t(void *data) {
         }
 
         if(t_ppa == UINT_MAX) {
-skip:
+skip:;
             struct ppa p = get_new_page(shard, MAP_IO);
             ppa_t ppa = ppa2pgidx(shard, &p);
 
