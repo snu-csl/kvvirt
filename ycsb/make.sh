@@ -24,12 +24,12 @@ elif [[ $TYPE == debug ]]; then
 fi
 
 WRAP=""
-LIB=""
-INC="-I${Q_DIR}"
+LIB="${HIST_DIR}/build/src/libhdr_histogram_static.a"
+INC="-I${Q_DIR} -I${HIST_DIR}/include"
 DEF=""
 if [[ $STORE == kvssd ]]; then
     WRAP="kvssd.cc kvssd_ycsb.cc"
 fi
 
 mkdir -p build
-g++-11 latest-generator.cc zipf.cc main.cc ${WRAP} -o build/ycsb_${STORE} ${DEF} ${TYPE} -g -std=c++17 -lpthread -lhdr_histogram -lgflags ${LIB} ${INC}
+c++ latest-generator.cc zipf.cc main.cc ${LIB} ${WRAP} -o build/ycsb_${STORE} ${DEF} ${TYPE} -g -std=c++17 -lpthread -lgflags ${LIB} ${INC}
