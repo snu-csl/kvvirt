@@ -127,4 +127,4 @@ Priority queue implementation [`pqueue/`](pqueue/) is offered under the terms of
 <a id="ack"></a>
 ## Acknowledgements
 
-We thank the author of https://github.com/cameron314/concurrentqueue and https://github.com/atbarker/cityhash-kernel, whose work we use throughout.
+We thank the author of https://github.com/cameron314/concurrentqueue, https://github.com/HdrHistogram/HdrHistogram\_c and https://github.com/atbarker/cityhash-kernel, whose work we use throughout.
