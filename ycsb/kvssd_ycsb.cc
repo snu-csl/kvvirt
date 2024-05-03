@@ -5,7 +5,7 @@
 
 const uint32_t NUM_CACHE_SHARDS = 31;
 
-KVSSD kvssd("/dev/nvme2n1");
+KVSSD kvssd("/dev/nvme0n1");
 std::shared_mutex cache_locks[NUM_CACHE_SHARDS];
 cache::lru_cache<uint64_t, std::pair<char*, uint64_t>> *value_cache[NUM_CACHE_SHARDS];
 
@@ -20,19 +20,20 @@ int open(const char* dir, uint64_t vlen, uint64_t cache_size_mb, bool create) {
     if(!opened) {
         kvssd.Open();
         kvssd.SetBufferLen(4096);
+        kvssd.SetPath(dir);
 
-	if(cache_size_mb > 0) {
-		uint64_t cache_size_b = cache_size_mb << 20;
-		for(int i = 0; i < NUM_CACHE_SHARDS; i++) {
-			value_cache[i] = 
-				new cache::lru_cache<uint64_t, std::pair<char*, uint64_t>>(cache_size_b / NUM_CACHE_SHARDS);
-			cache_locks[i].lock();
-			cache_locks[i].unlock();
-		}
-		have_cache = true;
-	} else {
-		have_cache = false;
-	}
+        if(cache_size_mb > 0) {
+            uint64_t cache_size_b = cache_size_mb << 20;
+            for(int i = 0; i < NUM_CACHE_SHARDS; i++) {
+                value_cache[i] = 
+                    new cache::lru_cache<uint64_t, std::pair<char*, uint64_t>>(cache_size_b / NUM_CACHE_SHARDS);
+                cache_locks[i].lock();
+                cache_locks[i].unlock();
+            }
+            have_cache = true;
+        } else {
+            have_cache = false;
+        }
 
         opened = true;
     }

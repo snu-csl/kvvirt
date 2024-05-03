@@ -175,5 +175,6 @@ Makefile.local
 # Logs
 *logdir*
 
-concurrentqueue
-*ycsb*
+ycsb/concurrentqueue
+ycsb/hdrhistogram_c
+*ycsb/build/ycsb_kvssd*

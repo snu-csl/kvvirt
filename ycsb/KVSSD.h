@@ -22,6 +22,10 @@ class KVSSD {
             path_ = path;
         }
 
+        void SetPath(std::string path) {
+            path_ = path;
+        }
+
         int Open();
         int Close();
         int Store(std::string key, const char* in, int vlen);
