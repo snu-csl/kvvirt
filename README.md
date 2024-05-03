@@ -50,7 +50,7 @@ You can reserve memory by adding the following to /etc/default/grub
 
 `memmap=128G\\\$600G # Reserve 128GB from 600GB`
 
-A good guide to figuring out which memory you can reserve is here: https://pmem.io/blog/2016/02/how-to-emulate-persistent-memory/. The current versions of Original and Plus don't actually use this memory right now (they use the kernel allocator), but reserving is still required.
+A good guide to figuring out which memory you can reserve is here: https://docs.pmem.io/persistent-memory/getting-started-guide/creating-development-environments/linux-environments/linux-memmap. The current versions of Original and Plus don't actually use this memory right now (they use the kernel allocator), but reserving is still required.
 
 The parameters cpus, gccpu, and evictcpu refer to cores on which to pin the as-named threads.
 cpus=35,36 means NVMeVirt's dispatcher thread will run on CPU 35, and the IO worker thread
@@ -127,4 +127,4 @@ Priority queue implementation [`pqueue/`](pqueue/) is offered under the terms of
 <a id="ack"></a>
 ## Acknowledgements
 
-We thank the author of https://github.com/cameron314/concurrentqueue, https://github.com/HdrHistogram/HdrHistogram\_c and https://github.com/atbarker/cityhash-kernel, whose work we use throughout.
+We thank the author of https://github.com/cameron314/concurrentqueue, https://github.com/HdrHistogram/HdrHistogram\_c, https://github.com/lamerman/cpp-lru-cache/tree/master, and https://github.com/atbarker/cityhash-kernel, whose work we use throughout.
