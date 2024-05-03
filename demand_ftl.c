@@ -1121,9 +1121,6 @@ skip:
             goto skip;
         }
 
-        NVMEV_INFO("Flushing an invalid mapping page for line %llu off %llu to PPA %llu\n", 
-                     line, inv_mapping_offs[line], pgidx);
-
         /*
          * GC will see UINT_MAX at grain 0 and know it's an invalid mapping page.
          */
