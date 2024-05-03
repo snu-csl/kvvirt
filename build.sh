@@ -19,6 +19,7 @@ if [[ $TYPE == "clean" ]]; then
     cd ${DIR}
     rm -r ycsb/build
     rm -r ${Q_DIR}
+    rm -r ${HIST_DIR}
     make clean
     exit
 fi
