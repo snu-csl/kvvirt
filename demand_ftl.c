@@ -317,8 +317,6 @@ static void prepare_write_pointer(struct demand_shard *demand_shard, uint32_t io
     NVMEV_ASSERT(wp);
     NVMEV_ASSERT(curline);
 
-    NVMEV_INFO("Giving line %d to %u\n", curline->id, io_type);
-
     /* wp->curline is always our next-to-write super-block */
     *wp = (struct write_pointer){
         .curline = curline,
@@ -1374,11 +1372,6 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
                 continue;
             }
 
-            NVMEV_INFO("%s XA 1 Inserting inv LPA %u PPA %u "
-                        "(%llu) in GC for line %llu\n", 
-                        __func__, lpa, ppa, ((uint64_t) ppa << 32) | lpa,
-                        line);
-
             struct inv_entry *entry;
             entry = kmalloc_node(sizeof(*entry), GFP_KERNEL, numa_node_id());
             entry->key = ((uint64_t) ppa << 32) | lpa;
@@ -1390,7 +1383,6 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
             hash_for_each_possible_safe(inv_m_hash, item, next, node, entry->key) {
                 if (item->key == entry->key) {
                     NVMEV_ASSERT(false);
-                    NVMEV_INFO("Found dupe LPA %u PPA %u\n", lpa, ppa);
                     hash_del(&item->node);
                     deleted = true;
                     break;
@@ -1433,10 +1425,6 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
         if(lpa == UINT_MAX) {
             continue;
         }
-
-        NVMEV_INFO("%s XA 2 off %lu Inserting inv LPA %u PPA %u "
-                    "(%llu)\n", 
-                    __func__, j * INV_ENTRY_SZ, lpa, ppa, ((uint64_t) ppa << 32) | lpa);
 
         struct inv_entry *entry;
         entry = kmalloc_node(sizeof(*entry), GFP_KERNEL, numa_node_id());
@@ -1658,8 +1646,6 @@ again:
         goto again;
     }
 
-    NVMEV_INFO("Inv map grain %u in copy PPA %u\n",
-                grain, G_IDX(grain));
     mark_grain_valid(shard, grain, len);
 
     uint64_t copy_to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
@@ -1809,8 +1795,6 @@ again:
         goto again;
     }
 
-    NVMEV_INFO("Valid grain %llu pos %u in copy len %u PPA %llu LPA %u line %d\n",
-                grain, pos, len, G_IDX(grain), lpa, __grain2lineid(shard, grain));
     mark_grain_valid(shard, grain, len);
 
     oob[pgidx][offset] = ((uint64_t) len << 32) | lpa;
@@ -1827,8 +1811,6 @@ again:
 #endif
 
     if(__grain2lineid(shard, before) == gc_line) {
-        NVMEV_INFO("SAME LINE Valid grain %llu in copy len %u PPA %llu LPA %u line %d\n",
-                grain, len, G_IDX(grain), lpa, __grain2lineid(shard, grain));
         /*
          * If this pair is still on the line that's being garbage collected
          * at this point, we can try to switch with the new grain. If it's
@@ -1848,8 +1830,6 @@ again:
 #endif
     } else {
         NVMEV_ASSERT(false);
-        NVMEV_INFO("MOVED LINE to grain %u Valid grain %llu in copy len %u PPA %llu LPA %u line %d\n",
-                    before, grain, len, G_IDX(grain), lpa, __grain2lineid(shard, grain));
     }
 }
 
@@ -1910,7 +1890,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
             NVMEV_ASSERT(pg_inv_cnt[pgidx] == GRAIN_PER_PAGE);
 #endif
             ppa_copy.g.pg++;
-            NVMEV_INFO("1 skipping PPA %llu in GC.\n", pgidx);
             continue;
 #ifdef ORIGINAL
         }
@@ -1918,12 +1897,10 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
         } else if(pg_inv_cnt[pgidx] == GRAIN_PER_PAGE) {
             NVMEV_ASSERT(pg_iter->status == PG_INVALID);
             ppa_copy.g.pg++;
-            NVMEV_INFO("2 skipping PPA %llu in GC.\n", pgidx);
             continue;
         }
 #endif
 
-        NVMEV_INFO("Cleaning PPA %llu\n", pgidx);
         for(int i = 0; i < GRAIN_PER_PAGE; i++) {
             uint64_t grain = PPA_TO_PGA(pgidx, i);
 #ifdef ORIGINAL
@@ -1950,8 +1927,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  * of the pages have been used.
                  */
                 shard->offset = 0;
-                //NVMEV_INFO("Set offset to 0 grain %llu!!!\n",
-                //            grain);
             }
 
             NVMEV_DEBUG("Grain %llu (%d)\n", grain, i);
@@ -2028,8 +2003,9 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
 
                 NVMEV_ASSERT(ht->len_on_disk == len);
 
-                NVMEV_INFO("CMT IDX %u was %u grains in size from grain %llu PPA %llu (%u)\n", 
-                             idx, len, grain, G_IDX(grain + i), t_ppa);
+                NVMEV_DEBUG_VERBOSE("CMT IDX %u was %u grains in size from "
+                                    "grain %llu PPA %llu (%u)\n", 
+                                    idx, len, grain, G_IDX(grain + i), t_ppa);
                 mark_grain_invalid(shard, grain, len);
                 __copy_map(shard, idx, len);
                 i += len - 1;
@@ -2091,8 +2067,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                     //NVMEV_ERROR("Got valid mapping from IDX %u\n", ht->idx);
 
                     if(atomic_read(&pte.ppa) != grain) {
-                        NVMEV_INFO("IDX %u LPA %llu grain %llu PPA %llu modified during GC.",
-                                ht->idx, lpa, grain, G_IDX(grain));
+                        NVMEV_DEBUG("IDX %u LPA %llu grain %llu PPA %llu modified during GC.",
+                                     ht->idx, lpa, grain, G_IDX(grain));
 #ifndef ORIGINAL
                         /*
                          * We enter this path because while we were
@@ -2119,8 +2095,6 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                         __record_inv_mapping(shard, lpa, grain, NULL);
 #endif
                     } else {
-                        //NVMEV_INFO("Invalidating LPA %llu grain %llu line %d\b", 
-                        //            lpa, grain, __grain2lineid(shard, grain));
                         mark_grain_invalid(shard, grain, len);
                         __copy_valid_pair(shard, lpa, len, NULL,
                                 lpa_len_idx, ht, pos, l->id);
@@ -3058,7 +3032,7 @@ static uint64_t __read_and_compare(struct demand_shard *shard, ppa_t grain,
     NVMEV_ASSERT(mem);
 
     if(ppa > spp->tt_pgs) {
-        NVMEV_INFO("Tried to convert PPA %llu\n", ppa);
+        NVMEV_ERROR("Tried to convert PPA %llu\n", ppa);
     }
     NVMEV_ASSERT(ppa < spp->tt_pgs);
 
@@ -3229,8 +3203,9 @@ lpa:;
     }
 
     if(t_ppa == UINT_MAX) {
-        NVMEV_INFO("Key %s (%llu) tried to read missing CMT entry IDX %u.\n", 
-                (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key, ht->idx);
+        NVMEV_DEBUG("Key %s (%llu) tried to read missing CMT entry IDX %u.\n", 
+                     (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key, 
+                     ht->idx);
         h.cnt++;
         goto lpa;
     }
