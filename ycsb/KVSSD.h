@@ -29,7 +29,7 @@ class KVSSD {
         int Open();
         int Close();
         int Store(std::string key, const char* in, int vlen);
-        int Store(uint64_t key, const char* in, int vlen);
+        int Store(uint64_t key, const char* in, int vlen, bool append);
         int StoreAsync(std::string key, const char *in, int vlen,
                        void (*cb)(void*, char*, int), void *args);
         int StoreAsync(uint64_t key, const char *in, int vlen,

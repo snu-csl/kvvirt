@@ -18,9 +18,9 @@ int open(const char* dir, uint64_t vlen, uint64_t cache_size_mb, bool create) {
     open_lock.lock();
 
     if(!opened) {
-        kvssd.Open();
-        kvssd.SetBufferLen(4096);
         kvssd.SetPath(dir);
+        kvssd.Open();
+        kvssd.SetBufferLen(vlen);
 
         if(cache_size_mb > 0) {
             uint64_t cache_size_b = cache_size_mb << 20;
@@ -92,10 +92,14 @@ void add_to_cache(uint64_t key, char* buf, uint64_t vlen) {
     cache_locks[shard].unlock();
 }
 
-int put(uint64_t k, char* v, uint64_t vlen, bool sync) {
-    assert(!kvssd.Store(k, v, vlen));
-    add_to_cache(k, v, vlen);
-    return 0;
+int put(uint64_t k, char* v, uint64_t vlen, bool append) {
+    if(kvssd.Store(k, v, vlen, append)) {
+        printf("Too big!\n");
+        return 1;
+    } else {
+        add_to_cache(k, v, vlen);
+        return 0;
+    }
 }
 
 int get(uint64_t k, char *out, uint64_t *vlen_out) {

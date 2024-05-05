@@ -48,6 +48,7 @@ DEFINE_int64(wal_size_mb, 16384, "WAL size in NewStore.");
 DEFINE_int64(cache_size_mb, 16384, "Cache size in MB.");
 DEFINE_int64(iops_limit, 0, "IOPS limit. 0 means none.");
 DEFINE_bool(do_inserts, false, "Inserts instead of updates.");
+DEFINE_bool(append, false, "Append instead of store. Appends go to to one global KV pair.");
 
 std::atomic<uint64_t> writes_done;
 std::atomic<uint64_t> reads_done;
@@ -108,17 +109,21 @@ void reset_stats() {
     warmup = true;
 }
 
+std::atomic<uint64_t> cur_append_key{1};
+
 std::atomic<uint64_t> next_to_insert;
 std::atomic<uint64_t> num_started{0};
 std::atomic<bool> go;
+uint32_t buf_size;
+
 int worker(const int id, const bool fill, const bool warm, const std::vector<uint64_t> *keys, 
            const uint64_t start, uint64_t end, const bool do_scan, const bool latest,
-           const bool do_rmw, const bool sample) {
+           const bool do_rmw, const bool sample, const bool append) {
     char name[16];
     sprintf(name, "worker%d", id);
     pthread_setname_np(pthread_self(), name);
 
-    open(FLAGS_dir.c_str(), FLAGS_vlen, FLAGS_cache_size_mb, fill);
+    open(FLAGS_dir.c_str(), buf_size, FLAGS_cache_size_mb, fill);
 
     if(num_started++ < (FLAGS_threads - 1)) {
         while(!go) {
@@ -144,7 +149,7 @@ int worker(const int id, const bool fill, const bool warm, const std::vector<uin
 
     char *v = (char*)malloc(FLAGS_vlen);
     char *out = NULL;
-    int ret = posix_memalign((void**) &out, 4096, 4096);
+    int ret = posix_memalign((void**) &out, 4096, buf_size);
     (void)ret;
     assert(out);
     uint64_t vlen_out = UINT64_MAX;
@@ -177,7 +182,10 @@ int worker(const int id, const bool fill, const bool warm, const std::vector<uin
     for(uint64_t i = start; i < end; i++) {
         auto op = distr_op(op_generator);
 
-        if(fill) {
+again:
+        if(append) {
+            k = cur_append_key;
+        } else if(fill) {
             k = keys->at(i);
         } else if(FLAGS_do_inserts && op < w_pct) {
             k = next_to_insert++;
@@ -198,8 +206,14 @@ int worker(const int id, const bool fill, const bool warm, const std::vector<uin
 
         if(fill || (op  < w_pct)) {
             if(!do_rmw || fill) {
-                while(put(k, v, FLAGS_vlen, true)) {
-                    usleep(1);
+                if(put(k, v, FLAGS_vlen, append)) {
+                    /*
+                     * Reached end of this append buffer.
+                     */
+                    if(cur_append_key.compare_exchange_strong(k, k + 1)) {
+                        printf("Full! New append key %lu\n", k + 1);
+                    }
+                    goto again;
                 }
             } else {
                 rmw(k, FLAGS_vlen);
@@ -288,7 +302,7 @@ int ycsb(bool pop, bool warm, bool scan, bool latest, bool rmw) {
                                      FLAGS_num_pairs / FLAGS_threads * i,
                                      i == FLAGS_threads - 1 ? FLAGS_num_pairs : 
                                      FLAGS_num_pairs / FLAGS_threads * (i + 1), false, false, false,
-                                     false);
+                                     false, FLAGS_append);
         }
 
         for(int i = 0; i < FLAGS_threads; i++) {
@@ -332,7 +346,7 @@ int ycsb(bool pop, bool warm, bool scan, bool latest, bool rmw) {
         }
 
         threads[i] = std::thread(worker, i, false, warm, &keys, start, end, scan, latest, rmw,
-                                 i == 0 ? true : false);
+                                 i == 0 ? true : false, FLAGS_append);
     }
 
     for(int i = 0; i < FLAGS_threads; i++) {
@@ -454,6 +468,8 @@ int main(int argc, char** argv) {
     }
 
     next_to_insert = FLAGS_num_pairs;
+
+    buf_size = FLAGS_vlen + (4096 - (FLAGS_vlen % 4096));
 
     bool do_warm = FLAGS_warm_cache;
     bool do_pop = FLAGS_pop;

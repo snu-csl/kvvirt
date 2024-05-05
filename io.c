@@ -109,9 +109,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     } else if(append) {
         offset = cmd->kv_append.rsvd;
         length = (cmd->kv_append.value_len << 2) - cmd->kv_append.invalid_byte;
-        orig = ((uint64_t) cmd->kv_append.rsvd2 << 32) | cmd->kv_append.nsid;
-        orig_len = cmd->kv_append.offset == 0 ? 
-                   0 : cmd->kv_append.offset + sizeof(uint32_t);
+        //orig = ((uint64_t) cmd->kv_append.rsvd2 << 32) | cmd->kv_append.nsid;
+        //orig_len = cmd->kv_append.offset == 0 ? 
+        //           0 : cmd->kv_append.offset + sizeof(uint32_t);
     } else {
         NVMEV_ASSERT(false);
     }
@@ -136,9 +136,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
         //NVMEV_INFO("Copying orig len %lu to offset %lu from %lu first key %s last key %s\n", 
         //            orig_len, offset, orig, v2, v);
-        memcpy(nvmev_vdev->ns[nsid].mapped + offset, 
-               nvmev_vdev->ns[nsid].mapped + orig, orig_len);
-        offset += orig_len;
+        //memcpy(nvmev_vdev->ns[nsid].mapped + offset, 
+        //       nvmev_vdev->ns[nsid].mapped + orig, orig_len);
+        //offset += orig_len;
     }
 
     void *vaddr;
@@ -185,7 +185,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 				io_size = PAGE_SIZE - mem_offs;
 		}
 
-        if(write || (append && orig_len == 0)) {
+        if(write || append) {
             memcpy((void*) offset, vaddr + mem_offs, io_size);
             //NVMEV_INFO("Wrote key %s to offset %lu\n",
             //            (char*) (((char*) offset) + 1), offset);
@@ -305,7 +305,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //}
         NVMEV_ASSERT(real_vlen > 0); 
         return real_vlen;
-    } else if(write || orig_len == 0) {
+    } else if(write || append) { //orig_len == 0) {
         ptr = (void*) cmd->kv_store.rsvd;
         klen = *(uint8_t*) ptr;
 

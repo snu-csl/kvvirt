@@ -230,6 +230,10 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req,
                          struct nvmev_result *ret);
 void demand_warmup(struct nvmev_ns *ns);
 
+void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len);
+void mark_page_valid(struct demand_shard *demand_shard, struct ppa *ppa);
+void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len);
+
 #ifndef ORIGINAL
 #define INV_PAGE_SZ PAGESIZE
 #define INV_ENTRY_SZ (sizeof(lpa_t) + sizeof(ppa_t))

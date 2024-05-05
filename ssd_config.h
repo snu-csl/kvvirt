@@ -255,6 +255,10 @@ typedef ppa_t pga_t;
 #define GRAINED_UNIT ( PIECE )
 #define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 
+#define WB_SIZE 4096 // MB(1)
+#define WB_SIZE_G (WB_SIZE / GRAINED_UNIT)
+static_assert((WB_SIZE % GRAINED_UNIT) == 0);
+
 #define KLEN_MARKER_SZ sizeof(uint8_t)
 #define VLEN_MARKER_SZ sizeof(uint32_t)
 
@@ -265,6 +269,16 @@ typedef ppa_t pga_t;
 #define MDTS (6)
 #define CELL_MODE (CELL_MODE_MLC)
 
+#define SSD_PARTITIONS (1)
+#define NAND_CHANNELS (1)
+#define LUNS_PER_NAND_CH (2)
+#define PLNS_PER_LUN (1)
+#define FLASH_PAGE_SIZE KB(32)
+#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
+#define BLKS_PER_PLN (0)
+#define BLK_SIZE KB(64) /*BLKS_PER_PLN should not be 0 */
+static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
+
 //#define SSD_PARTITIONS (1)
 //#define NAND_CHANNELS (8)
 //#define LUNS_PER_NAND_CH (8)
@@ -272,18 +286,8 @@ typedef ppa_t pga_t;
 //#define FLASH_PAGE_SIZE KB(32)
 //#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
 //#define BLKS_PER_PLN (0)
-//#define BLK_SIZE KB(64) /*BLKS_PER_PLN should not be 0 */
+//#define BLK_SIZE KB(128) /*BLKS_PER_PLN should not be 0 */
 //static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
-
-#define SSD_PARTITIONS (1)
-#define NAND_CHANNELS (8)
-#define LUNS_PER_NAND_CH (8)
-#define PLNS_PER_LUN (1)
-#define FLASH_PAGE_SIZE KB(32)
-#define ONESHOT_PAGE_SIZE (FLASH_PAGE_SIZE * 1)
-#define BLKS_PER_PLN (0)
-#define BLK_SIZE KB(128) /*BLKS_PER_PLN should not be 0 */
-static_assert((ONESHOT_PAGE_SIZE % FLASH_PAGE_SIZE) == 0);
 
 #define MAX_CH_XFER_SIZE KB(16) /* to overlap with pcie transfer */
 #define WRITE_UNIT_SIZE (512)

@@ -14,7 +14,7 @@
 #undef CONFIG_NVMEV_FAST_X86_IRQ_HANDLING
 
 #undef CONFIG_NVMEV_VERBOSE
-#undef CONFIG_NVMEV_DEBUG
+#define CONFIG_NVMEV_DEBUG
 #undef CONFIG_NVMEV_DEBUG_VERBOSE
 
 /*************************/
@@ -26,11 +26,11 @@
 #define NVMEV_SUBSYSTEM_VENDOR_ID NVMEV_VENDOR_ID
 
 #define NVMEV_INFO(string, args...) printk(KERN_INFO "%s: [t: %d cycles: %llu] " string, NVMEV_DRV_NAME, current->pid, get_cycles(), ##args)
-#define NVMEV_ERROR(string, args...) printk(KERN_INFO "%s: [t: %d cycles: %llu] " string, NVMEV_DRV_NAME, current->pid, get_cycles(), ##args)
+#define NVMEV_ERROR(string, args...) printk(KERN_ERR "%s: [t: %d cycles: %llu] " string, NVMEV_DRV_NAME, current->pid, get_cycles(), ##args)
 #define NVMEV_ASSERT(x) BUG_ON((!(x)))
 
 #ifdef CONFIG_NVMEV_DEBUG
-#define  NVMEV_DEBUG(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
+#define  NVMEV_DEBUG(string, args...) printk(KERN_INFO "%s: [t: %d cycles: %llu] " string, NVMEV_DRV_NAME, current->pid, get_cycles(), ##args)
 #ifdef CONFIG_NVMEV_DEBUG_VERBOSE
 #define  NVMEV_DEBUG_VERBOSE(string, args...) printk(KERN_INFO "%s: " string, NVMEV_DRV_NAME, ##args)
 #else

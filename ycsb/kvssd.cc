@@ -160,7 +160,7 @@ int KVSSD::Store(std::string key, const char* in, int vlen) {
     return 0;
 }
 
-int KVSSD::Store(uint64_t key, const char* in, int vlen) {
+int KVSSD::Store(uint64_t key, const char* in, int vlen, bool append) {
     if(fd_ < 0) {
         printf("ERROR: tried to called Store without an open KVSSD.\n");
         return 1;
@@ -172,7 +172,7 @@ int KVSSD::Store(uint64_t key, const char* in, int vlen) {
     struct nvme_passthru_kv_cmd cmd;
 
     memset(&cmd, 0, sizeof (struct nvme_passthru_kv_cmd));
-    cmd.opcode = nvme_cmd_kv_store;
+    cmd.opcode = append ? nvme_cmd_kv_append : nvme_cmd_kv_store;
     cmd.nsid = nsid_;
     cmd.cdw3 = space_id_;
     cmd.cdw4 = STORE_OPTION_NOTHING;
