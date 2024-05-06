@@ -531,10 +531,12 @@ void clear_rest_of_line(struct demand_shard *shard, struct ppa p,
     line = p.g.blk;
     rem = len;
 
+    NVMEV_DEBUG("Clearing line starting with grain %llu g_off %llu len %u\n", 
+                 grain, g_off, len);
+
     while(p.g.blk == line) {
         len = min_t(uint32_t, rem, GRAIN_PER_PAGE - (g_off % GRAIN_PER_PAGE));
 
-        NVMEV_INFO("CLEARING PPA %llu\n", pgidx);
         mark_grain_valid(shard, grain, len);
         mark_grain_invalid(shard, grain, len);
 
@@ -945,8 +947,8 @@ void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len) 
     spin_lock(&v_spin);
 
     uint64_t page = G_IDX(grain);
-    NVMEV_INFO("Marking grain %llu valid length %u in PPA %llu\n", 
-                grain, len, page);
+    NVMEV_DEBUG("Marking grain %llu valid length %u in PPA %llu\n", 
+                 grain, len, page);
     struct ppa ppa = ppa_to_struct(spp, page);
 
     /* update page status */
@@ -1038,9 +1040,6 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
     uint64_t page = G_IDX(grain);
     uint32_t rem = len;
 
-    NVMEV_INFO("1 Marking grain %llu length %u in PPA %llu invalid shard %llu\n", 
-                grain, len, page, shard->id);
-
     struct ppa ppa = ppa_to_struct(spp, page);
 
     if(len > GRAIN_PER_PAGE) {
@@ -1050,8 +1049,8 @@ void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len
 again:
     spin_lock(&inv_spin);
     len = min_t(uint32_t, rem, GRAIN_PER_PAGE - (grain % GRAIN_PER_PAGE));
-    NVMEV_INFO("2 Marking grain %llu length %u in PPA %llu invalid shard %llu\n", 
-                grain, len, page, shard->id);
+    NVMEV_DEBUG("Marking grain %llu length %u in PPA %llu invalid shard %llu\n", 
+                 grain, len, page, shard->id);
 
     /* update corresponding page status */
     pg = get_pg(shard->ssd, &ppa);
@@ -1072,6 +1071,10 @@ again:
     
     if(blk->igc < 0 || blk->igc >= spp->pgs_per_blk * GRAIN_PER_PAGE) {
         NVMEV_INFO("IGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->igc);
+    }
+
+    if(blk->vgc < 0 || blk->vgc >= spp->pgs_per_blk * GRAIN_PER_PAGE) {
+        NVMEV_INFO("VGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->vgc);
     }
     
     NVMEV_ASSERT(blk->igc < spp->pgs_per_blk * GRAIN_PER_PAGE);
@@ -1163,7 +1166,7 @@ void mark_page_valid(struct demand_shard *demand_shard, struct ppa *ppa)
     struct nand_page *pg = NULL;
     struct line *line;
 
-    NVMEV_INFO("Marking PPA %u valid\n", ppa2pgidx(demand_shard, ppa));
+    NVMEV_DEBUG("Marking PPA %u valid\n", ppa2pgidx(demand_shard, ppa));
 
     /* update page status */
     pg = get_pg(demand_shard->ssd, ppa);
@@ -3221,7 +3224,7 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     uint8_t klen = __klen_from_value(ptr);
     key_on_disk = __key_from_value(ptr);
 
-    NVMEV_INFO("Found key %s on disk.\n", key_on_disk);
+    NVMEV_DEBUG("Found key %s on disk.\n", key_on_disk);
 
     if(klen != u_klen) {
         shard->stats.fp_collision_w++;
@@ -3520,6 +3523,7 @@ static struct hash_params *make_hash_params(uint64_t hash) {
     return h_params;
 }
 
+char append_buf_key[17];
 static bool __store(struct nvmev_ns *ns, struct nvmev_request *req, 
                     struct nvmev_result *ret, bool internal,
                     bool append) 
@@ -3534,7 +3538,6 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
     uint8_t klen = cmd_key_length(cmd);
     uint32_t vlen = cmd_value_length(cmd);
 
-    char append_buf_key[17];
     uint32_t append_buf_klen;
 
     vlen += VLEN_MARKER_SZ;
@@ -3544,6 +3547,8 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
     uint64_t page, start_page;
     uint64_t g_off, start_g_off;
     uint32_t status = 0;
+
+    uint64_t start, end;
 
     /*
      * Not using sharding right now.
@@ -3561,16 +3566,17 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
     bool flushing_prev = false;
     bool checking_len = false;
 
+    start = ktime_get();
 append:
     if(append && !checking_len) { 
         if((cur_append_klen != klen) || 
            memcmp(cur_append_key, cmd->kv_store.key, klen)) {
             if(cur_append_klen > 0) {
-                NVMEV_DEBUG("Key %s was different from current key %s\n",
-                            (char*) cmd->kv_store.key, (char*) cur_append_key);
+                NVMEV_DEBUG("Key %llu was different from current key %llu\n",
+                            *(uint64_t*) cmd->kv_store.key, *(uint64_t*) cur_append_key);
             } else {
-                NVMEV_DEBUG("Had no append key. New key is %s\n",
-                            (char*) cmd->kv_store.key);
+                NVMEV_DEBUG("Had no append key. New key is %llu\n",
+                            *(uint64_t*) cmd->kv_store.key);
             }
 
             /*
@@ -3609,8 +3615,11 @@ append:
             /*
              * Appending to the active append buffer, and can copy to memory.
              */
-            NVMEV_DEBUG("Copying key %s to pos %u in append buffer.\n",
-                         cmd->kv_store.key, wb_idx);
+            end = ktime_get();
+            if(wb_idx == 0) {
+                NVMEV_DEBUG("Copying key %llu to pos %u in append buffer took %lluus.\n",
+                        *(uint64_t*) cmd->kv_store.key, wb_idx, ktime_to_us(end) - ktime_to_us(start));
+            }
             cmd->kv_store.rsvd = (uint64_t) (cur_append_buf + wb_idx);
             ret->status = 0;
             wb_idx += vlen;
@@ -3773,9 +3782,9 @@ skip:
         goto fm_out;
     }
 
-    NVMEV_DEBUG("Got LPA %u for key %s\n", 
-                 lpa, flushing_prev ? cur_append_key : 
-                 (char*) (cmd->kv_store.key));
+    NVMEV_DEBUG("Got LPA %u for key %llu\n", 
+                 lpa, flushing_prev ? *(uint64_t*) cur_append_key : 
+                 *(uint64_t*) (cmd->kv_store.key));
 
 cache:
     if(cache_hit(ht)) {
@@ -3814,26 +3823,29 @@ cache:
                 atomic_set(&ht->outgoing, 0);
                 return nsecs_latest;
             } else if(checking_len) {
-                NVMEV_INFO("Len is fine. Going back up to append.\n");
+                NVMEV_DEBUG("Len is fine. Going back up to append.\n");
                 /*
                  * Whoops, a foreground copy. This path isn't often
                  * taken, so shouldn't slow things down a lot.
                  */
-                memcpy(cur_append_buf, old_mem, len * GRAINED_UNIT);
+                cur_append_buf = old_mem;
+                //memcpy(cur_append_buf, old_mem, len * GRAINED_UNIT);
                 wb_idx = len * GRAINED_UNIT;
 
+                atomic_dec(&ht->outgoing);
                 checking_len = false;
                 goto append;
             }
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-            NVMEV_INFO("Got len %u from PPA %u g_off %llu\n",
-                        len, G_IDX(g_from_pte), old_g_off);
+            NVMEV_DEBUG("Got len %u from PPA %u g_off %llu\n",
+                         len, G_IDX(g_from_pte), old_g_off);
             mark_grain_invalid(shard, g_from_pte, len);
         } else if(checking_len) {
-            NVMEV_INFO("Had no previous pair when checking len.\n");
+            NVMEV_DEBUG("Had no previous pair when checking len.\n");
             checking_len = false;
+            wb_idx = 0;
             atomic_set(&ht->outgoing, 0);
             goto append;
         } else {
@@ -3890,16 +3902,17 @@ cache:
     g_off = start_g_off = G_OFFSET(grain);
     credits += glen;
 
+    start = ktime_get();
     if(!enough_space_in_line(shard, cur_page, g_off, glen)) {
-        NVMEV_INFO("NOOOOOOOOOOOOOO\n");
-        clear_rest_of_line(shard, cur_page, g_off, glen);
-        NVMEV_INFO("Done clearing line.\n");
+        NVMEV_ASSERT(rem_in_page % GRAINED_UNIT == 0);
+        clear_rest_of_line(shard, cur_page, g_off, rem_in_page / GRAINED_UNIT);
+        NVMEV_DEBUG("Done clearing line.\n");
         shard->offset = 0;
     }
 
     if(shard->offset == 0 || (shard->offset % spp->pgsz == 0)) {
         cur_page = get_new_page(shard, USER_IO);
-        NVMEV_INFO("Got page %u\n", ppa2pgidx(shard, &cur_page));
+        NVMEV_DEBUG("Got page %u\n", ppa2pgidx(shard, &cur_page));
 
         advance_write_pointer(shard, USER_IO);
         mark_page_valid(shard, &cur_page);
@@ -3909,10 +3922,11 @@ cache:
 
         page = start_page = G_IDX(grain);
         g_off = start_g_off = 0;
+        rem_in_page = spp->pgsz;
     }
 
-    NVMEV_INFO("Initially had offset %llu rem_in_page %d page %llu g_off %llu\n", 
-                shard->offset, rem_in_page, page, g_off);
+    NVMEV_DEBUG("Initially had offset %llu rem_in_page %d page %llu g_off %llu\n", 
+                 shard->offset, rem_in_page, page, g_off);
     NVMEV_ASSERT(rem_in_page > 0);
     atomic_set(&new_pte.ppa, grain);
 
@@ -3925,13 +3939,14 @@ cache:
         }
 
         mark_grain_valid(shard, PPA_TO_PGA(page, g_off), gsz);
-        NVMEV_INFO("Taking sz %u bytes of the page.\n", sz);
+        NVMEV_DEBUG("Taking sz %u bytes of the page.\n", sz);
 
         shard->offset += gsz * GRAINED_UNIT;
 
         rem -= sz;
-        if(!rem) {
-            NVMEV_INFO("Breaking because nothing remaining.\n");
+        if(!rem && shard->offset % spp->pgsz) {
+            NVMEV_DEBUG("Breaking because nothing remaining off %llu.\n",
+                         shard->offset);
             break;
         }
 
@@ -3970,16 +3985,19 @@ again:
         }
 
         shard->offset = ((uint64_t) ppa2pgidx(shard, &cur_page)) * spp->pgsz;
-        NVMEV_INFO("Moving to new page %u offset %llu\n", 
-                ppa2pgidx(shard, &cur_page), shard->offset);
+        NVMEV_DEBUG("Moving to new page %u offset %llu\n", 
+                     ppa2pgidx(shard, &cur_page), shard->offset);
 
         page = ppa2pgidx(shard, &cur_page);
         g_off = 0;
 
         rem_in_page = spp->pgsz;
     }
+    end = ktime_get();
 
-    NVMEV_INFO("Setting OOB PPA %llu g_off %llu\n", start_page, start_g_off);
+    NVMEV_INFO("Loop took %lluus\n", ktime_to_us(end) - ktime_to_us(start));
+
+    NVMEV_DEBUG("Setting OOB PPA %llu g_off %llu\n", start_page, start_g_off);
     oob[start_page][start_g_off] = ((uint64_t) glen << 32) | lpa;
 
     shard->max_try = (h.cnt > shard->max_try) ? h.cnt : shard->max_try;
@@ -3989,11 +4007,16 @@ again:
     shard->stats.write_req_cnt++;
 
     if(flushing_prev) {
-        NVMEV_DEBUG("Append for key %s klen %u vlen %u grain %llu PPA %llu LPA %u\n",
-                cur_append_key, cur_append_klen, wb_idx, start_g_off, page, lpa);
+        NVMEV_DEBUG("Append for key %llu klen %u vlen %u grain %llu PPA %llu LPA %u\n",
+                *(uint64_t*) cur_append_key, cur_append_klen, wb_idx, start_g_off, page, lpa);
 
-        atomic_set(&ht->outgoing, 0);
-        cur_append_buf = kmalloc_node(WB_SIZE, GFP_KERNEL, numa_node_id());
+        start = ktime_get();
+        cur_append_buf = nvmev_vdev->ns[0].mapped + (grain * GRAINED_UNIT);
+        //cur_append_buf = kmalloc_node(WB_SIZE, GFP_KERNEL, numa_node_id());
+        end = ktime_get();
+
+        //NVMEV_INFO("Realloc took %lluus\n", ktime_to_us(end) - ktime_to_us(start));
+
         NVMEV_ASSERT(cur_append_buf);
         wb_idx = 0;
 
@@ -4003,9 +4026,11 @@ again:
         flushing_prev = false;
         checking_len = true;
 
+        atomic_set(&ht->outgoing, 0);
         goto append;
     } else if(checking_len) {
         checking_len = false;
+        atomic_set(&ht->outgoing, 0);
         goto append;
     }
 

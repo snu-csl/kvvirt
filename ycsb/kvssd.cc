@@ -188,13 +188,13 @@ int KVSSD::Store(uint64_t key, const char* in, int vlen, bool append) {
     //}
     ret = ioctl(fd_, NVME_IOCTL_IO_KV_CMD, &cmd);
 
-    if(vlen == 0) {
-        printf("Vlen 0 in store for %d\n", vlen);
-    }
+    //if(vlen == 0) {
+    //    printf("Vlen 0 in store for %d\n", vlen);
+    //}
 
     if(ret) {
-        printf("ERROR: failed to store key %lu value %s err %d\n",
-                key, in, ret);
+        //printf("ERROR: failed to store key %lu value %s err %d\n",
+        //        key, in, ret);
         return 1;
     }
 

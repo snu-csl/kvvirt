@@ -106,12 +106,11 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     } else if(write) {
         offset = cmd->kv_store.rsvd;
         length = (cmd->kv_store.value_len << 2) - cmd->kv_store.invalid_byte;
+        length += VLEN_MARKER_SZ;
     } else if(append) {
         offset = cmd->kv_append.rsvd;
         length = (cmd->kv_append.value_len << 2) - cmd->kv_append.invalid_byte;
-        //orig = ((uint64_t) cmd->kv_append.rsvd2 << 32) | cmd->kv_append.nsid;
-        //orig_len = cmd->kv_append.offset == 0 ? 
-        //           0 : cmd->kv_append.offset + sizeof(uint32_t);
+        length += VLEN_MARKER_SZ;
     } else {
         NVMEV_ASSERT(false);
     }
@@ -119,27 +118,11 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     if(offset == UINT_MAX - 1) {
         return length;
     } else if (offset == U64_MAX) {
-        NVMEV_ERROR("Failing command.\n");
+        //NVMEV_ERROR("Failing command.\n");
         return 0;
     }
 
 	remaining = length;
-
-    if(append && orig_len > 0) {
-        /*
-         * Copy the existing KV pair data first.
-         */
-        //char v[8];
-        //memcpy(v, nvmev_vdev->ns[nsid].mapped + orig + orig_len - 16, 8);
-        //char v2[8];
-        //memcpy(v2, nvmev_vdev->ns[nsid].mapped + orig, 8);
-
-        //NVMEV_INFO("Copying orig len %lu to offset %lu from %lu first key %s last key %s\n", 
-        //            orig_len, offset, orig, v2, v);
-        //memcpy(nvmev_vdev->ns[nsid].mapped + offset, 
-        //       nvmev_vdev->ns[nsid].mapped + orig, orig_len);
-        //offset += orig_len;
-    }
 
     void *vaddr;
 	while (remaining) {
@@ -186,7 +169,19 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		}
 
         if(write || append) {
-            memcpy((void*) offset, vaddr + mem_offs, io_size);
+            if(prp_offs == 1) {
+                uint8_t *ptr = (uint8_t*) offset;
+                uint8_t klen = *(uint8_t*) ptr;
+                memcpy((void*) offset, vaddr + mem_offs, sizeof(uint8_t) + klen);
+                offset += sizeof(uint8_t) + klen;
+
+                length -= VLEN_MARKER_SZ;
+                memcpy((void*) offset, &length, sizeof(length));
+                length += VLEN_MARKER_SZ;
+                offset += VLEN_MARKER_SZ;
+            } else {
+                memcpy((void*) offset, vaddr + mem_offs, io_size);
+            }
             //NVMEV_INFO("Wrote key %s to offset %lu\n",
             //            (char*) (((char*) offset) + 1), offset);
             //char v[9];
@@ -240,28 +235,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
                 //            mem_offs + io_size - sizeof(uint32_t), v2);
                 offset += sizeof(uint32_t);
             }
-        } else if(append) {
-            uint8_t *ptr = nvmev_vdev->ns[nsid].mapped + orig;
-            uint8_t klen = *(uint8_t*) ptr;
-            if(prp_offs == 1) {
-                /*
-                 * This is the start of the copy, and We're appending to 
-                 * an existing KV pair, don't include the key length and 
-                 * key.
-                 */
-                mem_offs += sizeof(uint8_t) + klen;
-                //NVMEV_INFO("Skipped key data (%u) and copying %lu bytes to offset %lu\n",
-                //            klen, io_size - sizeof(uint8_t) - klen, 
-                //            offset);
-                memcpy(nvmev_vdev->ns[nsid].mapped + offset, 
-                       vaddr + mem_offs, io_size - sizeof(uint8_t) - klen);
-                io_size = io_size - sizeof(uint8_t) - klen;
-            } else {
-                memcpy(nvmev_vdev->ns[nsid].mapped + offset, 
-                       vaddr + mem_offs, io_size);
-                //NVMEV_INFO("Copied %lu bytes to offset %lu\n",
-                //            io_size, offset);
-            }
         }
 
 		kunmap_atomic(vaddr);
@@ -312,8 +285,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //char v2[8];
         //memcpy(v2, nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd + length - 16, 8);
         //NVMEV_INFO("Last key before move %s\n", v2);
-        memmove(ptr + sizeof(uint8_t) + klen + sizeof(uint32_t),
-                ptr + sizeof(uint8_t) + klen, length - sizeof(uint8_t) - klen);
+        //memmove(ptr + sizeof(uint8_t) + klen + sizeof(uint32_t),
+        //        ptr + sizeof(uint8_t) + klen, length - sizeof(uint8_t) - klen);
         //memcpy(v2, 
         //nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd + length + sizeof(uint32_t) - 16, 8);
         //NVMEV_INFO("Moved %lu bytes from offset %llu to offset %llu last key %s\n",
@@ -321,27 +294,12 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //            cmd->kv_store.rsvd + sizeof(uint8_t) + klen,
         //            cmd->kv_store.rsvd + sizeof(uint8_t) + klen + sizeof(uint32_t),
         //            v2);
-        memcpy(ptr + sizeof(uint8_t) + klen, &length, sizeof(uint32_t));
+        //memcpy(ptr + sizeof(uint8_t) + klen, &length, sizeof(uint32_t));
         //memcpy(v2, 
         //nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd + length + sizeof(uint32_t) - 16, 8);
         //NVMEV_INFO("Wrote a value length of %u to offset %llu last key %s\n",
         //            (uint32_t) length, cmd->kv_store.rsvd + 
         //            sizeof(uint8_t) + klen, v2);
-        return 0;
-    } else if(append) {
-        ptr = nvmev_vdev->ns[nsid].mapped + cmd->kv_append.rsvd;
-        klen = *(uint8_t*) ptr;
-        /*
-         * We are appending to a previously existing KV pair (orig_len > 0).
-         * Update the length of the KV pair to the result of the append +
-         * original KV pair length.
-         */
-        length += orig_len - sizeof(uint32_t) - sizeof(uint8_t) - klen;
-        memcpy(nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd + 
-               sizeof(uint8_t) + klen,
-               &length, sizeof(uint32_t));
-        //NVMEV_INFO("Append result : %s\n", 
-        //            (char*) nvmev_vdev->ns[nsid].mapped + cmd->kv_store.rsvd + 13);
         return 0;
     } else {
         NVMEV_ASSERT(false);

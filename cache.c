@@ -92,10 +92,10 @@ void destroy_cache(struct cache* c)
     for (int i = 0; i < c->nr_valid_tpages; i++) {
         struct ht_section *ht = c->ht[i];
         for(int i = 0; i < EPP; i++) {
-            if(ht->pair_mem[i]) {
-                kfree(ht->pair_mem[i]);
-                ht->pair_mem[i] = NULL;
-            }
+            //if(ht->pair_mem[i]) {
+            //    kfree(ht->pair_mem[i]);
+            //    ht->pair_mem[i] = NULL;
+            //}
         }
 
         if(ht->mem) {

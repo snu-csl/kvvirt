@@ -201,10 +201,12 @@ again:
             k = 1;
         }
 
+        //printf("Putting key %lu (%lu out of %lu)\n", k, i - start, end - start);
+
         memcpy(v, &key_len, sizeof(uint8_t));
         memcpy(v + sizeof(uint8_t), &k, key_len);
 
-        if(fill || (op  < w_pct)) {
+        if(fill || (op < w_pct)) {
             if(!do_rmw || fill) {
                 if(put(k, v, FLAGS_vlen, append)) {
                     /*

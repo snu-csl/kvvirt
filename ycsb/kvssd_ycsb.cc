@@ -94,7 +94,6 @@ void add_to_cache(uint64_t key, char* buf, uint64_t vlen) {
 
 int put(uint64_t k, char* v, uint64_t vlen, bool append) {
     if(kvssd.Store(k, v, vlen, append)) {
-        printf("Too big!\n");
         return 1;
     } else {
         add_to_cache(k, v, vlen);
