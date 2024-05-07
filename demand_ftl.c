@@ -1070,11 +1070,11 @@ again:
     //NVMEV_ASSERT(blk->vpc > 0 && blk->vpc <= spp->pgs_per_blk);
     
     if(blk->igc < 0 || blk->igc >= spp->pgs_per_blk * GRAIN_PER_PAGE) {
-        NVMEV_INFO("IGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->igc);
+        NVMEV_DEBUG("IGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->igc);
     }
 
     if(blk->vgc < 0 || blk->vgc >= spp->pgs_per_blk * GRAIN_PER_PAGE) {
-        NVMEV_INFO("VGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->vgc);
+        NVMEV_DEBUG("VGC PPA %u was %d\n", ppa2pgidx(shard, &ppa), blk->vgc);
     }
     
     NVMEV_ASSERT(blk->igc < spp->pgs_per_blk * GRAIN_PER_PAGE);
@@ -3148,8 +3148,8 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     uint64_t ppa = G_IDX(grain);
     uint64_t offset = G_OFFSET(grain);
     char *key_on_disk;
-    uint32_t xfer_size = 0;
-    struct ppa next_read, prev_read;
+    uint32_t xfer_size, rem, line, sz;
+    struct ppa to_read, next_read;
 
     NVMEV_ASSERT(mem);
 
@@ -3165,60 +3165,45 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         .xfer_size = spp->pgsz,
     };
 
-    if(offset + len > GRAIN_PER_PAGE) {
-        next_read = ppa_to_struct(spp, ppa);
-        uint32_t rem = len, line = next_read.g.blk, sz;
+    /*
+     * We only need the first page of a value that spans more than a page
+     * to check the key. However, if subsequent page reads are in the same
+     * flash read too we can include them.
+     */
 
-        while(rem) {
-            sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
+    to_read = ppa_to_struct(spp, ppa);
+    rem = len;
+    line = to_read.g.blk;
+    xfer_size = spp->pgsz;
 
-            next_read = peek_next_page(shard, next_read);
-            NVMEV_ASSERT(next_read.g.blk == line);
+    while(rem) {
+        sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
 
-            offset = 0;
-            rem -= len;
+        NVMEV_ASSERT(to_read.g.blk == line);
 
-            if(is_same_flash_page(shard, next_read, prev_read)) {
-                xfer_size += spp->pgsz;
-                continue;
-            } else if(xfer_size > 0) {
-                swr.ppa = &next_read;
-                nsecs_completed = ssd_advance_nand(ssd, &swr);
-                nsecs_latest = max(nsecs_latest, nsecs_completed);
-            }
+        offset = 0;
+        rem -= len;
 
-            prev_read = next_read;
+        if(!rem) {
+            break;
+        }
+
+        next_read = peek_next_page(shard, to_read);
+        if(is_same_flash_page(shard, to_read, next_read)) {
+            xfer_size += spp->pgsz;
+            continue;
+        } else {
+            break;
         }
     }
 
-    if (xfer_size > 0) {
-        swr.xfer_size = xfer_size;
-        swr.ppa = &next_read;
-        nsecs_completed = ssd_advance_nand(ssd, &swr);
-        nsecs_latest = max(nsecs_completed, nsecs_latest);
-    }
-
-    //struct ppa p = ppa_to_struct(spp, ppa);
-
-    //struct nand_cmd swr = {
-    //    .type = USER_IO,
-    //    .cmd = NAND_READ,
-    //    .interleave_pci_dma = false,
-    //    .xfer_size = spp->pgsz,
-    //    .ppa = &p,
-    //};
-
-    *nsecs = nsecs_latest;
-
-    //if(!shard->fastmode && !hashset_contains(cached_pages, ppa)) {
-    //    swr.stime = __stime_or_clock(stime);
-    //    *nsecs = ssd_advance_nand(ssd, &swr);
-    //    hashset_insert(cached_pages, ppa);
-    //} else {
-    //    *nsecs = 0;
-    //}
+    swr.xfer_size = xfer_size;
+    swr.ppa = &to_read;
+    nsecs_completed = ssd_advance_nand(ssd, &swr);
+    nsecs_latest = max(nsecs_completed, nsecs_latest);
 
     shard->stats.data_r += spp->pgsz;
+    *nsecs = nsecs_latest;
 
     uint8_t* ptr = mem;
     uint8_t klen = __klen_from_value(ptr);
@@ -3234,12 +3219,49 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
 
     if (!strncmp(key_from_user, key_on_disk, klen)) {
         shard->stats.fp_match_w++;
-        return 0;
     } else {
         shard->stats.fp_collision_w++;
         h_params->cnt++;
         return 1;
     }
+
+    /*
+     * Continue with the rest of the pages.
+     */
+
+    to_read = next_read;
+    swr.xfer_size = spp->pgsz;
+
+    while(rem) {
+        sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
+
+        NVMEV_ASSERT(to_read.g.blk == line);
+
+        offset = 0;
+        rem -= len;
+
+        next_read = peek_next_page(shard, to_read);
+        if(is_same_flash_page(shard, to_read, next_read)) {
+            xfer_size += spp->pgsz;
+            continue;
+        } else if(xfer_size > 0) {
+            swr.ppa = &to_read;
+            nsecs_completed = ssd_advance_nand(ssd, &swr);
+            nsecs_latest = max(nsecs_latest, nsecs_completed);
+        }
+
+        to_read = next_read;
+    }
+
+    if (xfer_size > 0) {
+        swr.xfer_size = xfer_size;
+        swr.ppa = &to_read;
+        nsecs_completed = ssd_advance_nand(ssd, &swr);
+        nsecs_latest = max(nsecs_completed, nsecs_latest);
+    }
+
+    *nsecs = nsecs_latest;
+    return 0;
 }
 
 uint32_t get_hash_idx(struct cache *cache, void *_h_params) {
