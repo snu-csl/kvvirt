@@ -85,6 +85,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     bool write = cmd->common.opcode == nvme_cmd_kv_store;
     bool delete = cmd->common.opcode == nvme_cmd_kv_delete;
     bool append = cmd->common.opcode == nvme_cmd_kv_append;
+    bool off_read = false;
 
     if(delete) {
         NVMEV_ERROR("DELETE.\n");
@@ -95,13 +96,24 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
     if(read) {
         offset = cmd->kv_retrieve.rsvd;
-        if(offset != U64_MAX) {
+        if(offset != U64_MAX && cmd->kv_retrieve.offset == 0) {
             uint8_t *ptr = (uint8_t*) offset;
             uint8_t klen = *(uint8_t*) ptr;
             real_vlen = *(uint32_t*) (ptr + 
                     sizeof(uint8_t) + klen);
             NVMEV_ASSERT(real_vlen > 0);
             length = real_vlen + sizeof(uint32_t);
+
+            NVMEV_DEBUG("Got a real vlen of %u\n", real_vlen);
+        } else if(cmd->kv_retrieve.offset) {
+            /*
+             * This is a read to an offset within a larger value. The data
+             * at the offset may not necessarily contain KV pair length data
+             * like the beginning of a normal KV pair.
+             */
+            length = real_vlen = cmd->kv_retrieve.value_len;
+            NVMEV_DEBUG("Got an offset read for vlen %lu\n", length);
+            off_read = true;
         }
     } else if(write) {
         offset = cmd->kv_store.rsvd;
@@ -111,6 +123,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         offset = cmd->kv_append.rsvd;
         length = (cmd->kv_append.value_len << 2) - cmd->kv_append.invalid_byte;
         length += VLEN_MARKER_SZ;
+
+        NVMEV_ERROR("Offset for this append %u\n", cmd->kv_append.offset);
     } else {
         NVMEV_ASSERT(false);
     }
@@ -170,15 +184,28 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
         if(write || append) {
             if(prp_offs == 1) {
-                uint8_t *ptr = (uint8_t*) offset;
+                uint8_t *ptr = (uint8_t*) vaddr + mem_offs;
                 uint8_t klen = *(uint8_t*) ptr;
+
+                NVMEV_DEBUG("Copying key length %u to offset %lu\n",
+                             klen, offset);
+
                 memcpy((void*) offset, vaddr + mem_offs, sizeof(uint8_t) + klen);
                 offset += sizeof(uint8_t) + klen;
+
+                NVMEV_DEBUG("Copying length %lu to offset %lu\n", 
+                             length - VLEN_MARKER_SZ, offset);
 
                 length -= VLEN_MARKER_SZ;
                 memcpy((void*) offset, &length, sizeof(length));
                 length += VLEN_MARKER_SZ;
                 offset += VLEN_MARKER_SZ;
+
+                NVMEV_DEBUG("Copying remaining %lu bytes to offset %lu\n",
+                             length - (sizeof(uint8_t) + klen), offset);
+
+                mem_offs += sizeof(uint8_t) + klen;
+                memcpy((void*) offset, vaddr + mem_offs, length - (sizeof(uint8_t) + klen));
             } else {
                 memcpy((void*) offset, vaddr + mem_offs, io_size);
             }
@@ -204,7 +231,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
             //            io_size, offset, mem_offs, v1, v);
             memcpy(vaddr + mem_offs, (void*) offset, io_size);
 
-            if(prp_offs == 1) {
+            if(prp_offs == 1 && !off_read) {
                 /*
                  * The first copy contains the first grain, which
                  * contains the value length. We don't copy the value length
@@ -278,7 +305,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //}
         NVMEV_ASSERT(real_vlen > 0); 
         return real_vlen;
-    } else if(write || append) { //orig_len == 0) {
+    } else if(write) { //orig_len == 0) {
         ptr = (void*) cmd->kv_store.rsvd;
         klen = *(uint8_t*) ptr;
 
@@ -301,6 +328,10 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //            (uint32_t) length, cmd->kv_store.rsvd + 
         //            sizeof(uint8_t) + klen, v2);
         return 0;
+    } else if(append) { //orig_len == 0) {
+        ptr = (void*) cmd->kv_store.rsvd;
+        klen = *(uint8_t*) ptr;
+        return cmd->kv_append.offset;
     } else {
         NVMEV_ASSERT(false);
     }

@@ -109,6 +109,8 @@ void reset_stats() {
     warmup = true;
 }
 
+#define BUF_SZ (1 << 20)
+std::atomic<uint64_t> slot{BUF_SZ};
 std::atomic<uint64_t> cur_append_key{1};
 
 std::atomic<uint64_t> next_to_insert;
@@ -184,7 +186,8 @@ int worker(const int id, const bool fill, const bool warm, const std::vector<uin
 
 again:
         if(append) {
-            k = cur_append_key;
+            k = std::atomic_fetch_add(&slot, FLAGS_vlen) / BUF_SZ;
+            //k = cur_append_key;
         } else if(fill) {
             k = keys->at(i);
         } else if(FLAGS_do_inserts && op < w_pct) {
@@ -212,9 +215,9 @@ again:
                     /*
                      * Reached end of this append buffer.
                      */
-                    if(cur_append_key.compare_exchange_strong(k, k + 1)) {
-                        printf("Full! New append key %lu\n", k + 1);
-                    }
+                    //if(cur_append_key.compare_exchange_strong(k, k + 1)) {
+                    printf("Full! New append key %lu\n", k + 1);
+                    //}
                     goto again;
                 }
             } else {

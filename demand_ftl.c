@@ -3140,7 +3140,8 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
                                    void* mem, struct hash_params *h_params, 
                                    char *key_from_user, uint32_t u_klen,
                                    uint64_t stime, uint64_t *nsecs,
-                                   uint32_t len) {
+                                   uint32_t vlen, 
+                                   uint32_t read_len, uint32_t read_offset) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
     uint64_t nsecs_completed = 0, nsecs_latest = 0;
@@ -3148,8 +3149,8 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     uint64_t ppa = G_IDX(grain);
     uint64_t offset = G_OFFSET(grain);
     char *key_on_disk;
-    uint32_t xfer_size, rem, line, sz;
-    struct ppa to_read, next_read;
+    uint32_t xfer_size, rem, line, sz, read_until;
+    struct ppa to_read, next_read, prev_read;
 
     NVMEV_ASSERT(mem);
 
@@ -3171,8 +3172,8 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
      * flash read too we can include them.
      */
 
-    to_read = ppa_to_struct(spp, ppa);
-    rem = len;
+    to_read = prev_read = next_read = ppa_to_struct(spp, ppa);
+    rem = vlen;
     line = to_read.g.blk;
     xfer_size = spp->pgsz;
 
@@ -3182,17 +3183,27 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         NVMEV_ASSERT(to_read.g.blk == line);
 
         offset = 0;
-        rem -= len;
+        rem -= sz;
+
+        NVMEV_DEBUG("Saw PPA %u in %s first loop vlen %u rem %u sz %u.\n", 
+                     ppa2pgidx(shard, &next_read), __func__, vlen, rem, sz);
 
         if(!rem) {
             break;
         }
 
-        next_read = peek_next_page(shard, to_read);
+        next_read = peek_next_page(shard, next_read);
         if(is_same_flash_page(shard, to_read, next_read)) {
+            NVMEV_DEBUG("PPA %u is in the same flash page as PPA %u in %s first loop.\n", 
+                         ppa2pgidx(shard, &next_read), 
+                         ppa2pgidx(shard, &to_read), __func__);
             xfer_size += spp->pgsz;
             continue;
         } else {
+            NVMEV_DEBUG("Break because PPA %u and PPA %u in %s are in "
+                        "different flash pages.\n", 
+                        ppa2pgidx(shard, &next_read), 
+                        ppa2pgidx(shard, &to_read), __func__);
             break;
         }
     }
@@ -3201,6 +3212,8 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     swr.ppa = &to_read;
     nsecs_completed = ssd_advance_nand(ssd, &swr);
     nsecs_latest = max(nsecs_completed, nsecs_latest);
+
+    NVMEV_DEBUG("Flash read size %u in %s.\n", xfer_size, __func__);
 
     shard->stats.data_r += spp->pgsz;
     *nsecs = nsecs_latest;
@@ -3219,18 +3232,60 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
 
     if (!strncmp(key_from_user, key_on_disk, klen)) {
         shard->stats.fp_match_w++;
+
+        if(xfer_size > (read_offset + read_len)) {
+            return 0;
+        }
     } else {
         shard->stats.fp_collision_w++;
         h_params->cnt++;
         return 1;
     }
 
+    next_read = to_read;
+    offset = G_OFFSET(grain);
+
     /*
      * Continue with the rest of the pages.
+     * If we're reading from an offset, we can skip the pages
+     * before the page with the offset inside.
      */
+    if(read_offset != 0) {
+        rem = read_offset / GRAINED_UNIT;
+        if(read_offset % GRAINED_UNIT) {
+            rem++;
+        }
 
+        while(rem) {
+            sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
+
+            offset = 0;
+            rem -= sz;
+
+            NVMEV_DEBUG("Saw PPA %u in %s second loop. rem %u offset %llu\n", 
+                         ppa2pgidx(shard, &next_read), __func__, rem, offset);
+
+            if(!rem || rem < GRAIN_PER_PAGE) {
+                break;
+            }
+
+            next_read = peek_next_page(shard, next_read);
+        }
+    }
+
+    /*
+     * Finally, read the pages starting from the offset.
+     */
+    read_len /= GRAIN_PER_PAGE;
+    if(read_len % GRAINED_UNIT) {
+        read_len++;
+    }
+
+    offset = rem;
+    next_read = peek_next_page(shard, next_read);
     to_read = next_read;
-    swr.xfer_size = spp->pgsz;
+    xfer_size = 0;
+    rem = read_len;
 
     while(rem) {
         sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
@@ -3238,9 +3293,12 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         NVMEV_ASSERT(to_read.g.blk == line);
 
         offset = 0;
-        rem -= len;
+        rem -= sz;
 
-        next_read = peek_next_page(shard, to_read);
+        NVMEV_DEBUG("Reading PPA %u in %s third loop offset %llu rem %u sz %u.\n", 
+                     ppa2pgidx(shard, &next_read), __func__, offset, rem, sz);
+
+        next_read = peek_next_page(shard, next_read);
         if(is_same_flash_page(shard, to_read, next_read)) {
             xfer_size += spp->pgsz;
             continue;
@@ -3258,9 +3316,11 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         swr.ppa = &to_read;
         nsecs_completed = ssd_advance_nand(ssd, &swr);
         nsecs_latest = max(nsecs_completed, nsecs_latest);
+        NVMEV_DEBUG("Final read of size %u.\n", xfer_size);
     }
 
     *nsecs = nsecs_latest;
+
     return 0;
 }
 
@@ -3308,11 +3368,14 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
 
     uint8_t klen = cmd_key_length(cmd);
     uint32_t vlen = cmd_value_length(cmd);
+    uint32_t r_offset = cmd->kv_retrieve.offset;
 
     uint64_t hash = CityHash64(cmd->kv_store.key, klen);
     struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
+
+    struct ht_section *ht = NULL;
 
     /*
      * This assumes we're reading 4K pages for the mappings and data.
@@ -3334,7 +3397,6 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     NVMEV_ASSERT(klen <= 16);
 
     uint32_t pos = UINT_MAX;
-    uint32_t len;
     bool missed = false;
     struct hash_params h; 
     h.hash = hash;
@@ -3342,6 +3404,27 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     h.lpa = 0;
 
     uint64_t **oob = shard->oob;
+
+    if(r_offset && cur_append_klen == klen && 
+       !memcmp(cur_append_key, cmd->kv_retrieve.key, cur_append_klen)) {
+        NVMEV_DEBUG("Got a read for something in the active append buffer. "
+                    "Offset %u\n", r_offset);
+        if((r_offset >= wb_idx) || (r_offset + vlen > wb_idx)) {
+            NVMEV_ERROR("Tried to read an offset too large for the current "
+                        "append buffer! Current buffer size is %u, offset was "
+                        "%u. Read size was %u\n",
+                        wb_idx, r_offset, vlen);
+            cmd->kv_retrieve.value_len = 0;
+            cmd->kv_retrieve.rsvd = U64_MAX;
+            status = KV_ERR_KEY_NOT_EXIST;
+            goto out;
+        } else {
+            cmd->kv_retrieve.value_len = vlen;
+            cmd->kv_retrieve.rsvd = (uint64_t) (cur_append_buf + r_offset);
+            status = 0;
+            goto out;
+        }
+    }
 
     struct cache *cache = &shard->cache;
     while(cache_full(cache)) {
@@ -3359,7 +3442,7 @@ lpa:;
     lpa_t lpa = get_hash_idx(&shard->cache, &h);
     h.lpa = lpa;
 
-    struct ht_section *ht = cache_get_ht(cache, lpa);
+    ht = cache_get_ht(cache, lpa);
     uint32_t t_ppa = atomic_read(&ht->t_ppa);
 
     if (h.cnt > shard->max_try) {
@@ -3385,6 +3468,7 @@ lpa:;
                      (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key, 
                      ht->idx);
         h.cnt++;
+        atomic_set(&ht->outgoing, 0);
         goto lpa;
     }
 
@@ -3398,13 +3482,13 @@ cache:
             shard->stats.d_read_on_read += spp->pgsz;
             old_mem = ht->pair_mem[OFFSET(lpa)];
 
-            len = __vlen_from_value(old_mem);
-            NVMEV_ASSERT(len > 0);
+            uint32_t real_vlen = __vlen_from_value(old_mem);
+            uint32_t glen = __glen_from_oob(oob[G_IDX(g_from_pte)][G_OFFSET(g_from_pte)]);
 
             if(__retrieve_and_compare(shard, g_from_pte, old_mem, &h, 
                                   cmd->kv_retrieve.key, klen,
                                   nsecs_latest, &nsecs_completed,
-                                  len)) {
+                                  glen, vlen, r_offset)) {
                 nsecs_latest = max(nsecs_latest, nsecs_completed);
 
                 if (vlen <= KB(4)) {
@@ -3420,53 +3504,19 @@ cache:
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-            //uint64_t grain = G_OFFSET(g_from_pte);
-            //if(grain + len > GRAIN_PER_PAGE) {
-            //    uint64_t pgidx = G_IDX(g_from_pte);
-            //    struct ppa next_read = ppa_to_struct(spp, pgidx);
-            //    uint32_t rem = len, line = next_read.g.blk, sz;
-
-            //    while(rem) {
-            //        sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (grain % GRAIN_PER_PAGE));
-
-            //        next_read = peek_next_page(shard, next_read);
-            //        NVMEV_ASSERT(next_read.g.blk == line);
-
-            //        struct nand_cmd swr = {
-            //            .type = USER_IO,
-            //            .cmd = NAND_READ,
-            //            .interleave_pci_dma = false,
-            //            .xfer_size = spp->pgsz,
-            //            .ppa = &next_read,
-            //        };
-
-            //        nsecs_completed = ssd_advance_nand(ssd, &swr);
-            //        nsecs_latest = max(nsecs_latest, nsecs_completed);
-
-            //        grain = 0;
-            //        rem -= len;
-            //    }
-            //}
-
             if(!for_del) {
-                cmd->kv_retrieve.value_len = len;
-                cmd->kv_retrieve.rsvd = (uint64_t) old_mem;
-
-                uint32_t _len = *(uint32_t*) (old_mem + 9);
-                NVMEV_ASSERT(len > 0);
+                cmd->kv_retrieve.value_len = real_vlen;
+                cmd->kv_retrieve.rsvd = (uint64_t) (old_mem + r_offset);
             } else {
                 cmd->kv_retrieve.rsvd = U64_MAX;
-                mark_grain_invalid(shard, g_from_pte, 
-                                   len % GRAINED_UNIT ? 
-                                   (len / GRAINED_UNIT) + 1 :
-                                   len / GRAINED_UNIT);
+                mark_grain_invalid(shard, g_from_pte, glen);
                 atomic_set(&pte.ppa, UINT_MAX);
                 __update_map(shard, ht, lpa, NULL, pte, pos);
             }
 
-            if(!for_del && (vlen < len)) {
+            if(!for_del && (vlen < real_vlen)) {
                 NVMEV_ERROR("Buffer with size %u too small for value %u\n",
-                             vlen, len);
+                             vlen, real_vlen);
                 cmd->kv_retrieve.rsvd = U64_MAX;
                 status = KV_ERR_BUFFER_SMALL;
             } else {
@@ -3507,8 +3557,17 @@ out:
     nsecs_completed = __get_wallclock();
     nsecs_latest = max(nsecs_latest, nsecs_completed);
 
-    ret->cb = __release_map;
-    ret->args = &ht->outgoing;
+    if(ht) {
+        ret->cb = __release_map;
+        ret->args = &ht->outgoing;
+    } else {
+        /*
+         * Can go here if we read from the active append buffer.
+         */
+        ret->cb = NULL;
+        ret->args = NULL;
+    }
+
     ret->nsecs_target = nsecs_latest;
     ret->status = status;
 
@@ -3592,13 +3651,13 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
 append:
     if(append && !checking_len) { 
         if((cur_append_klen != klen) || 
-           memcmp(cur_append_key, cmd->kv_store.key, klen)) {
+           memcmp(cur_append_key, cmd->kv_append.key, klen)) {
             if(cur_append_klen > 0) {
                 NVMEV_DEBUG("Key %llu was different from current key %llu\n",
-                            *(uint64_t*) cmd->kv_store.key, *(uint64_t*) cur_append_key);
+                            *(uint64_t*) cmd->kv_append.key, *(uint64_t*) cur_append_key);
             } else {
                 NVMEV_DEBUG("Had no append key. New key is %llu\n",
-                            *(uint64_t*) cmd->kv_store.key);
+                            *(uint64_t*) cmd->kv_append.key);
             }
 
             /*
@@ -3619,7 +3678,7 @@ append:
                 flushing_prev = false;
                 checking_len = true;
 
-                memcpy(cur_append_key, cmd->kv_store.key, klen);
+                memcpy(cur_append_key, cmd->kv_append.key, klen);
                 cur_append_klen = klen;
 
                 //goto append;
@@ -3630,7 +3689,7 @@ append:
              * Appending to the active append buffer, but no more space left
              * in the value.
              */
-            cmd->kv_store.rsvd = U64_MAX;
+            cmd->kv_append.rsvd = U64_MAX;
             ret->status = KV_ERR_BUFFER_SMALL;
             return nsecs_latest;
         } else {
@@ -3638,13 +3697,19 @@ append:
              * Appending to the active append buffer, and can copy to memory.
              */
             end = ktime_get();
-            if(wb_idx == 0) {
-                NVMEV_DEBUG("Copying key %llu to pos %u in append buffer took %lluus.\n",
+            NVMEV_DEBUG("Copying key %llu to pos %u in append buffer took %lluus.\n",
                         *(uint64_t*) cmd->kv_store.key, wb_idx, ktime_to_us(end) - ktime_to_us(start));
-            }
-            cmd->kv_store.rsvd = (uint64_t) (cur_append_buf + wb_idx);
+
+            cmd->kv_append.offset = wb_idx;
+            cmd->kv_append.rsvd = (uint64_t) (cur_append_buf + wb_idx);
+
             ret->status = 0;
             wb_idx += vlen;
+
+            if(wb_idx % GRAINED_UNIT) {
+                wb_idx += GRAINED_UNIT - (wb_idx % GRAINED_UNIT);
+            }
+
             return nsecs_latest;
         }
     }
@@ -3829,7 +3894,7 @@ cache:
                                   cmd->kv_retrieve.key, 
                                   flushing_prev ? cur_append_klen : klen, 
                                   nsecs_latest, &nsecs_completed,
-                                  len)) {
+                                  len, len, 0)) {
                 nsecs_latest = max(nsecs_latest, nsecs_completed);
                 missed = true;
                 pos = UINT_MAX;
