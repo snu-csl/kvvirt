@@ -44,7 +44,7 @@ struct hashset *cached_pages;
 char cur_append_key[17];
 uint8_t cur_append_klen = 0;
 void* cur_append_buf;
-uint32_t wb_idx = 0;
+uint32_t wb_idx = GRAINED_UNIT;
 
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
                  struct buffer *write_buffer, unsigned int buffs_to_release);
@@ -3149,7 +3149,7 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     uint64_t ppa = G_IDX(grain);
     uint64_t offset = G_OFFSET(grain);
     char *key_on_disk;
-    uint32_t xfer_size, rem, line, sz, read_until;
+    uint32_t xfer_size, rem, line, sz;
     struct ppa to_read, next_read, prev_read;
 
     NVMEV_ASSERT(mem);
@@ -3408,7 +3408,7 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     if(r_offset && cur_append_klen == klen && 
        !memcmp(cur_append_key, cmd->kv_retrieve.key, cur_append_klen)) {
         NVMEV_DEBUG("Got a read for something in the active append buffer. "
-                    "Offset %u\n", r_offset);
+                    "Offset %u read length %u\n", r_offset, vlen);
         if((r_offset >= wb_idx) || (r_offset + vlen > wb_idx)) {
             NVMEV_ERROR("Tried to read an offset too large for the current "
                         "append buffer! Current buffer size is %u, offset was "
@@ -3425,6 +3425,8 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
             goto out;
         }
     }
+
+    NVMEV_DEBUG("Read for key %llu\n", *(uint64_t*) cmd->kv_retrieve.key);
 
     struct cache *cache = &shard->cache;
     while(cache_full(cache)) {
@@ -3514,7 +3516,17 @@ cache:
                 __update_map(shard, ht, lpa, NULL, pte, pos);
             }
 
-            if(!for_del && (vlen < real_vlen)) {
+            if(!for_del && r_offset) {
+                if(r_offset + vlen <= real_vlen) {
+                    status = NVME_SC_SUCCESS;
+                    cmd->kv_retrieve.value_len = vlen;
+                } else {
+                    NVMEV_ERROR("Offset read for offset %u len %u exceeds length.\n",
+                                 r_offset, vlen);
+                    cmd->kv_retrieve.rsvd = U64_MAX;
+                    status = KV_ERR_BUFFER_SMALL;
+                }
+            } else if(!for_del && (vlen < real_vlen)) {
                 NVMEV_ERROR("Buffer with size %u too small for value %u\n",
                              vlen, real_vlen);
                 cmd->kv_retrieve.rsvd = U64_MAX;
@@ -3667,7 +3679,7 @@ append:
              */
             flushing_prev = true;
 
-            if(wb_idx == 0) {
+            if(wb_idx == GRAINED_UNIT) {
                 NVMEV_DEBUG("There wasn't another buffer to flush. Resuming "
                             "original append\n");
                 /*
@@ -3680,8 +3692,6 @@ append:
 
                 memcpy(cur_append_key, cmd->kv_append.key, klen);
                 cur_append_klen = klen;
-
-                //goto append;
             }
         } else if(wb_idx + vlen >= WB_SIZE) {
             NVMEV_DEBUG("Tried to append but value is full.\n");
@@ -3697,8 +3707,9 @@ append:
              * Appending to the active append buffer, and can copy to memory.
              */
             end = ktime_get();
-            NVMEV_DEBUG("Copying key %llu to pos %u in append buffer took %lluus.\n",
-                        *(uint64_t*) cmd->kv_store.key, wb_idx, ktime_to_us(end) - ktime_to_us(start));
+            NVMEV_DEBUG("Copying key %llu len %u to pos %u in append buffer took %lluus.\n",
+                        *(uint64_t*) cmd->kv_store.key, vlen, wb_idx, 
+                        ktime_to_us(end) - ktime_to_us(start));
 
             cmd->kv_append.offset = wb_idx;
             cmd->kv_append.rsvd = (uint64_t) (cur_append_buf + wb_idx);
@@ -3732,7 +3743,10 @@ append:
 
     bool need_new = false;
 
-    NVMEV_ASSERT(vlen > klen);
+    if(!append) {
+        NVMEV_ASSERT(vlen > klen);
+    }
+
     NVMEV_ASSERT(klen <= 16);
 
     struct hash_params h; 
@@ -3932,7 +3946,7 @@ cache:
         } else if(checking_len) {
             NVMEV_DEBUG("Had no previous pair when checking len.\n");
             checking_len = false;
-            wb_idx = 0;
+            wb_idx = GRAINED_UNIT;
             atomic_set(&ht->outgoing, 0);
             goto append;
         } else {
@@ -4097,15 +4111,45 @@ again:
         NVMEV_DEBUG("Append for key %llu klen %u vlen %u grain %llu PPA %llu LPA %u\n",
                 *(uint64_t*) cur_append_key, cur_append_klen, wb_idx, start_g_off, page, lpa);
 
-        start = ktime_get();
+        /*
+         * Why do these copies here instead of in io.c?
+         *
+         * We want the append buffer to be a raw buffer of bytes that a user
+         * can write to with whatever they want. This is different from a
+         * regular store in which each store will have the key and key length
+         * at the beginning. If we append to the buffer, it's up to the
+         * user if they want keys and key lengths at the front of their
+         * appended data or not.
+         *
+         * It's therefore only necessary to record the key, key length, and 
+         * length of the whole append buffer at the beginning of the buffer
+         * when it's flushed. However, the command we are currently
+         * processing belongs to a different key than this append buffer 
+         * (remember, we are in here because we are flushing the previous 
+         * append buffer with a different key). 
+         * Therefore, any copy address (cmd->rsvd) we give to this command
+         * for later use in io.c will only apply to the current KV pair, not
+         * the previous append buffer KV pair.
+         *
+         * Just perform these small copies in the foreground to avoid
+         * complications. We only enter this path every append buffer flush,
+         * which will usually be a rare operation.
+         */
+        memcpy(cur_append_buf, &cur_append_klen, sizeof(cur_append_klen));
+        memcpy(cur_append_buf + sizeof(cur_append_klen), cur_append_key, 
+               cur_append_klen);
+        memcpy(cur_append_buf + sizeof(cur_append_klen) + cur_append_klen,
+               &wb_idx, sizeof(wb_idx));
+
+        /*
+         * Not we get a new append buffer for the current key.
+         */
         cur_append_buf = nvmev_vdev->ns[0].mapped + (grain * GRAINED_UNIT);
-        //cur_append_buf = kmalloc_node(WB_SIZE, GFP_KERNEL, numa_node_id());
-        end = ktime_get();
 
         //NVMEV_INFO("Realloc took %lluus\n", ktime_to_us(end) - ktime_to_us(start));
 
         NVMEV_ASSERT(cur_append_buf);
-        wb_idx = 0;
+        wb_idx = GRAINED_UNIT;
 
         memcpy(cur_append_key, cmd->kv_store.key, klen);
         cur_append_klen = klen;

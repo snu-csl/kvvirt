@@ -112,7 +112,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
              * like the beginning of a normal KV pair.
              */
             length = real_vlen = cmd->kv_retrieve.value_len;
-            NVMEV_DEBUG("Got an offset read for vlen %lu\n", length);
+            NVMEV_DEBUG("Got an offset read for vlen %lu mem offset %lu\n", 
+                         length, offset);
             off_read = true;
         }
     } else if(write) {
@@ -120,23 +121,24 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         length = (cmd->kv_store.value_len << 2) - cmd->kv_store.invalid_byte;
         length += VLEN_MARKER_SZ;
     } else if(append) {
+        length = (cmd->kv_store.value_len << 2) - cmd->kv_store.invalid_byte;
         offset = cmd->kv_append.rsvd;
-        length = (cmd->kv_append.value_len << 2) - cmd->kv_append.invalid_byte;
-        length += VLEN_MARKER_SZ;
-
         NVMEV_ERROR("Offset for this append %u\n", cmd->kv_append.offset);
     } else {
         NVMEV_ASSERT(false);
     }
 
     if(offset == UINT_MAX - 1) {
+        NVMEV_DEBUG("Failing command 1.\n");
         return length;
     } else if (offset == U64_MAX) {
-        //NVMEV_ERROR("Failing command.\n");
+        NVMEV_DEBUG("Failing command 2.\n");
         return 0;
     }
 
 	remaining = length;
+
+    NVMEV_DEBUG("Remaining %lu\n", remaining);
 
     void *vaddr;
 	while (remaining) {
@@ -182,7 +184,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 				io_size = PAGE_SIZE - mem_offs;
 		}
 
-        if(write || append) {
+        if(write) {
+            NVMEV_DEBUG("Entered write.\n");
             if(prp_offs == 1) {
                 uint8_t *ptr = (uint8_t*) vaddr + mem_offs;
                 uint8_t klen = *(uint8_t*) ptr;
@@ -216,7 +219,18 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
             //v[8] = '\0';
             //NVMEV_INFO("Copying write length %lu (%s) to %lu last key %s\n", 
             //            io_size, (char*) (vaddr + mem_offs + 9), offset, v);
+        } else if(append) {
+            NVMEV_DEBUG("Trying to copy sz %lu in append.\n", io_size);
+            memcpy((void*) offset, vaddr + mem_offs, io_size);
+            //NVMEV_INFO("Wrote key %s to offset %lu\n",
+            //            (char*) (((char*) offset) + 1), offset);
+            //char v[9];
+            //memcpy(v, nvmev_vdev->ns[nsid].mapped + offset + (io_size - 16), 8);
+            //v[8] = '\0';
+            //NVMEV_INFO("Copying write length %lu (%s) to %lu last key %s\n", 
+            //            io_size, (char*) (vaddr + mem_offs + 9), offset, v);
         } else if(read) {
+            NVMEV_DEBUG("Entered read.\n");
             uint8_t *ptr = (uint8_t*) offset;
             uint8_t klen = *(uint8_t*) ptr;
             //char v1[9];
@@ -329,8 +343,7 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //            sizeof(uint8_t) + klen, v2);
         return 0;
     } else if(append) { //orig_len == 0) {
-        ptr = (void*) cmd->kv_store.rsvd;
-        klen = *(uint8_t*) ptr;
+        NVMEV_DEBUG("Returning offset %u in append.\n", cmd->kv_append.offset);
         return cmd->kv_append.offset;
     } else {
         NVMEV_ASSERT(false);
