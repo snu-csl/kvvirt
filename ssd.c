@@ -280,7 +280,6 @@ static void ssd_remove_ch(struct ssd_channel *ch)
 {
 	int i;
 
-    vfree(ch->perf_model->avail_credits);
 	kfree(ch->perf_model);
 
 	for (i = 0; i < ch->nluns; i++)
@@ -394,7 +393,6 @@ uint64_t ssd_advance_write_buffer(struct ssd *ssd, uint64_t request_time, uint64
 	return nsecs_latest;
 }
 
-spinlock_t adv_spin;
 uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 {
 	int c = ncmd->cmd;
@@ -410,20 +408,12 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		"SSD: %p, Enter stime: %lld, ch %d lun %d blk %d page %d command %d ppa 0x%llx\n",
 		ssd, ncmd->stime, ppa->g.ch, ppa->g.lun, ppa->g.blk, ppa->g.pg, c, ppa->ppa);
 
-    uint64_t clock = __get_ioclock(ssd);
-    uint64_t cmd_stime;
-    if(clock > ncmd->stime) {
-        cmd_stime = clock;
-    } else {
-        cmd_stime = ncmd->stime;
-    }
+    uint64_t cmd_stime = (ncmd->stime == 0) ? __get_ioclock(ssd) : ncmd->stime;
 
 	if (ppa->ppa == UNMAPPED_PPA) {
 		NVMEV_ERROR("Error ppa 0x%llx\n", ppa->ppa);
 		return cmd_stime;
 	}
-
-    spin_lock(&adv_spin);
 
 	spp = &ssd->sp;
 	lun = get_lun(ssd, ppa);
@@ -494,8 +484,6 @@ uint64_t ssd_advance_nand(struct ssd *ssd, struct nand_cmd *ncmd)
 		NVMEV_ERROR("Unsupported NAND command: 0x%x\n", c);
 		return 0;
 	}
-
-    spin_unlock(&adv_spin);
 
 	return completed_time;
 }

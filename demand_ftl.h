@@ -219,6 +219,7 @@ struct demand_shard {
     atomic_t have_victims;
 
     struct stats stats;
+    struct proc_dir_entry *proc_stats;
 };
 
 void conv_init_namespace(struct nvmev_ns *ns, uint32_t id, uint64_t size, void *mapped_addr,
@@ -233,6 +234,8 @@ void demand_warmup(struct nvmev_ns *ns);
 void mark_grain_invalid(struct demand_shard *shard, uint64_t grain, uint32_t len);
 void mark_page_valid(struct demand_shard *demand_shard, struct ppa *ppa);
 void mark_grain_valid(struct demand_shard *shard, uint64_t grain, uint32_t len);
+
+char* get_demand_stat(void);
 
 #ifndef ORIGINAL
 #define INV_PAGE_SZ PAGESIZE

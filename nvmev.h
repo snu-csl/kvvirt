@@ -4,7 +4,10 @@
 #define _LIB_NVMEV_H
 
 #include <linux/pci.h>
+#include <linux/proc_fs.h>
 #include <linux/msi.h>
+#include <linux/seq_file.h>
+#include <linux/version.h>
 #include <asm/apic.h>
 #include <asm/msr.h>
 
@@ -14,7 +17,7 @@
 #undef CONFIG_NVMEV_FAST_X86_IRQ_HANDLING
 
 #undef CONFIG_NVMEV_VERBOSE
-#define CONFIG_NVMEV_DEBUG
+#undef CONFIG_NVMEV_DEBUG
 #undef CONFIG_NVMEV_DEBUG_VERBOSE
 
 /*************************/

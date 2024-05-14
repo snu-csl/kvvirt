@@ -336,18 +336,6 @@ static int __proc_file_read(struct seq_file *m, void *data)
 		/* Left for later use */
 	} else if(strcmp(filename, "space") == 0) {
         seq_printf(m, "Space used in bytes: %llu\n", nvmev_vdev->space_used);
-    } else if(strcmp(filename, "dstat") == 0) {
-        //char* dstat = get_demand_stat(&d_stat);
-        //seq_printf(m, "%s", dstat);
-        //kfree(dstat);
-
-        //char* buf = (char*) kzalloc(4096, GFP_KERNEL);
-        //for(int i = 0; i < SSD_PARTITIONS; i++) {
-        //    get_cache_stat(i, buf);
-        //    seq_printf(m, "%s", buf);
-        //}
-
-        //kfree(buf);
     } else if(strcmp(filename, "cleardstat") == 0) {
         //clear_demand_stat();
         //for(int i = 0; i < SSD_PARTITIONS; i++) {

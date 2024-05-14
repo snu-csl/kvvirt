@@ -103,8 +103,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
                     sizeof(uint8_t) + klen);
             NVMEV_ASSERT(real_vlen > 0);
             length = real_vlen + sizeof(uint32_t);
-
-            NVMEV_DEBUG("Got a real vlen of %u\n", real_vlen);
         } else if(cmd->kv_retrieve.offset) {
             /*
              * This is a read to an offset within a larger value. The data
@@ -123,7 +121,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     } else if(append) {
         length = (cmd->kv_store.value_len << 2) - cmd->kv_store.invalid_byte;
         offset = cmd->kv_append.rsvd;
-        NVMEV_ERROR("Offset for this append %u\n", cmd->kv_append.offset);
     } else {
         NVMEV_ASSERT(false);
     }
@@ -137,8 +134,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
     }
 
 	remaining = length;
-
-    NVMEV_DEBUG("Remaining %lu\n", remaining);
 
     void *vaddr;
 	while (remaining) {
@@ -185,7 +180,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		}
 
         if(write) {
-            NVMEV_DEBUG("Entered write.\n");
             if(prp_offs == 1) {
                 uint8_t *ptr = (uint8_t*) vaddr + mem_offs;
                 uint8_t klen = *(uint8_t*) ptr;
@@ -220,7 +214,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
             //NVMEV_INFO("Copying write length %lu (%s) to %lu last key %s\n", 
             //            io_size, (char*) (vaddr + mem_offs + 9), offset, v);
         } else if(append) {
-            NVMEV_DEBUG("Trying to copy sz %lu in append.\n", io_size);
+            NVMEV_DEBUG("Trying to copy sz %lu in append to %lu.\n", 
+                         io_size, offset);
             memcpy((void*) offset, vaddr + mem_offs, io_size);
             //NVMEV_INFO("Wrote key %s to offset %lu\n",
             //            (char*) (((char*) offset) + 1), offset);
@@ -230,7 +225,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
             //NVMEV_INFO("Copying write length %lu (%s) to %lu last key %s\n", 
             //            io_size, (char*) (vaddr + mem_offs + 9), offset, v);
         } else if(read) {
-            NVMEV_DEBUG("Entered read.\n");
             uint8_t *ptr = (uint8_t*) offset;
             uint8_t klen = *(uint8_t*) ptr;
             //char v1[9];

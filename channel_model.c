@@ -24,7 +24,6 @@ void chmodel_init(struct channel_model *ch, uint64_t bandwidth /*MB/s*/)
 	ch->xfer_lat = BANDWIDTH_TO_TX_TIME(bandwidth);
     ch->last = 0;
 
-    ch->avail_credits = vmalloc(NR_CREDIT_ENTRIES * SIZE_OF_CREDIT_T);
 	MEMSET(&(ch->avail_credits[0]), ch->max_credits, NR_CREDIT_ENTRIES);
 
 	NVMEV_ERROR("[%s] CH %p bandwidth %llu max_credits %u tx_time %u\n", __func__, ch, bandwidth,
@@ -79,6 +78,9 @@ uint64_t chmodel_request(struct channel_model *ch, uint64_t request_time, uint64
 	if (request_time_offs >= NR_CREDIT_ENTRIES) {
         NVMEV_ERROR("[%s] CH %p need to increase array size %llu %llu %u\n", __func__,
                 ch, request_time, cur_time, request_time_offs);
+        NVMEV_ERROR("Caller is %pS\n", __builtin_return_address(0));
+        NVMEV_ERROR("Caller is %pS\n", __builtin_return_address(1));
+        NVMEV_ERROR("Caller is %pS\n", __builtin_return_address(2));
         return request_time; // return minimum delay
 	}
 
