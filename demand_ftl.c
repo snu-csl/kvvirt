@@ -4166,16 +4166,16 @@ bool kv_proc_nvme_io_cmd(struct nvmev_ns *ns, struct nvmev_request *req, struct 
             NVMEV_ASSERT(false);
             break;
         case nvme_cmd_kv_store:
-            ret->nsecs_target = conv_write(ns, req, ret, false);
+            conv_write(ns, req, ret, false);
             break;
         case nvme_cmd_kv_retrieve:
-            ret->nsecs_target = conv_read(ns, req, ret);
+            conv_read(ns, req, ret);
             break;
         case nvme_cmd_kv_delete:
-            ret->nsecs_target = conv_delete(ns, req, ret);
+            conv_delete(ns, req, ret);
             break;
         case nvme_cmd_kv_append:
-            ret->nsecs_target = conv_append(ns, req, ret);
+            conv_append(ns, req, ret);
             break;
         case nvme_cmd_write:
         case nvme_cmd_read:
