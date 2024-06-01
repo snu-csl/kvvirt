@@ -255,6 +255,8 @@ typedef ppa_t pga_t;
 #define GRAINED_UNIT ( PIECE )
 #define GRAIN_PER_PAGE (PAGESIZE / GRAINED_UNIT)
 
+#define APPEND_META (sizeof(0xDEADBEEF) + sizeof(ppa_t))
+
 #define WB_SIZE MB(1)
 #define WB_SIZE_G (WB_SIZE / GRAINED_UNIT)
 static_assert((WB_SIZE % GRAINED_UNIT) == 0);

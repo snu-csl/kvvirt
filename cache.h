@@ -14,7 +14,9 @@
 
 #ifdef ORIGINAL
 #define OFFSET(x) ((x) & (EPP - 1))
+
 #define ENTRY_SIZE sizeof(ppa_t)
+
 #define EPP (PAGESIZE / ENTRY_SIZE)
 
 #else
@@ -27,10 +29,10 @@
 #define ORIG_GLEN (ROOT_G + 2)
 #define ORIG_GLEN_BYTES (ORIG_GLEN * GRAINED_UNIT)
 
-#define EPP (((GRAIN_PER_PAGE - ROOT_G) * GRAINED_UNIT) / (sizeof(uint32_t) * 2))
+#define EPP (((GRAIN_PER_PAGE - ROOT_G) * GRAINED_UNIT) / ENTRY_SIZE)
 
-#define IN_LEAF ((GRAINED_UNIT) / (sizeof(uint32_t) * 2))
-#define IN_ROOT (EPP / (sizeof(uint32_t) * 2))
+#define IN_LEAF ((GRAINED_UNIT) / ENTRY_SIZE)
+#define IN_ROOT (EPP / ENTRY_SIZE)
 
 #endif
 
@@ -87,7 +89,7 @@ struct ht_section {
      * flash timings based on the PPA on the SSD and use those for the
      * completion times.
      */
-    void **pair_mem;
+    void *pair_mem[EPP];
 
 #ifndef ORIGINAL
     /*
@@ -96,6 +98,11 @@ struct ht_section {
      */
     uint32_t fm_grains[EPP];
 #endif
+
+    /*
+     * For avoiding reads of the first page of an append buffer.
+     */
+    char* keys[EPP];
 };
 
 struct cache {

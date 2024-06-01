@@ -258,6 +258,8 @@ struct hash_params {
 	uint32_t lpa;
 };
 
+#define MAX_KLEN 16
+
 #define QUADRATIC_PROBING(h,c) ((h)+(c)+(c)*(c))
 #define LINEAR_PROBING(h,c) (h+c)
 

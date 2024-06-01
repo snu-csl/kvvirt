@@ -95,7 +95,7 @@ struct hashset *cached_pages;
 char cur_append_key[17];
 uint8_t cur_append_klen = 0;
 char* cur_append_buf;
-uint32_t wb_idx = GRAINED_UNIT;
+uint32_t wb_idx = 0;
 
 void schedule_internal_operation(int sqid, unsigned long long nsecs_target,
                  struct buffer *write_buffer, unsigned int buffs_to_release);
@@ -865,12 +865,15 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 
     shard->offset = 0;
 
+    shard->max_try = 0;
+
     atomic_set(&shard->candidates, 0);
     atomic_set(&shard->have_victims, 0);
 
     cached_pages = hashset_create();
 
-    cur_append_buf = kmalloc_node(WB_SIZE, GFP_KERNEL, numa_node_id());
+    cur_append_buf = kmalloc_node(WB_SIZE + sizeof(uint8_t) + MAX_KLEN + sizeof(uint32_t), 
+                                  GFP_KERNEL, numa_node_id());
 }
 
 void demand_free(struct demand_shard *shard) {
@@ -2548,7 +2551,7 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
     user_pgs_this_gc = gc_pgs_this_gc = map_gc_pgs_this_gc = map_pgs_this_gc = 0;
 
     ppa.g.blk = victim_line->id;
-    NVMEV_ERROR("%s GC-ing %s line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", 
+    NVMEV_INFO("%s GC-ing %s line:%d,ipc=%d(%d),igc=%d(%d),victim=%d,full=%d,free=%d\n", 
             bg ? "BACKGROUND" : "FOREGROUND", gcd->map? "MAP" : "USER", ppa.g.blk,
             victim_line->ipc, victim_line->vpc, victim_line->igc, victim_line->vgc,
             shard->lm.victim_line_cnt, shard->lm.full_line_cnt, 
@@ -2628,8 +2631,8 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
 
         uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
         uint64_t to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
-               GRAINED_UNIT);
+        //memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
+        //       GRAINED_UNIT);
 
         for(int i = offset; i < GRAIN_PER_PAGE; i++) {
             shard->oob[pgidx][i] = UINT_MAX;
@@ -2688,7 +2691,7 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
     total = ktime_to_us(gc_end) - ktime_to_us(gc_start);
 
     NVMEV_ASSERT(user_pgs_this_gc == 0);
-    NVMEV_ERROR("%llu user %llu GC %llu map GC this round. %lu pgs_per_line."
+    NVMEV_DEBUG("%llu user %llu GC %llu map GC this round. %lu pgs_per_line."
                " Took %llu microseconds (%llu map %llu clean %llu free).\n"
                " Clean breakdown %llu first half %llu second half %llu third half"
                " %llu time spent searching %llu clearing %llu copying %llu clear_count.", 
@@ -2700,7 +2703,7 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
     clean_first_half = clean_second_half = clean_third_half = mapping_searches = 0;
     clearing = copying = clear_count = 0;
 
-    NVMEV_ERROR("Leaving GC for line %d \n", victim_line->id);
+    NVMEV_DEBUG("Leaving GC for line %d \n", victim_line->id);
 
     return nsecs_latest;
 }
@@ -2936,16 +2939,6 @@ struct pte_e_args {
 };
 
 #ifndef ORIGINAL
-struct expand_w_args {
-    struct demand_shard *shard;
-    struct ssdparams *spp;
-    struct ht_section *ht;
-    struct h_to_g_mapping *old;
-    struct h_to_g_mapping *new;
-    struct h_to_g_mapping pte;
-    uint32_t len;
-};
-
 static inline uint32_t __need_expand(struct ht_section *ht) {
     uint32_t expand_to = (ht->cached_cnt * ENTRY_SIZE) / GRAINED_UNIT;
 
@@ -3037,9 +3030,12 @@ skip:
 }
 #endif
 
-static void __update_map(struct demand_shard *shard, struct ht_section *ht,
+static void __update_map(struct demand_shard *shard, 
+                         struct ht_section *ht,
                          lpa_t lpa, void* mem, 
-                         struct h_to_g_mapping pte, uint32_t pos) {
+                         struct h_to_g_mapping pte, 
+                         uint32_t pos, char* key,
+                         uint32_t klen) {
     struct cache *cache = &shard->cache;
 
     NVMEV_ASSERT(ht->mappings);
@@ -3068,7 +3064,15 @@ static void __update_map(struct demand_shard *shard, struct ht_section *ht,
 
     twolevel_insert(ht, root, lpa, atomic_read(&pte.ppa), pos);
     NVMEV_DEBUG("Set LPA %u to PPA %u\n", lpa, atomic_read(&pte.ppa));
+
     ht->pair_mem[OFFSET(lpa)] = mem;
+
+    if(!ht->keys[OFFSET(lpa)]) {
+        ht->keys[OFFSET(lpa)] = (char*) kzalloc(16, GFP_KERNEL);
+    }
+
+    memcpy(ht->keys[OFFSET(lpa)], key, klen);
+    NVMEV_DEBUG("Put key %llu in slot %lu\n", *(uint64_t*) key, OFFSET(lpa));
     return;
 #endif
 }
@@ -3349,7 +3353,7 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
         ht->len_on_disk = ORIG_GLEN;
         ht->g_off = 0;
 
-        for(int i = 0; i < spp->pgsz / ENTRY_SIZE; i++) {
+        for(int i = 0; i < EPP; i++) {
             ht->pair_mem[i] = NULL;
         }
 #endif
@@ -3366,25 +3370,73 @@ uint64_t __get_one(struct demand_shard *shard, struct ht_section *ht,
     return nsecs_completed;
 }
 
+struct ppa __skip_ppas(struct ssdparams *spp, struct ppa p, 
+                       uint32_t read_offset)
+{
+    uint32_t pg_cnt;
+    uint64_t start = ktime_get();
+
+    pg_cnt = read_offset / spp->pgsz;
+    for(int i = 0; i < pg_cnt; i++)  {
+        p.g.pg++;
+        if ((p.g.pg % spp->pgs_per_oneshotpg) != 0) {
+            continue;
+        }
+
+        p.g.pg -= spp->pgs_per_oneshotpg;
+        check_addr(p.g.ch, spp->nchs);
+        p.g.ch++;
+        if (p.g.ch != spp->nchs) {
+            continue;
+        }
+
+        p.g.ch = 0;
+        check_addr(p.g.lun, spp->luns_per_ch);
+        p.g.lun++;
+        /* in this case, we should go to next lun */
+        if (p.g.lun != spp->luns_per_ch) {
+            continue;
+        }
+
+        p.g.lun = 0;
+        /* go to next wordline in the block */
+        p.g.pg += spp->pgs_per_oneshotpg;
+        if (p.g.pg != spp->pgs_per_blk) {
+            continue;
+        }
+
+        p.g.blk++;
+    }
+
+    uint64_t end = ktime_get();
+    uint64_t total = ktime_to_us(end) - ktime_to_us(start);
+
+    return p;
+}
+
 static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
                                    void* mem, struct hash_params *h_params, 
                                    char *key_from_user, uint32_t u_klen,
                                    uint64_t stime, uint64_t *nsecs,
                                    uint32_t vlen, 
-                                   uint32_t read_len, uint32_t read_offset) {
+                                   int read_len, uint32_t read_offset,
+                                   bool key_match, uint64_t *g_out) {
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
-    uint64_t nsecs_completed = 0, nsecs_latest = 0;
+    uint64_t nsecs_completed = 0, nsecs_latest = stime;
     uint64_t local;
     uint64_t ppa = G_IDX(grain);
     uint64_t offset = G_OFFSET(grain);
     char *key_on_disk;
-    uint32_t xfer_size, rem, line, sz;
+    uint32_t xfer_size, line, sz;
+    int rem;
     struct ppa to_read, next_read, prev_read;
+    uint32_t rds = 0;
+    bool got_first = false;
 
     NVMEV_ASSERT(mem);
 
-    NVMEV_DEBUG("%s vlen %u read_len %u read_offset %u\n", 
+    NVMEV_INFO("%s vlen %u read_len %u read_offset %u\n", 
                  __func__, vlen, read_len, read_offset);
 
     if(ppa > spp->tt_pgs) {
@@ -3405,49 +3457,31 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
      * to check the key. However, if subsequent page reads are in the same
      * flash read too we can include them.
      */
-
     to_read = prev_read = next_read = ppa_to_struct(spp, ppa);
     rem = vlen;
     line = to_read.g.blk;
     xfer_size = spp->pgsz;
 
-    //while(rem) {
-    //    sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
-
-    //    NVMEV_ASSERT(to_read.g.blk == line);
-
-    //    offset = 0;
-    //    rem -= sz;
-
-    //    NVMEV_DEBUG("Saw PPA %u in %s first loop vlen %u rem %u sz %u.\n", 
-    //                 ppa2pgidx(shard, &next_read), __func__, vlen, rem, sz);
-
-    //    if(!rem) {
-    //        break;
-    //    }
-
-    //    next_read = peek_next_page(shard, next_read);
-    //    if(is_same_flash_page(shard, to_read, next_read)) {
-    //        NVMEV_DEBUG("PPA %u is in the same flash page as PPA %u in %s first loop.\n", 
-    //                     ppa2pgidx(shard, &next_read), 
-    //                     ppa2pgidx(shard, &to_read), __func__);
-    //        xfer_size += spp->pgsz;
-    //        continue;
-    //    } else {
-    //        NVMEV_DEBUG("Break because PPA %u and PPA %u in %s are in "
-    //                    "different flash pages.\n", 
-    //                    ppa2pgidx(shard, &next_read), 
-    //                    ppa2pgidx(shard, &to_read), __func__);
-    //        break;
-    //    }
-    //}
-
     swr.xfer_size = xfer_size;
     swr.ppa = &to_read;
-    nsecs_completed = ssd_advance_nand(ssd, &swr);
-    nsecs_latest = max(nsecs_completed, nsecs_latest);
 
-    NVMEV_DEBUG("Flash read size %u in %s.\n", xfer_size, __func__);
+    NVMEV_INFO("First page PPA %u grain %u\n", 
+                ppa2pgidx(shard, &to_read), grain);
+
+    if(!key_match || read_offset <= spp->pgsz) {
+        NVMEV_INFO("Reading first page at grain %u.\n", grain);
+        nsecs_completed = ssd_advance_nand(ssd, &swr);
+        nsecs_latest = max(nsecs_completed, nsecs_latest);
+        got_first = true;
+        rds++;
+
+        if(read_offset <= spp->pgsz) {
+            grain += GRAIN_PER_PAGE - (grain % GRAIN_PER_PAGE);
+            NVMEV_INFO("Set grain to %u because we got first page.\n", grain);
+        }
+    } else if(key_match) {
+        NVMEV_DEBUG("Skipping because of key match.\n");
+    }
 
     shard->stats.data_r += spp->pgsz;
     *nsecs = nsecs_latest;
@@ -3457,54 +3491,60 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
     key_on_disk = __key_from_value(ptr);
 
     if(klen != u_klen) {
+        NVMEV_DEBUG("Klen mismatch %u from value %u from user\n", klen, u_klen);
         shard->stats.fp_collision_w++;
         h_params->cnt++;
         return 1;
     }
 
-    if (!strncmp(key_from_user, key_on_disk, klen)) {
-        NVMEV_DEBUG("Matched keys %s %s.\n", key_on_disk, key_from_user);
+    if(!memcmp(key_from_user, key_on_disk, klen)) {
         shard->stats.fp_match_w++;
 
         if(xfer_size >= (read_offset + read_len)) {
+            NVMEV_DEBUG("Did %u reads %s. Read length was %u read offset was %u xfer sz %u\n", 
+                        rds, 
+                        key_match ? "with key match" : 
+                        "without key match", read_len, read_offset, xfer_size);
             return 0;
         }
     } else {
-        NVMEV_DEBUG("Mismatched keys klen %u %s %s.\n", klen, key_on_disk, key_from_user);
+        NVMEV_DEBUG("Mismatched keys %llu %llu.\n", 
+                    *(uint64_t*) key_on_disk, *(uint64_t*) key_from_user);
         shard->stats.fp_collision_w++;
         h_params->cnt++;
         return 1;
     }
 
-    next_read = to_read;
-    offset = G_OFFSET(grain);
-
     /*
-     * Continue with the rest of the pages.
-     * If we're reading from an offset, we can skip the pages
-     * before the page with the offset inside.
+     * We already read the first page. Move to the next.
      */
-    if(read_offset != 0) {
-        rem = read_offset / GRAINED_UNIT;
-        if(read_offset % GRAINED_UNIT) {
-            rem++;
-        }
+    if(got_first && read_offset <= spp->pgsz) {
+        read_len -= spp->pgsz - (read_offset % spp->pgsz);
+        read_offset = spp->pgsz;
+    }
 
-        while(rem) {
-            sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
+    next_read = to_read;
 
-            offset = 0;
-            rem -= sz;
+    /* 
+    * If we're reading from an offset, we can skip the pages
+    * before the page with the offset inside.
+    *
+    * If we've read the first page above, we can skip that too.
+    */
+    if(!got_first && read_offset <= spp->pgsz) {
+        NVMEV_INFO("We didn't have the first page, but we need it.\n");
+        next_read = __skip_ppas(spp, to_read, read_offset);
+    } else {
+        next_read = __skip_ppas(spp, to_read, spp->pgsz);
+    }
 
-            NVMEV_DEBUG("Saw PPA %u in %s second loop. rem %u offset %llu\n", 
-                         ppa2pgidx(shard, &next_read), __func__, rem, offset);
-
-            if(!rem || rem < GRAIN_PER_PAGE) {
-                break;
-            }
-
-            next_read = peek_next_page(shard, next_read);
-        }
+    if(g_out) {
+        /*
+         * When deleting from an offset, we want the first grain to
+         * mark invalid from, and don't need any more reads.
+         */
+        *g_out = ppa2pgidx(shard, &next_read);
+        return 0;
     }
 
     /*
@@ -3515,33 +3555,52 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         read_len++;
     }
 
-    offset = rem;
-    next_read = peek_next_page(shard, next_read);
+    offset = (read_offset % spp->pgsz) / GRAINED_UNIT;
+    //offset = G_OFFSET(grain);
     to_read = next_read;
-    xfer_size = 0;
+    xfer_size = spp->pgsz;
     rem = read_len;
+
+    swr.stime = nsecs_latest;
+
+    NVMEV_INFO("Starting read of length %u from PPA %u offset %llu\n", 
+                rem, ppa2pgidx(shard, &to_read), offset);
 
     while(rem) {
         sz = min_t(uint32_t, rem, GRAIN_PER_PAGE - (offset % GRAIN_PER_PAGE));
+
+        if(to_read.g.blk != line) {
+            NVMEV_ERROR("rem %u PPA %u offset %llu vlen %u read_len %d read_offset %u grain %u\n",
+                         rem, ppa2pgidx(shard, &to_read), offset, vlen, read_len, read_offset,
+                         grain);
+        }
 
         NVMEV_ASSERT(to_read.g.blk == line);
 
         offset = 0;
         rem -= sz;
 
-        NVMEV_DEBUG("Reading PPA %u in %s third loop offset %llu rem %u sz %u.\n", 
-                     ppa2pgidx(shard, &next_read), __func__, offset, rem, sz);
+        if(!rem) {
+            break;
+        }
 
         next_read = peek_next_page(shard, next_read);
         if(is_same_flash_page(shard, to_read, next_read)) {
             xfer_size += spp->pgsz;
+            NVMEV_INFO("Grouping flash read when rem is %u. xfer now %u\n", 
+                        rem, xfer_size);
             continue;
         } else if(xfer_size > 0) {
+            swr.xfer_size = xfer_size;
             swr.ppa = &to_read;
+            rds += (xfer_size / spp->pgsz);
             nsecs_completed = ssd_advance_nand(ssd, &swr);
             nsecs_latest = max(nsecs_latest, nsecs_completed);
+            //NVMEV_INFO("Reading PPA %u in %s third loop offset %llu rem %u sz %u.\n", 
+            //             ppa2pgidx(shard, &next_read), __func__, offset, rem, sz);
         }
 
+        xfer_size = spp->pgsz;
         to_read = next_read;
     }
 
@@ -3550,11 +3609,16 @@ static uint64_t __retrieve_and_compare(struct demand_shard *shard, ppa_t grain,
         swr.ppa = &to_read;
         nsecs_completed = ssd_advance_nand(ssd, &swr);
         nsecs_latest = max(nsecs_completed, nsecs_latest);
-        NVMEV_DEBUG("Final read of size %u.\n", xfer_size);
+        rds += (xfer_size / spp->pgsz);
+        NVMEV_INFO("Final read of PPA %u in %s xfer_size %u.\n", 
+                     ppa2pgidx(shard, &to_read), __func__, xfer_size);
     }
 
-    *nsecs = nsecs_latest;
+    NVMEV_INFO("2 Did %u reads %s. Read length was %u read offset was %u\n", 
+                rds, key_match ? "with key match" : 
+                "without key match", read_len, read_offset);
 
+    *nsecs = nsecs_latest;
     return 0;
 }
 
@@ -3576,7 +3640,6 @@ again:
     return h_params->lpa;
 }
 
-
 static inline uint32_t __vlen_from_value(uint8_t* mem) {
     uint8_t klen = *(uint8_t*) (mem);
     NVMEV_DEBUG("Got klen %u from %p\n", klen, mem);
@@ -3589,6 +3652,15 @@ uint64_t __release_map(void *voidargs, uint64_t* a, uint64_t* b) {
     atomic_t *outgoing = (atomic_t*) voidargs;
     atomic_dec(outgoing);
     return 0;
+}
+
+bool __key_match(char* key1, char *key2, uint32_t len) {
+    if(!key1 || !key2) {
+        NVMEV_ASSERT(false);
+        return false;
+    }
+
+    return !(memcmp(key1, key2, len));
 }
 
 static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req, 
@@ -3604,8 +3676,9 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     uint8_t klen = cmd_key_length(cmd);
     uint32_t vlen = cmd_value_length(cmd);
     uint32_t r_offset = cmd->kv_retrieve.offset;
+    char* key = cmd->kv_retrieve.key;
 
-    uint64_t hash = CityHash64(cmd->kv_store.key, klen);
+    uint64_t hash = CityHash64(key, klen);
     struct demand_shard *shard = &demand_shards[hash % SSD_PARTITIONS];
     struct ssd *ssd = shard->ssd;
     struct ssdparams *spp = &ssd->sp;
@@ -3627,8 +3700,6 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     nsecs_start += nsecs_fw;
     nsecs_latest = nsecs_start;
 
-    NVMEV_ASSERT(cmd->kv_store.key);
-    NVMEV_ASSERT(cmd);
     NVMEV_ASSERT(klen <= 16);
 
     uint32_t pos = UINT_MAX;
@@ -3641,40 +3712,68 @@ static bool __retrieve(struct nvmev_ns *ns, struct nvmev_request *req,
     uint64_t **oob = shard->oob;
 
     if(cur_append_klen == klen && 
-       !memcmp(cur_append_key, cmd->kv_retrieve.key, cur_append_klen)) {
-        NVMEV_DEBUG("Got a read for something in the active append buffer. "
-                    "Offset %u read length %u\n", r_offset, vlen);
+       !memcmp(cur_append_key, key, cur_append_klen)) {
+        r_offset += sizeof(cur_append_klen) + cur_append_klen + sizeof(uint32_t);
 
-        if(r_offset == 0) {
-            NVMEV_ERROR("Tried to read offset 0 in an append buffer!\n");
+        if(!for_del) {
+            NVMEV_DEBUG("Got a read for something in the active append buffer. "
+                    "Offset %u read length %u\n", r_offset, vlen);
+        } else {
+            NVMEV_DEBUG("Got a delete for something in the active append buffer. "
+                        "Offset %u\n", r_offset);
+        }
+
+        if(r_offset < sizeof(cur_append_klen) + cur_append_klen + sizeof(uint32_t)) {
             cmd->kv_retrieve.value_len = 0;
             cmd->kv_retrieve.rsvd = U64_MAX;
             status = KV_ERR_KEY_NOT_EXIST;
             goto out;
-        } else if((r_offset >= wb_idx) || (r_offset + vlen > wb_idx)) {
-            NVMEV_ERROR("Tried to read an offset too large for the current "
+        //} else if((r_offset >= wb_idx) || (r_offset + vlen > wb_idx)) {
+        } else if(r_offset >= wb_idx) {
+            NVMEV_ERROR("Tried to read or delete past the current append buffer!"
+                        "Current buffer size is %u, offset was "
+                        "%u. Read size was %u.\n",
+                        wb_idx, r_offset, for_del ? 0 : vlen);
+            cmd->kv_retrieve.value_len = 0;
+            cmd->kv_retrieve.rsvd = U64_MAX;
+            status = KV_ERR_KEY_NOT_EXIST;
+            goto out;
+        } else if(r_offset + vlen > wb_idx) {
+            NVMEV_ERROR("Tried to %s an offset too large for the current "
                         "append buffer! Current buffer size is %u, offset was "
-                        "%u. Read size was %u. Changing vlen to %u.\n",
-                        wb_idx, r_offset, vlen, wb_idx - r_offset);
+                        "%u. %s size was %u. Changing vlen to %u. Offset %u\n",
+                        for_del ? "delete" : "read", wb_idx, r_offset, 
+                        for_del ? "Delete" : "read", vlen, 
+                        wb_idx - r_offset, r_offset);
+            //cmd->kv_retrieve.value_len = 0;
+            //cmd->kv_retrieve.rsvd = U64_MAX;
+            //status = KV_ERR_KEY_NOT_EXIST;
             vlen = wb_idx - r_offset;
             cmd->kv_retrieve.value_len = vlen;
             cmd->kv_retrieve.rsvd = ((uint64_t) cur_append_buf) + (uint64_t) r_offset;
             status = 0;
             goto out;
-            //cmd->kv_retrieve.value_len = 0;
-            //cmd->kv_retrieve.rsvd = U64_MAX;
-            //status = KV_ERR_KEY_NOT_EXIST;
-            //goto out;
-        } else {
+        } else if(!for_del) {
+            cmd->kv_retrieve.offset = r_offset;
             cmd->kv_retrieve.value_len = vlen;
             cmd->kv_retrieve.rsvd = (uint64_t) (cur_append_buf + r_offset);
             status = 0;
             goto out;
+        } else {
+            /*
+             * Slooooooooooow.
+             * Maybe replace this with __record_inv_mapping later.
+             */
+            NVMEV_DEBUG("Deleting %u bytes from offset %u in the active append buffer.\n",
+                         vlen, r_offset);
+            memmove(cur_append_buf + r_offset, cur_append_buf + r_offset + vlen, vlen);
+            cmd->kv_retrieve.rsvd = U64_MAX;
+            goto out;
         }
     }
 
-    NVMEV_DEBUG("Read of size %u for key %llu\n", 
-                 vlen, *(uint64_t*) cmd->kv_retrieve.key);
+    NVMEV_DEBUG("%s of size %u for key %llu\n", 
+                 for_del ? "Delete" : "Read", vlen, *(uint64_t*) key);
 
     struct cache *cache = &shard->cache;
     while(cache_full(cache)) {
@@ -3692,13 +3791,14 @@ lpa:;
     lpa_t lpa = get_hash_idx(&shard->cache, &h);
     h.lpa = lpa;
 
+    NVMEV_DEBUG("Trying to get HT for LPA %u\n", lpa);
     ht = cache_get_ht(cache, lpa);
+    NVMEV_DEBUG("Got HT for LPA %u\n", lpa);
     uint32_t t_ppa = atomic_read(&ht->t_ppa);
 
     if (h.cnt > shard->max_try) {
         /*
-         * max_try is the most we've hashed the same key to find an empty
-         * LPA.
+         * max_try is the most we've collided so far.
          */
         cmd->kv_retrieve.value_len = 0;
         cmd->kv_retrieve.rsvd = U64_MAX;
@@ -3707,16 +3807,16 @@ lpa:;
             nsecs_latest = local_clock();
         }
 
-        __warn_not_found(cmd->kv_retrieve.key, klen);
+        __warn_not_found(key, klen);
 
         status = KV_ERR_KEY_NOT_EXIST;
         goto out;
     }
 
     if(t_ppa == UINT_MAX) {
-        NVMEV_DEBUG("Key %s (%llu) tried to read missing CMT entry IDX %u.\n", 
+        NVMEV_DEBUG("Key %s (%llu) tried to read missing CMT entry IDX %u. max_try %u\n", 
                      (char*) cmd->kv_store.key, *(uint64_t*) cmd->kv_store.key, 
-                     ht->idx);
+                     ht->idx, shard->max_try);
         h.cnt++;
         atomic_set(&ht->outgoing, 0);
         goto lpa;
@@ -3726,6 +3826,7 @@ cache:
     if(cache_hit(ht)) { 
         struct h_to_g_mapping pte = cache_hidx_to_grain(ht, lpa, &pos);
         uint32_t g_from_pte = atomic_read(&pte.ppa);
+        uint64_t g_to_del = UINT_MAX;
         void* old_mem;
 
         if (!IS_INITIAL_PPA(pte.ppa)) {
@@ -3737,11 +3838,22 @@ cache:
                          old_mem, lpa, *(uint8_t*) old_mem, glen);
 
             uint32_t real_vlen = __vlen_from_value(old_mem);
+            bool key_match = __key_match(key, ht->keys[OFFSET(lpa)], klen);
+
+            //if(key_match) {
+            //    NVMEV_DEBUG("Matched %llu %llu\n", 
+            //    *(uint64_t*) key, *(uint64_t*) ht->keys[OFFSET(lpa)]);
+            //} else {
+            //    NVMEV_ERROR("DIDN'T MATCH %llu %llu slot %lu\n", 
+            //    *(uint64_t*) key, *(uint64_t*) ht->keys[OFFSET(lpa)],
+            //    OFFSET(lpa));
+            //}
 
             if(__retrieve_and_compare(shard, g_from_pte, old_mem, &h, 
-                                  cmd->kv_retrieve.key, klen,
-                                  nsecs_latest, &nsecs_completed,
-                                  glen, vlen, r_offset)) {
+                        key, klen,
+                        nsecs_latest, &nsecs_completed,
+                        glen, vlen, r_offset, key_match, 
+                        for_del ? &g_to_del : NULL)) {
                 nsecs_latest = max(nsecs_latest, nsecs_completed);
 
                 if (vlen <= KB(4)) {
@@ -3750,6 +3862,7 @@ cache:
                     nsecs_latest += spp->fw_rd_lat;
                 }
 
+                g_to_del = UINT_MAX;
                 pos = UINT_MAX;
                 atomic_set(&ht->outgoing, 0);
                 goto lpa;
@@ -3757,28 +3870,127 @@ cache:
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
 
+            uint32_t meta_sz = sizeof(uint8_t) + __klen_from_value(old_mem) + sizeof(uint32_t);
+            r_offset += meta_sz;
+
             if(!for_del) {
                 cmd->kv_retrieve.value_len = real_vlen;
                 cmd->kv_retrieve.rsvd = (uint64_t) (old_mem + r_offset);
             } else {
+                NVMEV_ASSERT(false);
+
+                /*
+                 * TODO. Do we need to change anything here after removing
+                 * the first grain of the append buffers?
+                 */
                 cmd->kv_retrieve.rsvd = U64_MAX;
-                mark_grain_invalid(shard, g_from_pte, glen);
-                atomic_set(&pte.ppa, UINT_MAX);
-                __update_map(shard, ht, lpa, NULL, pte, pos);
+                if(r_offset == 0) {
+                    /*
+                     * Full delete of a pair.
+                     */
+                    mark_grain_invalid(shard, g_from_pte, glen);
+                    atomic_set(&pte.ppa, UINT_MAX);
+                    __update_map(shard, ht, lpa, NULL, pte, pos, key, klen);
+                } else {
+                    /*
+                     * Delete part of a pair.
+                     * If we aren't deleting a multiple of GRAIN_SIZE,
+                     * we leave the last grain valid as it has some data.
+                     *
+                     * Assumes we are deleting from append buffers right now.
+                     */
+                    uint32_t rem = vlen / GRAINED_UNIT;
+                    uint32_t rem_in_page = g_to_del % GRAIN_PER_PAGE;
+                    uint32_t sz;
+                    struct ppa p;
+
+                    NVMEV_DEBUG("Deleting offset %u from LPA %u\n", 
+                                 r_offset, lpa);
+
+                    while(rem) {
+                        sz = min_t(uint32_t, rem, rem_in_page);
+                        mark_grain_invalid(shard, g_to_del, sz);
+
+                        rem -= sz;
+                        rem_in_page = GRAIN_PER_PAGE;
+
+                        p = peek_next_page(shard, p);
+                        g_to_del = ppa2pgidx(shard, &p) / GRAINED_UNIT;
+                    }
+
+                    NVMEV_ASSERT(rem == 0);
+
+                    NVMEV_DEBUG("Invalid mapping for offset %u LPA %u\n",
+                                 r_offset, lpa);
+                    __record_inv_mapping(shard, lpa, r_offset, &credits);
+
+                    bool first_del = *(uint32_t*) old_mem != 0xDEADBEEF;
+                    if(first_del) {
+                        /*
+                         * We don't have a tombstone page yet for this
+                         * KV pair.
+                         */
+                        char* ts_mem = kzalloc(spp->pgsz, GFP_KERNEL);
+again:
+                        struct ppa ts = get_new_page(shard, USER_IO);
+                        ppa_t ppa = ppa2pgidx(shard, &ts);
+                        advance_write_pointer(shard, USER_IO);
+
+                        NVMEV_DEBUG("We didn't have a meta page. Giving PPA %u.\n",
+                                     ppa);
+
+                        mark_page_valid(shard, &ts);
+                        mark_grain_valid(shard, PPA_TO_PGA(ppa, 0), GRAIN_PER_PAGE);
+
+                        if(ppa == 0) {
+                            mark_grain_invalid(shard, PPA_TO_PGA(ppa, 0), 
+                                               GRAIN_PER_PAGE);
+                            goto again;
+                        }
+
+                        memset(ts_mem, 0xDEADBEEF, sizeof(0xDEADBEEF));
+                        memcpy(ts_mem + sizeof(0xDEADBEEF), &g_from_pte, 
+                               sizeof(g_from_pte));
+                        memcpy(ts_mem + APPEND_META, &r_offset, sizeof(r_offset));
+                        memcpy(ts_mem + APPEND_META + sizeof(r_offset), 
+                               &vlen, sizeof(vlen));
+
+                        /*
+                         * This append buffer now has a metadata page. It will
+                         * contain deleted sections, and later, offset shifts
+                         * when the value is compacted during GC.
+                         */
+                        atomic_set(&pte.ppa, ppa);
+                        __update_map(shard, ht, lpa, NULL, pte, pos, key, klen);
+                        //credits += GRAIN_PER_PAGE;
+                    } else {
+                        uint32_t off = 0;
+                        while(*(uint32_t*) (old_mem + off)) {
+                            off += sizeof(r_offset) + sizeof(vlen);
+                        }
+
+                        NVMEV_ASSERT(off <= spp->pgsz - 
+                                            sizeof(r_offset) - sizeof(vlen));
+
+                        memcpy(old_mem + off, &r_offset, sizeof(r_offset));
+                        memcpy(old_mem + off + sizeof(r_offset), 
+                               &vlen, sizeof(vlen));
+                    }
+                }
             }
 
             if(!for_del && r_offset) {
-                if(r_offset + vlen <= real_vlen) {
+                if((r_offset - meta_sz) + vlen <= real_vlen) {
                     status = NVME_SC_SUCCESS;
                     cmd->kv_retrieve.value_len = vlen;
-                    NVMEV_DEBUG("Offset read for offset %u len %u passes\n.",
+                    NVMEV_DEBUG("Offset read for offset %u len %u passes.\n",
                                  r_offset, vlen);
                 } else {
                     NVMEV_DEBUG("Offset read for offset %u len %u exceeds length %u. "
                                 "Giving you the last %u bytes.\n",
-                                 r_offset, vlen, real_vlen, real_vlen - r_offset);
+                                 r_offset, vlen, real_vlen, real_vlen - (r_offset - meta_sz));
                     status = NVME_SC_SUCCESS;
-                    cmd->kv_retrieve.value_len = real_vlen - r_offset;
+                    cmd->kv_retrieve.value_len = real_vlen - (r_offset - meta_sz);
                 }
             } else if(!for_del && (vlen < real_vlen)) {
                 NVMEV_ERROR("Buffer with size %u too small for value %u\n",
@@ -3790,7 +4002,7 @@ cache:
             }
         } else {
             NVMEV_ERROR("Miss LPA %u key %llu\n", 
-                         lpa, *(uint64_t*) cmd->kv_retrieve.key);
+                         lpa, *(uint64_t*) key);
             cmd->kv_retrieve.value_len = 0;
             cmd->kv_retrieve.rsvd = U64_MAX;
             status = KV_ERR_KEY_NOT_EXIST;
@@ -3809,11 +4021,12 @@ cache:
     }
 
 out:
-    NVMEV_DEBUG("Read for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
+    NVMEV_DEBUG("%s for key %llu (%llu %u) finishes with LPA %u PPA %llu vlen %u"
                 " count %u\n", 
-                *(uint64_t*) (cmd->kv_retrieve.key), 
-                *(uint64_t*) (cmd->kv_retrieve.key + 4), 
-                *(uint16_t*) (cmd->kv_retrieve.key + 4 + sizeof(uint64_t)), 
+                for_del ? "Delete" : "Read",
+                *(uint64_t*) (key), 
+                *(uint64_t*) (key + 4), 
+                *(uint16_t*) (key + 4 + sizeof(uint64_t)), 
                 lpa, cmd->kv_retrieve.rsvd == U64_MAX ? U64_MAX :
                 cmd->kv_retrieve.rsvd / GRAINED_UNIT, 
                 cmd->kv_retrieve.value_len, h.cnt);
@@ -3887,7 +4100,9 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
 
     uint32_t append_buf_klen;
 
-    vlen += VLEN_MARKER_SZ;
+    if(!append) {
+        vlen += VLEN_MARKER_SZ;
+    }
 
     uint64_t glen;
     uint64_t grain;
@@ -3920,8 +4135,26 @@ static bool __store(struct nvmev_ns *ns, struct nvmev_request *req,
 
     start = ktime_get();
 append:
-
     pair_mem = NULL;
+
+    //bool was_append = false;
+    if(!append && !memcmp(cur_append_key, cmd->kv_store.key, klen)) {
+        /*
+         * The value of a store is the new value of the KV pair, overwriting
+         * everything else. If this key is the current append buffer, we need
+         * to clear it.
+         */
+        cur_append_klen = 0;
+        wb_idx = 0;
+        //memset(cur_append_buf, 0x0, WB_SIZE + sizeof(uint8_t) + MAX_KLEN + 
+        //       sizeof(uint32_t));
+
+        /*
+         * If we are appending to a buffer, but call store before it is flushed,
+         * we can re-use the buffer memory for the store.
+         */
+        //was_append = true;
+    }
 
     if(append && !checking_len) { 
         if((cur_append_klen != klen) || 
@@ -3941,7 +4174,7 @@ append:
              */
             flushing_prev = true;
 
-            if(wb_idx == GRAINED_UNIT) {
+            if(wb_idx == 0) {
                 NVMEV_DEBUG("There wasn't another buffer to flush. Resuming "
                             "original append\n");
                 /*
@@ -3965,25 +4198,39 @@ append:
             ret->status = KV_ERR_BUFFER_SMALL;
             return nsecs_latest;
         } else {
+            uint32_t meta_sz;
             /*
              * Appending to the active append buffer, and can copy to memory.
              */
+
+            meta_sz = sizeof(cur_append_klen) + cur_append_klen + sizeof(wb_idx);
+            if(wb_idx == 0) {
+                memcpy(cur_append_buf, &cur_append_klen, sizeof(cur_append_klen));
+                memcpy(cur_append_buf + sizeof(cur_append_klen), cur_append_key, 
+                        cur_append_klen);
+                memcpy(cur_append_buf + sizeof(cur_append_klen) + cur_append_klen,
+                        &wb_idx, sizeof(wb_idx));
+                wb_idx += meta_sz;
+            }
+
             end = ktime_get();
-            NVMEV_DEBUG("Copying key %llu len %u to pos %u (%llu %llu) in append buffer took %lluus.\n",
+            NVMEV_DEBUG("Copying key %llu len %u to pos %u (%llu %llu) in "
+                        "append buffer took %lluus. Klen is %u\n",
                         *(uint64_t*) cmd->kv_store.key, vlen, wb_idx, 
                         (uint64_t) cur_append_buf, ((uint64_t) cur_append_buf) + wb_idx,
-                        ktime_to_us(end) - ktime_to_us(start));
+                        ktime_to_us(end) - ktime_to_us(start),
+                        *(uint8_t*) cur_append_buf);
 
             cmd->kv_append.offset = wb_idx;
-            cmd->kv_append.rsvd = ((uint64_t) cur_append_buf) + (uint64_t) wb_idx;
+            cmd->kv_append.rsvd = ((uint64_t) cur_append_buf) + 
+                                   (uint64_t) wb_idx;
 
             ret->status = 0;
             wb_idx += vlen;
 
-            if(wb_idx % GRAINED_UNIT) {
-                wb_idx += GRAINED_UNIT - (wb_idx % GRAINED_UNIT);
-            }
-
+            //if(wb_idx % GRAINED_UNIT) {
+            //    wb_idx += GRAINED_UNIT - (wb_idx % GRAINED_UNIT);
+            //}
             return nsecs_latest;
         }
     }
@@ -4000,10 +4247,6 @@ append:
     uint64_t min_pgs_req;
 
     bool need_new = false;
-
-    if(!append) {
-        NVMEV_ASSERT(vlen > klen);
-    }
 
     NVMEV_ASSERT(klen <= 16);
 
@@ -4165,7 +4408,8 @@ skip:
 cache:
     if(cache_hit(ht)) {
         struct h_to_g_mapping pte = cache_hidx_to_grain(ht, lpa, &pos);
-
+        uint32_t meta_sz = sizeof(uint8_t) + klen + sizeof(uint32_t);
+        uint32_t sans_mark = vlen - sizeof(uint32_t);
         uint32_t g_from_pte = atomic_read(&pte.ppa);
         char* old_mem;
 
@@ -4174,16 +4418,18 @@ cache:
             old_mem = ht->pair_mem[OFFSET(lpa)];
 
             uint64_t old_g_off = G_OFFSET(g_from_pte);
-            NVMEV_DEBUG("Overwrite LPA %u got grain %u off %llu old mem %p\n",
-                         lpa, g_from_pte, old_g_off, old_mem);
+            NVMEV_DEBUG("Overwrite %sLPA %u got grain %u off %llu old mem %p klen %u key %llu\n",
+                         flushing_prev ? "when flushing prev " : "", lpa, 
+                         g_from_pte, old_g_off, old_mem, *(uint8_t*) (old_mem + 1),
+                         *(uint64_t*) (old_mem + 1));
             uint32_t len = __glen_from_oob(oob[G_IDX(g_from_pte)][old_g_off]);
 
             if(__retrieve_and_compare(shard, g_from_pte, old_mem, &h, 
                                   flushing_prev ? cur_append_key : 
-                                  cmd->kv_retrieve.key, 
+                                  cmd->kv_store.key, 
                                   flushing_prev ? cur_append_klen : klen, 
                                   nsecs_latest, &nsecs_completed,
-                                  len, vlen, 0)) {
+                                  len, vlen, 0, false, NULL)) {
                 nsecs_latest = max(nsecs_latest, nsecs_completed);
                 missed = true;
                 pos = UINT_MAX;
@@ -4193,36 +4439,77 @@ cache:
 
             if(append) {
                 if(checking_len && (len * GRAINED_UNIT) + vlen > WB_SIZE) {
-                    NVMEV_DEBUG("Can't do this append, existing pair is too big!\n");
+                    NVMEV_ERROR("Can't do this append, existing pair is too big!\n");
                     cmd->kv_store.rsvd = U64_MAX;
                     ret->status = KV_ERR_BUFFER_SMALL;
                     cur_append_klen = 0;
                     atomic_set(&ht->outgoing, 0);
                     return nsecs_latest;
                 } else if(checking_len) {
-                    NVMEV_DEBUG("Len is fine. Old mem %p. Going back up to append.\n",
-                                 old_mem);
-                    /*
-                     * Whoops, a foreground copy. This path isn't often
-                     * taken, so shouldn't slow things down a lot.
-                     */
-                    kfree(cur_append_buf);
-                    cur_append_buf = old_mem;
-                    wb_idx = len * GRAINED_UNIT;
+                    uint32_t real_vlen = __vlen_from_value(old_mem);
+                    uint32_t prev_klen = __klen_from_value(old_mem);
+
+                    NVMEV_DEBUG("Len %u klen %u is fine LPA %u key %llu %s. Old mem %p. Going back up to append.\n",
+                                real_vlen, prev_klen, lpa,                 
+                                flushing_prev ? *(uint64_t*) cur_append_key : 
+                                *(uint64_t*) cmd->kv_store.key, 
+                                flushing_prev ? cur_append_key : cmd->kv_store.key,
+                                old_mem);
+
+                    uint8_t tmp_klen = *(uint8_t*) old_mem;
+                    if(tmp_klen == 0) {
+                        NVMEV_ERROR("Wtf!!!\n");
+                    }
+
+                    memcpy(cur_append_buf, old_mem, len * GRAINED_UNIT);
+                    //kfree(old_mem);
+
+                    tmp_klen = *(uint8_t*) cur_append_buf;
+                    if(tmp_klen == 0) {
+                        NVMEV_ERROR("Wtf!!!\n");
+                    }
+
+                    //kfree(cur_append_buf);
+                    //cur_append_buf = old_mem;
+                    wb_idx = real_vlen + sizeof(uint8_t) + prev_klen + sizeof(uint32_t);
+                    NVMEV_DEBUG("Set wb_idx to %u in length check.\n", wb_idx);
 
                     atomic_dec(&ht->outgoing);
                     checking_len = false;
                     goto append;
                 } else if(flushing_prev) {
-                    pair_mem = cur_append_buf;
+                    kfree(old_mem);
+                    pair_mem = kzalloc_node(glen * GRAINED_UNIT, GFP_KERNEL, numa_node_id());
+                    NVMEV_ASSERT(pair_mem);
+                    memcpy(pair_mem, cur_append_buf, wb_idx);
+                } else {
+                    NVMEV_ASSERT(false);
                 }
             } else if(len == glen) {
-                cmd->kv_store.rsvd = (uint64_t) old_mem;
+                cmd->kv_store.rsvd = (uint64_t) old_mem + meta_sz;
                 pair_mem = old_mem;
-            } else if(len != glen){
-                NVMEV_ERROR("Lengths didn't match %u %llu!\n", len, glen);
-                cmd->kv_store.rsvd = (uint64_t) old_mem;
-                pair_mem = old_mem;
+                memcpy(pair_mem + sizeof(klen) + klen, &sans_mark, sizeof(vlen));
+            } else if(len != glen) {
+                NVMEV_ERROR("Lengths didn't match orig %u new %llu key %llu %s!\n", 
+                        len, glen, *(uint64_t*) cmd->kv_store.key,
+                        cmd->kv_store.key);
+
+                if(len > glen) {
+                    memset(old_mem, 0x0, len * GRAINED_UNIT);
+                    pair_mem = old_mem;
+                } else {
+                    kfree(old_mem);
+                    pair_mem = kzalloc_node(glen * GRAINED_UNIT, GFP_KERNEL,
+                                            numa_node_id());
+                    NVMEV_DEBUG("Alloced some new memory.\n");
+                    NVMEV_ASSERT(pair_mem);
+                }
+
+                memcpy(pair_mem, &klen, sizeof(klen));
+                memcpy(pair_mem + sizeof(klen), cmd->kv_store.key, klen);
+                memcpy(pair_mem + sizeof(klen) + klen, &sans_mark, sizeof(vlen));
+
+                cmd->kv_store.rsvd = (uint64_t) pair_mem + meta_sz;
             }
 
             nsecs_latest = max(nsecs_latest, nsecs_completed);
@@ -4233,28 +4520,40 @@ cache:
         } else if(checking_len) {
             NVMEV_DEBUG("Had no previous pair when checking len.\n");
             checking_len = false;
-            wb_idx = GRAINED_UNIT;
+            wb_idx = 0;
             atomic_set(&ht->outgoing, 0);
             goto append;
         } else {
-            if(flushing_prev) {
-                pair_mem = cur_append_buf;
-            } else {
-                NVMEV_ASSERT(!append);
-                NVMEV_DEBUG("About to alloc %llu bytes (%llu)\n", glen * GRAINED_UNIT, glen);
-                pair_mem = kzalloc_node(glen * GRAINED_UNIT, GFP_KERNEL, numa_node_id());
-                NVMEV_ASSERT(pair_mem);
+            uint32_t real_vlen;
+            char* key;
+            uint8_t klen;
 
+            pair_mem = kzalloc_node(glen * GRAINED_UNIT, GFP_KERNEL,
+                                    numa_node_id());
+            if(flushing_prev) {
                 /*
-                 * When performing a non-append store, we give a memory address
-                 * to the command to that an IO worker can copy data
-                 * from the user to this address later.
-                 *
-                 * However, append copies are performed above (/append:), and
-                 * we return before we get this far in the code.
+                 * Flushing the previous append buffer.
                  */
-                cmd->kv_store.rsvd = (uint64_t) pair_mem;
-                NVMEV_DEBUG("Set offset to %llu\n", cmd->kv_store.rsvd);
+                NVMEV_DEBUG("Copying %u bytes in prev flush. Klen %u\n", 
+                             wb_idx, *(uint8_t*) cur_append_buf);
+                memcpy(pair_mem, cur_append_buf, wb_idx);
+                NVMEV_ASSERT(*(uint8_t*) pair_mem > 0);
+            } else {
+                key = cmd->kv_store.key;
+                klen = cmd_key_length(cmd);;
+                real_vlen = vlen - sizeof(uint32_t);
+
+                NVMEV_DEBUG("About to alloc %llu bytes (%llu) for key %llu \"%s\"\n", 
+                        glen * GRAINED_UNIT, glen, *(uint64_t*) key, key);
+
+                memcpy(pair_mem, &klen, sizeof(klen));
+                memcpy(pair_mem + sizeof(klen), key, klen);
+                memcpy(pair_mem + sizeof(klen) + klen, &real_vlen, sizeof(real_vlen));
+
+                NVMEV_DEBUG("Wrote a vlen of %u in store.\n", real_vlen);
+
+                cmd->kv_store.rsvd = (uint64_t) pair_mem + sizeof(klen) + 
+                                                klen + sizeof(vlen);
             }
         }
 
@@ -4374,47 +4673,58 @@ again:
 
     shard->max_try = (h.cnt > shard->max_try) ? h.cnt : shard->max_try;
 
-    __update_map(shard, ht, lpa, pair_mem, new_pte, pos);
-    NVMEV_DEBUG("Set mem %p for LPA %u in write.\n", pair_mem, lpa);
+    uint8_t tmp_klen = *(uint8_t*) pair_mem;
+    if(tmp_klen == 0) {
+        NVMEV_ERROR("Wtf!!!\n");
+    }
+
+    __update_map(shard, ht, lpa, pair_mem, new_pte, pos, 
+                 flushing_prev ? cur_append_key : cmd->kv_store.key, 
+                 flushing_prev ? cur_append_klen : klen);
+    NVMEV_DEBUG("Set mem %p for LPA %u key %llu %s in %s.\n", 
+                pair_mem, lpa, 
+                flushing_prev ? *(uint64_t*) cur_append_key : *(uint64_t*) cmd->kv_store.key, 
+                flushing_prev ? cur_append_key : cmd->kv_store.key,
+                append ? "append" : "write");
 
     shard->stats.write_req_cnt++;
 
     if(flushing_prev) {
-        NVMEV_DEBUG("Flushing previous append buffer for key %llu klen %u "
-                    "vlen %u grain %llu PPA %llu LPA %u\n",
-                    *(uint64_t*) cur_append_key, cur_append_klen, wb_idx, 
-                    start_g_off, page, lpa);
-
+        //NVMEV_INFO("Flushing previous append buffer for key %llu klen %u "
+        //            "vlen %u grain %llu PPA %llu LPA %u\n",
+        //            *(uint64_t*) cur_append_key, cur_append_klen, wb_idx, 
+        //            start_g_off, page, lpa);
         /*
-         * Why do these copies here instead of in io.c?
-         *
-         * We want the append buffer to be a raw buffer of bytes that a user
-         * can write to with whatever they want. This is different from a
-         * regular store in which each store will have the key and key length
-         * at the beginning. If we append to the buffer, it's up to the
-         * user if they want keys and key lengths at the front of their
-         * appended data or not.
-         *
-         * It's therefore only necessary to record the key, key length, and 
-         * length of the whole append buffer at the beginning of the buffer
-         * when it's flushed. However, the command we are currently
-         * processing belongs to a different key than this append buffer 
-         * (remember, we are in here because we are flushing the previous 
-         * append buffer with a different key). 
-         * Therefore, any copy address (cmd->rsvd) we give to this command
-         * for later use in io.c will only apply to the current KV pair, not
-         * the previous append buffer KV pair.
-         *
-         * Just perform these small copies in the foreground to avoid
-         * complications. We only enter this path every append buffer flush,
-         * which will usually be a rare operation.
-         */
+        // * Why do these copies here instead of in io.c?
+        // *
+        // * We want the append buffer to be a raw buffer of bytes that a user
+        // * can write to with whatever they want. This is different from a
+        // * regular store in which each store will have the key and key length
+        // * at the beginning. If we append to the buffer, it's up to the
+        // * user if they want keys and key lengths at the front of their
+        // * appended data or not.
+        // *
+        // * It's therefore only necessary to record the key, key length, and 
+        // * length of the whole append buffer at the beginning of the buffer
+        // * when it's flushed. However, the command we are currently
+        // * processing belongs to a different key than this append buffer 
+        // * (remember, we are in here because we are flushing the previous 
+        // * append buffer with a different key). 
+        // * Therefore, any copy address (cmd->rsvd) we give to this command
+        // * for later use in io.c will only apply to the current KV pair, not
+        // * the previous append buffer KV pair.
+        // *
+        // * Just perform these small copies in the foreground to avoid
+        // * complications. We only enter this path every append buffer flush,
+        // * which will usually be a rare operation.
+        // */
         memcpy(pair_mem, &cur_append_klen, sizeof(cur_append_klen));
         memcpy(pair_mem + sizeof(cur_append_klen), cur_append_key, 
                cur_append_klen);
+ 
+        wb_idx -= (sizeof(uint8_t) + cur_append_klen + sizeof(uint32_t));
         memcpy(pair_mem + sizeof(cur_append_klen) + cur_append_klen,
                &wb_idx, sizeof(wb_idx));
-
         NVMEV_DEBUG("Wrote real vlen of %u klen %u LPA %u key %llu to %p\n", 
                      wb_idx, *(uint8_t*) pair_mem, 
                      lpa, *(uint64_t*) cur_append_key, pair_mem);
@@ -4422,19 +4732,14 @@ again:
         /*
          * Not we get a new append buffer for the current key.
          */
-        //cur_append_buf = nvmev_vdev->ns[0].mapped + (grain * GRAINED_UNIT);
-        cur_append_buf = NULL;
-        cur_append_buf = kmalloc(WB_SIZE, GFP_KERNEL);
-        NVMEV_ASSERT(cur_append_buf);
-        NVMEV_DEBUG("New cur_append_buf is %p\n", cur_append_buf);
-
-        uint64_t tst = 100000;
-        memcpy(cur_append_buf, &tst, sizeof(tst)); 
+        //cur_append_buf = kmalloc(WB_SIZE + sizeof(uint8_t) + MAX_KLEN + sizeof(uint32_t), 
+        //                         GFP_KERNEL);
+        //NVMEV_ASSERT(cur_append_buf);
+        //NVMEV_DEBUG("New cur_append_buf is %p\n", cur_append_buf);
 
         //NVMEV_INFO("Realloc took %lluus\n", ktime_to_us(end) - ktime_to_us(start));
 
-        wb_idx = GRAINED_UNIT;
-
+        wb_idx = 0;
         memcpy(cur_append_key, cmd->kv_store.key, klen);
         cur_append_klen = klen;
 

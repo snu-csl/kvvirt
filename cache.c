@@ -77,7 +77,6 @@ void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes)
          * When we look for a hash index to grain mapping,
          * we get its KV pair data from here.
          */
-        ht[i]->pair_mem = kzalloc(sizeof(void*) * EPP, GFP_KERNEL);
         ht[i]->len_on_disk = 0;
 
         NVMEV_ASSERT(ht[i]->pair_mem);
@@ -102,7 +101,6 @@ void destroy_cache(struct cache* c)
             kfree(ht->mem);
         }
 
-        kfree(ht->pair_mem);
         kfree(ht);
     }
 

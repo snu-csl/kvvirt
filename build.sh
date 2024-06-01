@@ -46,10 +46,10 @@ fi
 #make -j
 #cd ../../
 #
-echo "Building YCSB in ${TYPE} mode."
-cd ycsb
-./make.sh kvssd ${TYPE}
-cd ..
+#echo "Building YCSB in ${TYPE} mode."
+#cd ycsb
+#./make.sh kvssd ${TYPE}
+#cd ..
 
 echo "Building NVMeVirt."
 make -j

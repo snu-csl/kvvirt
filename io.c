@@ -66,6 +66,19 @@ int is_aligned(void *ptr, size_t alignment) {
     return (ptr_as_uint & (alignment - 1)) == 0;
 }
 
+static unsigned int cmd_key_length(struct nvme_kv_command *cmd)
+{
+    if (cmd->common.opcode == nvme_cmd_kv_store) {
+        return cmd->kv_store.key_len + 1;
+    } else if (cmd->common.opcode == nvme_cmd_kv_retrieve) {
+        return cmd->kv_retrieve.key_len + 1;
+    } else if (cmd->common.opcode == nvme_cmd_kv_delete) {
+        return cmd->kv_delete.key_len + 1;
+    } else {
+        return cmd->kv_store.key_len + 1;
+    }
+}
+
 static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 {
 	struct nvmev_submission_queue *sq = nvmev_vdev->sqes[sqid];
@@ -74,7 +87,6 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
 	size_t offset;
 	size_t length, remaining, orig, orig_len = 0;
-    uint32_t real_vlen;
 	int prp_offs = 0;
 	int prp2_offs = 0;
 	u64 paddr;
@@ -94,26 +106,37 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 
     nsid = 0;
 
+    uint8_t *ptr;
+    uint8_t klen;
+
+    klen = cmd_key_length(cmd);
+
     if(read) {
+        off_read = true;
         offset = cmd->kv_retrieve.rsvd;
-        if(offset != U64_MAX && cmd->kv_retrieve.offset == 0) {
-            uint8_t *ptr = (uint8_t*) offset;
-            uint8_t klen = *(uint8_t*) ptr;
-            real_vlen = *(uint32_t*) (ptr + 
-                    sizeof(uint8_t) + klen);
-            NVMEV_ASSERT(real_vlen > 0);
-            length = real_vlen + sizeof(uint32_t);
-        } else if(cmd->kv_retrieve.offset) {
-            /*
-             * This is a read to an offset within a larger value. The data
-             * at the offset may not necessarily contain KV pair length data
-             * like the beginning of a normal KV pair.
-             */
-            length = real_vlen = cmd->kv_retrieve.value_len;
-            NVMEV_DEBUG("Got an offset read for vlen %lu mem offset %lu\n", 
-                         length, offset);
-            off_read = true;
+        if(offset != U64_MAX) {
+        //if(offset != U64_MAX && cmd->kv_retrieve.offset == 0) {
+            //ptr = (uint8_t*) offset;
+            //klen = *(uint8_t*) ptr;
+            //real_vlen = *(uint32_t*) (ptr + 
+            //        sizeof(uint8_t) + klen);
+            //NVMEV_ASSERT(real_vlen > 0);
+            //length = real_vlen + sizeof(uint32_t);
+            length = cmd->kv_retrieve.value_len;
+
+            NVMEV_DEBUG("Got klen %u length %lu\n", klen, length);
         }
+        //} else if(cmd->kv_retrieve.offset) {
+        //    /*
+        //     * This is a read to an offset within a larger value. The data
+        //     * at the offset may not necessarily contain KV pair length data
+        //     * like the beginning of a normal KV pair.
+        //     */
+        //    length = real_vlen = cmd->kv_retrieve.value_len;
+        //    NVMEV_DEBUG("Got an offset read for vlen %lu mem offset %lu\n", 
+        //                 length, offset);
+        //    off_read = true;
+        //}
     } else if(write) {
         offset = cmd->kv_store.rsvd;
         length = (cmd->kv_store.value_len << 2) - cmd->kv_store.invalid_byte;
@@ -180,32 +203,32 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		}
 
         if(write) {
-            if(prp_offs == 1) {
-                uint8_t *ptr = (uint8_t*) vaddr + mem_offs;
-                uint8_t klen = *(uint8_t*) ptr;
+            //if(prp_offs == 1) {
+            //    uint8_t *ptr = (uint8_t*) vaddr + mem_offs;
+            //    uint8_t klen = *(uint8_t*) ptr;
 
-                NVMEV_DEBUG("Copying key length %u to offset %lu\n",
-                             klen, offset);
+            //    NVMEV_DEBUG("Copying key length %u to offset %lu\n",
+            //                 klen, offset);
 
-                memcpy((void*) offset, vaddr + mem_offs, sizeof(uint8_t) + klen);
-                offset += sizeof(uint8_t) + klen;
+            //    memcpy((void*) offset, vaddr + mem_offs, sizeof(uint8_t) + klen);
+            //    offset += sizeof(uint8_t) + klen;
 
-                NVMEV_DEBUG("Copying length %lu to offset %lu\n", 
-                             length - VLEN_MARKER_SZ, offset);
+            //    NVMEV_DEBUG("Copying length %lu to offset %lu\n", 
+            //                 length - VLEN_MARKER_SZ, offset);
 
-                length -= VLEN_MARKER_SZ;
-                memcpy((void*) offset, &length, sizeof(length));
-                length += VLEN_MARKER_SZ;
-                offset += VLEN_MARKER_SZ;
+            //    length -= VLEN_MARKER_SZ;
+            //    memcpy((void*) offset, &length, sizeof(length));
+            //    length += VLEN_MARKER_SZ;
+            //    offset += VLEN_MARKER_SZ;
 
-                NVMEV_DEBUG("Copying remaining %lu bytes to offset %lu\n",
-                             length - (sizeof(uint8_t) + klen), offset);
+            //    NVMEV_DEBUG("Copying remaining %lu bytes to offset %lu\n",
+            //                 length - (sizeof(uint8_t) + klen), offset);
 
-                mem_offs += sizeof(uint8_t) + klen;
-                memcpy((void*) offset, vaddr + mem_offs, length - (sizeof(uint8_t) + klen));
-            } else {
-                memcpy((void*) offset, vaddr + mem_offs, io_size);
-            }
+            //    mem_offs += sizeof(uint8_t) + klen;
+            //    memcpy((void*) offset, vaddr + mem_offs, length - (sizeof(uint8_t) + klen));
+            //} else {
+            memcpy((void*) offset, vaddr + mem_offs, io_size);
+            //}
             //NVMEV_INFO("Wrote key %s to offset %lu\n",
             //            (char*) (((char*) offset) + 1), offset);
             //char v[9];
@@ -235,41 +258,41 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
             //memcpy(v1, nvmev_vdev->ns[nsid].mapped + offset + off, 8);
             //v[8] = '\0';
             //v1[8] = '\0';
-            //NVMEV_INFO("Copying %lu bytes from offset %lu to mem_offs %lu first key %s last key %s\n",
-            //            io_size, offset, mem_offs, v1, v);
+            //NVMEV_INFO("Copying %lu bytes from offset %lu to %s\n",
+            //io_size, offset, (char*) ptr);
             memcpy(vaddr + mem_offs, (void*) offset, io_size);
 
-            if(prp_offs == 1 && !off_read) {
-                /*
-                 * The first copy contains the first grain, which
-                 * contains the value length. We don't copy the value length
-                 * back to the user inside the buffer.
-                 */
-                uint32_t length = *(uint32_t*) (vaddr + mem_offs + sizeof(uint8_t) + klen);
-                real_vlen = length;
-                //NVMEV_INFO("Got a value length of %u from offset %lu\n",
-                //            (uint32_t) length, offset + 
-                //            sizeof(uint8_t) + klen);
-                memmove(vaddr + mem_offs + sizeof(uint8_t) + klen, 
-                        vaddr + mem_offs + sizeof(uint8_t) + klen + sizeof(uint32_t),
-                        io_size - sizeof(uint32_t) - sizeof(uint8_t) - klen);
+            //if(prp_offs == 1 && !off_read) {
+            //    /*
+            //     * The first copy contains the first grain, which
+            //     * contains the value length. We don't copy the value length
+            //     * back to the user inside the buffer.
+            //     */
+            //    uint32_t length = *(uint32_t*) (vaddr + mem_offs + sizeof(uint8_t) + klen);
+            //    real_vlen = length;
+            //    //NVMEV_INFO("Got a value length of %u from offset %lu\n",
+            //    //            (uint32_t) length, offset + 
+            //    //            sizeof(uint8_t) + klen);
+            //    memmove(vaddr + mem_offs + sizeof(uint8_t) + klen, 
+            //            vaddr + mem_offs + sizeof(uint8_t) + klen + sizeof(uint32_t),
+            //            io_size - sizeof(uint32_t) - sizeof(uint8_t) - klen);
 
-                //memcpy(v, vaddr + mem_offs + io_size - 16 - sizeof(uint32_t), 8);
-                //NVMEV_INFO("Moved %lu bytes from offset %lu to offset %lu new last key %s\n",
-                //            io_size - sizeof(uint32_t) - sizeof(uint8_t) - klen,
-                //            offset + sizeof(u_int8_t) + klen + sizeof(uint32_t),
-                //            offset + sizeof(u_int8_t) + klen, v);
-                memcpy(vaddr + mem_offs + io_size - sizeof(uint32_t), 
-                       ((char*) offset) + io_size, 
-                       sizeof(uint32_t));
-                //char v2[9];
-                //memcpy(v2, vaddr + mem_offs + io_size - 16, 8);
-                //v2[8] = '\0';
-                //NVMEV_INFO("Copying %lu extra bytes from offset %lu to offset %lu last key %s\n",
-                //            sizeof(uint32_t), offset + io_size,
-                //            mem_offs + io_size - sizeof(uint32_t), v2);
-                offset += sizeof(uint32_t);
-            }
+            //    //memcpy(v, vaddr + mem_offs + io_size - 16 - sizeof(uint32_t), 8);
+            //    //NVMEV_INFO("Moved %lu bytes from offset %lu to offset %lu new last key %s\n",
+            //    //            io_size - sizeof(uint32_t) - sizeof(uint8_t) - klen,
+            //    //            offset + sizeof(u_int8_t) + klen + sizeof(uint32_t),
+            //    //            offset + sizeof(u_int8_t) + klen, v);
+            //    memcpy(vaddr + mem_offs + io_size - sizeof(uint32_t), 
+            //           ((char*) offset) + io_size, 
+            //           sizeof(uint32_t));
+            //    //char v2[9];
+            //    //memcpy(v2, vaddr + mem_offs + io_size - 16, 8);
+            //    //v2[8] = '\0';
+            //    //NVMEV_INFO("Copying %lu extra bytes from offset %lu to offset %lu last key %s\n",
+            //    //            sizeof(uint32_t), offset + io_size,
+            //    //            mem_offs + io_size - sizeof(uint32_t), v2);
+            //    offset += sizeof(uint32_t);
+            //}
         }
 
 		kunmap_atomic(vaddr);
@@ -282,10 +305,11 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
 		kunmap_atomic(paddr_list);
     }
 
-    uint8_t *ptr;
-    uint8_t klen;
-
     if(read) {
+        if(off_read) {
+            klen = cmd_key_length(cmd);
+            cmd->kv_retrieve.offset -= (sizeof(uint8_t) + klen + sizeof(uint32_t));
+        }
         //ptr = nvmev_vdev->ns[nsid].mapped + cmd->kv_retrieve.rsvd;
 
         //klen = *(uint8_t*) ptr;
@@ -311,8 +335,8 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //} else {
         //    //NVMEV_INFO("Returning length %u in io_kv\n", real_vlen);
         //}
-        NVMEV_ASSERT(real_vlen > 0); 
-        return real_vlen;
+        //NVMEV_ASSERT(real_vlen > 0); 
+        return length;
     } else if(write) { //orig_len == 0) {
         ptr = (void*) cmd->kv_store.rsvd;
         klen = *(uint8_t*) ptr;
@@ -337,6 +361,9 @@ static unsigned int __do_perform_io_kv(int sqid, int sq_entry)
         //            sizeof(uint8_t) + klen, v2);
         return 0;
     } else if(append) { //orig_len == 0) {
+        klen = cmd_key_length(cmd);
+        NVMEV_DEBUG("Offset before %u klen %u.\n", cmd->kv_append.offset, klen);
+        cmd->kv_append.offset -= ((sizeof(uint8_t) + klen + sizeof(uint32_t)));
         NVMEV_DEBUG("Returning offset %u in append.\n", cmd->kv_append.offset);
         return cmd->kv_append.offset;
     } else {
