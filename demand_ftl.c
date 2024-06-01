@@ -90,8 +90,6 @@ struct demand_shard* __fast_fill_shard;
  * and the channel runs out of space for requests.
  *
  */
-struct hashset *cached_pages;
-
 char cur_append_key[17];
 uint8_t cur_append_klen = 0;
 char* cur_append_buf;
@@ -803,25 +801,31 @@ void demand_init(struct demand_shard *shard, uint64_t size,
                  struct ssd* ssd) 
 {
     struct ssdparams *spp = &ssd->sp;
+    uint64_t total = 0, from_cache = 0;
 
 #ifndef ORIGINAL
     pg_inv_cnt = (uint8_t*) vmalloc_node(spp->tt_pgs * sizeof(uint8_t),
                                          numa_node_id());
     NVMEV_ASSERT(pg_inv_cnt);
     memset(pg_inv_cnt, 0x0, spp->tt_pgs * sizeof(uint8_t));
+    total += spp->tt_pgs * sizeof(uint8_t);
 
     inv_mapping_bufs = 
     (char**) kzalloc_node(spp->tt_lines * sizeof(char*), GFP_KERNEL, 
                           numa_node_id());
+    total += spp->tt_lines * sizeof(char*);
+
     inv_mapping_offs = 
     (uint64_t*) kzalloc_node(spp->tt_lines * sizeof(uint64_t), GFP_KERNEL,
                              numa_node_id());
+    total += spp->tt_lines * sizeof(uint64_t);
 
     for(int i = 0; i < spp->tt_lines; i++) {
         inv_mapping_bufs[i] =
             (char*) vmalloc(INV_PAGE_SZ);
         inv_mapping_offs[i] = 0;
         NVMEV_ASSERT(inv_mapping_bufs[i]);
+        total += INV_PAGE_SZ;
     }
 #endif
 
@@ -831,9 +835,12 @@ void demand_init(struct demand_shard *shard, uint64_t size,
 
     shard->oob = (uint64_t**)vmalloc_node(spp->tt_pgs * sizeof(uint64_t*),
             numa_node_id());
+    total += spp->tt_pgs * sizeof(uint64_t*);
+
     shard->oob_mem = 
     (uint64_t*) vmalloc_node(spp->tt_pgs * GRAIN_PER_PAGE * sizeof(uint64_t),
             numa_node_id());
+    total += spp->tt_pgs * GRAIN_PER_PAGE * sizeof(uint64_t);
 
     NVMEV_ASSERT(shard->oob);
     NVMEV_ASSERT(shard->oob_mem);
@@ -849,10 +856,12 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     uint64_t tt_grains = spp->tt_pgs * GRAIN_PER_PAGE; 
     shard->grain_bitmap = (bool*) vmalloc(tt_grains * sizeof(bool));
     memset(shard->grain_bitmap, 0x0, tt_grains * sizeof(bool));
+    total += tt_grains * sizeof(bool);
 #endif
     shard->dram  = ((uint64_t) nvmev_vdev->config.cache_dram_mb) << 20;
 
-    init_cache(&shard->cache, spp->tt_pgs, shard->dram);
+    from_cache = init_cache(&shard->cache, spp->tt_pgs, shard->dram);
+    total += from_cache;
 
     /*
      * Since fast mode is called from main.c with no knowledge of the
@@ -870,10 +879,12 @@ void demand_init(struct demand_shard *shard, uint64_t size,
     atomic_set(&shard->candidates, 0);
     atomic_set(&shard->have_victims, 0);
 
-    cached_pages = hashset_create();
-
     cur_append_buf = kmalloc_node(WB_SIZE + sizeof(uint8_t) + MAX_KLEN + sizeof(uint32_t), 
                                   GFP_KERNEL, numa_node_id());
+    total += WB_SIZE + sizeof(uint8_t) + MAX_KLEN + sizeof(uint32_t);
+
+    NVMEV_DEBUG("Allocated %llu total bytes (%lluMB) in init. %lluMB from cache.\n",
+                 total, total >> 20, from_cache >> 20);
 }
 
 void demand_free(struct demand_shard *shard) {

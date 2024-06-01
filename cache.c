@@ -15,9 +15,10 @@
  * Full refactor TBD (TM).
  */
 
-void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes) 
+uint64_t init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes) 
 {
     struct ht_section **ht;
+    uint64_t total = 0;
 
     c->nr_valid_tpages = (tt_pgs * GRAIN_PER_PAGE) / EPP;
     c->nr_valid_tentries = (tt_pgs * GRAIN_PER_PAGE);
@@ -36,6 +37,7 @@ void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes)
      */
     ht = (struct ht_section**) vmalloc(c->nr_valid_tpages * 
                                        sizeof(struct ht_section*));
+    total += c->nr_valid_tpages * sizeof(struct ht_section*);
 
     for (int i = 0; i < c->nr_valid_tpages; i++) {
         /*
@@ -46,6 +48,7 @@ void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes)
         ht[i] = (struct ht_section*) kzalloc(sizeof(struct ht_section), 
                                              GFP_KERNEL);
         NVMEV_ASSERT(ht[i]);
+        total += sizeof(struct ht_section);
 
         atomic_set(&ht[i]->t_ppa, UINT_MAX);
         atomic_set(&ht[i]->outgoing, 0);
@@ -84,6 +87,8 @@ void init_cache(struct cache* c, uint64_t tt_pgs, uint64_t dram_bytes)
     
     c->ht = ht;
     c->nr_cached_tentries = 0;
+
+    return total;
 }
 
 void destroy_cache(struct cache* c) 

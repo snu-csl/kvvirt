@@ -115,7 +115,7 @@ struct cache {
     struct fifo *fifo;
 };
 
-void init_cache(struct cache*, uint64_t tt_pgs, uint64_t dram_bytes);
+uint64_t init_cache(struct cache*, uint64_t tt_pgs, uint64_t dram_bytes);
 
 void destroy_cache(struct cache*);
 

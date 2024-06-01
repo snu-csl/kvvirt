@@ -392,6 +392,8 @@ static unsigned int __do_perform_io(int sqid, int sq_entry)
 	length = (cmd->length + 1) << 9;
 	remaining = length;
 
+    return length;
+
 	while (remaining) {
 		size_t io_size;
 		void *vaddr;
