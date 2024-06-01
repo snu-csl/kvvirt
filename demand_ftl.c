@@ -1492,8 +1492,7 @@ skip:
         }
 
         uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
-        uint64_t off = shard_off + (pgidx * spp->pgsz);
-        uint8_t *ptr = nvmev_vdev->ns[0].mapped + off;
+        uint8_t *ptr = kzalloc_node(spp->pgsz, GFP_KERNEL, numa_node_id());
 
         memcpy(ptr, inv_mapping_bufs[line], spp->pgsz);
         nsecs_completed = __maybe_advance(shard, &n_p, MAP_IO, 0);
@@ -1505,7 +1504,7 @@ skip:
          * during GC.
          */
         xa_store(&gcd->inv_mapping_xa, (line << 32) | pgidx, 
-                  xa_mk_value(pgidx), GFP_KERNEL);
+                  xa_mk_value((uint64_t) ptr), GFP_KERNEL);
         
         memset(inv_mapping_bufs[line], 0x0, INV_PAGE_SZ);
         inv_mapping_offs[line] = 0;
@@ -1703,8 +1702,7 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
     xa_for_each_range(&gcd->inv_mapping_xa, index, xa_entry, start, end) {
         uint64_t m_ppa = xa_to_value(xa_entry);
 
-        off = shard_off + (m_ppa * spp->pgsz);
-        ptr = nvmev_vdev->ns[0].mapped + off;
+        ptr = (uint8_t*) m_ppa;
 
         NVMEV_DEBUG("Reading mapping page from PPA %llu (idx %lu)\n", m_ppa, index);
 
@@ -1762,6 +1760,7 @@ uint64_t __get_inv_mappings(struct demand_shard *shard, uint64_t line) {
          * We don't need this page anymore.
          */
         mark_grain_invalid(shard, PPA_TO_PGA(m_ppa, 0), GRAIN_PER_PAGE);
+        kfree(ptr);
     }
 
     NVMEV_DEBUG("Copying %lld (%lld %lu) inv mapping pairs from mem.\n",
@@ -1834,14 +1833,14 @@ bool __valid_mapping(struct demand_shard *demand_shard, uint64_t lpa, uint64_t p
 }
 
 void __update_mapping_ppa(struct demand_shard *demand_shard, uint64_t new_ppa, 
-                          uint64_t line) {
+                          uint64_t line, uint8_t *ptr) {
 #ifdef ORIGINAL
     return;
 #else
     struct gc_data *gcd = &demand_shard->gcd;
     unsigned long new_key = (line << 32) | new_ppa;
     NVMEV_DEBUG("%s adding %lu to XA.\n", __func__, new_key);
-    xa_store(&gcd->inv_mapping_xa, new_key, xa_mk_value(new_ppa), GFP_KERNEL);
+    xa_store(&gcd->inv_mapping_xa, new_key, xa_mk_value((uint64_t) ptr), GFP_KERNEL);
     return;
 #endif
 }
@@ -1942,7 +1941,7 @@ again:
  * It's still live, so we need to copy it somewhere else.
  */
 void __copy_inv_map(struct demand_shard *shard, uint64_t old_grain, 
-                    uint32_t target_line) {
+                    uint32_t target_line, uint8_t* ptr) {
     struct ssdparams *spp;
     struct cache *cache;
     struct ht_section *ht;
@@ -1990,10 +1989,6 @@ again:
             oob[pgidx][i] = UINT_MAX;
         }
 
-        uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
-                GRAINED_UNIT);
-
         if(__new_gc_ppa(shard, true)) {
             shard->stats.trans_w_tgc += spp->pgsz * spp->pgs_per_oneshotpg;
         }
@@ -2003,14 +1998,9 @@ again:
 
     mark_grain_valid(shard, grain, len);
 
-    uint64_t copy_to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-    uint64_t copy_from = (G_IDX(old_grain) * spp->pgsz) + 
-                         (G_OFFSET(old_grain) * GRAINED_UNIT);
-    /*
-     * This is an invalid mapping page, which are always the
-     * size of a full page. We don't need to set any of the OOB
-     * except the first.
-     */
+    //uint64_t copy_to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
+    //uint64_t copy_from = (G_IDX(old_grain) * spp->pgsz) + 
+    //                     (G_OFFSET(old_grain) * GRAINED_UNIT);
 #ifdef ORIGINAL
     NVMEV_ASSERT(false);
 #endif
@@ -2025,10 +2015,7 @@ again:
         oob[pgidx][i] = UINT_MAX;
     }
 
-    memcpy(nvmev_vdev->ns[0].mapped + copy_to,
-           nvmev_vdev->ns[0].mapped + copy_from, len * GRAINED_UNIT);
-
-    __update_mapping_ppa(shard, pgidx, target_line);
+    __update_mapping_ppa(shard, pgidx, target_line, ptr);
     gcd->offset += GRAIN_PER_PAGE;
 }
 
@@ -2074,10 +2061,6 @@ again:
         for(int i = offset; i < GRAIN_PER_PAGE; i++) {
             oob[pgidx][i] = UINT_MAX;
         }
-
-        //uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        //memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
-        //       GRAINED_UNIT);
 
         if(__new_gc_ppa(shard, true)) {
             shard->stats.trans_w_tgc += spp->pgsz * spp->pgs_per_oneshotpg;
@@ -2138,10 +2121,6 @@ again:
                 GRAIN_PER_PAGE - offset);
         mark_grain_invalid(shard, PPA_TO_PGA(pgidx, offset), 
                 GRAIN_PER_PAGE - offset);
-
-        //uint64_t to = (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        //memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
-        //        GRAINED_UNIT);
 
         if(__new_gc_ppa(shard, false)) {
             shard->stats.data_w_dgc += spp->pgsz * spp->pgs_per_oneshotpg;
@@ -2297,11 +2276,11 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                  * This is a page that contains invalid LPA -> PPA mappings.
                  * We need to copy the whole page to somewhere else.
                  */
-
                 uint32_t target_line = oob[pgidx][1];
                 uint32_t page = oob[pgidx][2];
                 unsigned long key = 
                 ((unsigned long) target_line << 32) | page;
+                uint8_t *ptr;
 
                 NVMEV_DEBUG("Got invalid mapping PPA %llu key %lu target line %lu in GC\n", 
                              pgidx, key, key >> 32);
@@ -2311,7 +2290,8 @@ void clean_one_flashpg(struct demand_shard *shard, struct ppa *ppa)
                 __clear_inv_mapping(shard, key);
 
                 copy_start = ktime_get();
-                __copy_inv_map(shard, grain, target_line);
+                ptr = xa_load(&gcd->inv_mapping_xa, key);
+                __copy_inv_map(shard, grain, target_line, ptr);
                 copying += ktime_to_us(ktime_get()) - ktime_to_us(copy_start);
 
                 shard->stats.inv_m_w += spp->pgsz;
@@ -2631,8 +2611,6 @@ static uint64_t do_gc(struct demand_shard *shard, bool bg)
 
         uint64_t shard_off = shard->id * spp->tt_pgs * spp->pgsz;
         uint64_t to = shard_off + (pgidx * spp->pgsz) + (offset * GRAINED_UNIT);
-        //memset(nvmev_vdev->ns[0].mapped + to, 0x0, (GRAIN_PER_PAGE - offset) *
-        //       GRAINED_UNIT);
 
         for(int i = offset; i < GRAIN_PER_PAGE; i++) {
             shard->oob[pgidx][i] = UINT_MAX;
