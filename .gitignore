@@ -169,13 +169,9 @@ sphinx_*/
 # Rust analyzer configuration
 /rust-project.json
 
-# Local makefile
-Makefile.local
-
 # Logs
 *logdir*
 
-ycsb/concurrentqueue
-ycsb/hdrhistogram_c
-ycsb/build
+*build*
 *log*
+sync.sh
